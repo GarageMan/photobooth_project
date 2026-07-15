@@ -73,9 +73,8 @@ aufgenommener Fotos als Blickfang.
 | 2 | 5V | Display |
 | 6 | GND | Display |
 
-> **Wichtig:** Der LED-Ring läuft über SPI0/GPIO10 (Pin 19,
-> `neopixel_spi`) — **nicht** über GPIO12/Pin 32 (PWM/`rpi_ws281x`). Das
-> war eine frühere Planung und ist obsolet.
+<img width="2720" height="2800" alt="image" src="https://github.com/user-attachments/assets/e401d59b-f121-4f94-a85a-8b3fa8e61d6f" />
+
 
 ### Wichtige Kamera-Einstellungen (Nikon D3300)
 
