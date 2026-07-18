@@ -374,24 +374,31 @@ würden, auch nach späterem Entfernen. `config.py` fällt bei fehlender
 (`BITTE_local_secrets.py_ANLEGEN`) statt still falsche/leere Werte zu
 verwenden.
 
-### Automatische Update-Benachrichtigung
-`check_updates.py` prüft wöchentlich drei Quellen und verschickt bei
-Funden eine E-Mail: `apt`-Paketupdates (Raspberry Pi OS),
+### Update-Benachrichtigung (manuell + MOTD-Erinnerung)
+`check_updates.py` prüft drei Quellen und verschickt bei Funden eine
+E-Mail: `apt`-Paketupdates (Raspberry Pi OS),
 Raspberry-Pi-Bootloader/EEPROM-Firmware (`rpi-eeprom-update`) und
 TP-Link-Router-Firmware (Web-Scraping der offiziellen
 Download-Seite — kein offizielles API vorhanden, daher am ehesten
 fehleranfällig; meldet sich bei einem Scraping-Fehler selbst statt
 stillschweigend nichts zu melden).
 
-Voraussetzung: `local_secrets.py` mit gültigen SMTP-Zugangsdaten
-(siehe oben). Cronjob (wöchentlich, sonntags 08:00 Uhr):
+Bewusst **kein Cronjob** — wird manuell ausgeführt:
 ```bash
-crontab -e
+python3 ~/photobooth/check_updates.py
 ```
-Zeile hinzufügen:
-```
-0 8 * * 0 /usr/bin/python3 /home/photobox/photobooth/check_updates.py >> /home/photobox/photobooth/data/logs/update_check.log 2>&1
-```
+Voraussetzung: `local_secrets.py` mit gültigen SMTP-Zugangsdaten (siehe
+oben, bei Gmail ein App-Passwort statt des normalen Kontopassworts
+verwenden). Jeder Lauf schreibt einen Zeitstempel nach
+`data/last_check_run.txt`.
+
+**MOTD-Erinnerung beim SSH-Login:** Ist bereits in das bestehende,
+selbst geschriebene `/etc/update-motd.d/10-fotobox`-Skript integriert
+(farbiger "UPDATE-CHECK"-Block mit Ampel-Logik: grün < 7 Tage, orange
+7–14 Tage, rot ≥ 14 Tage oder noch nie ausgeführt). Liest den
+Zeitstempel aus `data/last_check_run.txt`. Kein separates MOTD-Skript
+nötig — `10-fotobox` läuft bereits automatisch über
+`/etc/update-motd.d/` bei jedem SSH-Login.
 
 **Hinweis zur TP-Link-Hardwareversion:** Die Download-URL im Skript
 (`TPLINK_DOWNLOAD_URL`) enthält die Hardware-Version des Routers
