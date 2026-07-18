@@ -73,8 +73,9 @@ aufgenommener Fotos als Blickfang.
 | 2 | 5V | Display |
 | 6 | GND | Display |
 
-<img width="2720" height="2800" alt="image" src="https://github.com/user-attachments/assets/e401d59b-f121-4f94-a85a-8b3fa8e61d6f" />
-
+> **Wichtig:** Der LED-Ring läuft über SPI0/GPIO10 (Pin 19,
+> `neopixel_spi`) — **nicht** über GPIO12/Pin 32 (PWM/`rpi_ws281x`). Das
+> war eine frühere Planung und ist obsolet.
 
 ### Wichtige Kamera-Einstellungen (Nikon D3300)
 
@@ -207,11 +208,60 @@ Zwei getrennte Netze:
 
 - **Heimnetz** (Fritz!Box, `192.168.178.0/24`)
 - **Fotobox-Netz** (TP-Link WR802N im WISP-Modus, `192.168.0.0/24`), Pi
-  darin statisch erreichbar
+  darin statisch erreichbar unter `192.168.0.100`
 
 Eine statische Route auf der Fritz!Box leitet `192.168.0.0/24` über die
-TP-Link-WAN-IP. `ufw`-Regeln: Port 80 aus beiden Subnetzen offen,
-SSH/VNC nur aus dem Heimnetz.
+TP-Link-WAN-IP.
+
+Der TP-Link strahlt im Fotobox-Netz **zwei separate SSIDs** aus:
+
+| SSID | Zweck | DHCP-Bereich |
+|---|---|---|
+| `Fotobox_Gast` | Gäste-WLAN, nur für den Foto-Download (Port 80) | `.101`–`.199` |
+| `Photobooth` | Admin-Zugang für Wartung/Entwicklung (SSH) | eigener Bereich, siehe unten |
+
+Beide SSIDs hängen am selben Subnetz `192.168.0.0/24` — die Trennung
+erfolgt **nicht** über getrennte VLANs, sondern ausschließlich über
+`ufw`-Regeln auf dem Pi (siehe unten). Client-Isolation ist nur für
+`Fotobox_Gast` aktiv, nicht für `Photobooth`.
+
+### Admin-Zugang (SSH, key-basiert)
+
+Ein einzelner Admin-Laptop hat exklusiven SSH-Zugriff auf den Pi:
+
+- Laptop verbindet sich mit der SSID `Photobooth` (nicht `Fotobox_Gast`)
+- Feste IP-Reservierung im TP-Link (DHCP → Address Reservation) anhand
+  der **echten Hardware-MAC** des Laptop-WLAN-Adapters, auf
+  `192.168.0.17` — MAC-Adress-Randomisierung muss für dieses
+  Verbindungsprofil per NetworkManager deaktiviert sein
+  (`wifi.cloned-mac-address permanent`), sonst greift die Reservierung
+  nicht zuverlässig
+- Auf dem Laptop zusätzlich `ipv4.method manual` mit exakt dieser einen
+  Adresse setzen (nicht "Automatic/DHCP" mit zusätzlich eingetragener
+  Adresse — das führt zu zwei parallelen IPs auf demselben Interface
+  und unvorhersehbarer Quell-IP-Wahl beim Verbindungsaufbau)
+- Authentifizierung ausschließlich per SSH-Key
+  (`~/.ssh/id_pihole` / `id_pihole.pub` auf dem Laptop,
+  Public Key in `~/.ssh/authorized_keys` auf dem Pi), kein
+  Passwort-Login für diese Verbindung
+- `ufw` auf dem Pi lässt Port 22 zusätzlich gezielt aus
+  `192.168.0.17` zu (siehe Tabelle unten) — keine pauschale Freigabe
+  für `192.168.0.0/24` oder das gesamte `Photobooth`-Netz
+
+### `ufw`-Regeln auf dem Pi
+
+| Port | Protokoll | Quelle | Zweck |
+|---|---|---|---|
+| 80 | tcp | `192.168.0.0/24` | Foto-Download übers Fotobox-Netz (beide SSIDs) |
+| 80 | tcp | `192.168.178.0/24` | Foto-Download übers Heimnetz |
+| 22 | tcp | `192.168.178.0/24` | SSH aus dem Heimnetz |
+| 22 | tcp | `192.168.0.17` | SSH exklusiv vom Admin-Laptop (SSID `Photobooth`) |
+| 5900 | tcp | `192.168.178.0/24` | VNC aus dem Heimnetz |
+
+VNC für den Admin-Laptop bewusst nicht als eigene `ufw`-Regel auf Port
+5900 freigegeben, sondern per SSH-Tunnel über den bereits offenen
+Port 22 gefahren (`ssh -L 5901:localhost:5900 photobox@192.168.0.100`,
+danach VNC-Viewer gegen `localhost:5901`) — ein offener Port weniger.
 
 ## Tests
 
