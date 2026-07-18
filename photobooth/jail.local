@@ -1,0 +1,27 @@
+# fail2ban jail.local fuer die Fotobox
+# Ablage: /etc/fail2ban/jail.local (NICHT jail.conf direkt bearbeiten -
+# jail.conf wird bei fail2ban-Updates ueberschrieben, jail.local nicht).
+
+[DEFAULT]
+# Niemals diese Adressen bannen - sonst sperrst du dich im Zweifel
+# selbst aus. 192.168.178.0/24 = Heimnetz, 192.168.0.17 = Admin-Laptop.
+ignoreip = 127.0.0.1/8 ::1 192.168.178.0/24 192.168.0.17
+
+# Bantime steigt bei wiederholten Verstoessen automatisch an
+# (10m -> 20m -> 40m -> ... bis maximal 1 Woche). Macht gezieltes,
+# wiederholtes Anklopfen zunehmend unattraktiv.
+bantime.increment = true
+bantime.rndtime = 30
+bantime = 10m
+bantime.maxtime = 1w
+bantime.factor = 2
+
+findtime = 10m
+maxretry = 4
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 4

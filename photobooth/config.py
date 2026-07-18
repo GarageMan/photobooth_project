@@ -3,6 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Echte Zugangsdaten liegen NICHT im Code, sondern in local_secrets.py
+# (nicht versioniert, siehe .gitignore und local_secrets_example.py).
+# Fallback auf einen auffaelligen Platzhalter, falls die Datei auf einem
+# frischen Checkout noch fehlt - fuehrt zu einer klar erkennbaren
+# Fehlanzeige statt eines stillen Fehlers.
+try:
+    from local_secrets import GUEST_WIFI_PASSWORD
+except ImportError:
+    GUEST_WIFI_PASSWORD = "BITTE_local_secrets.py_ANLEGEN"
+    print("[Config] WARNUNG: local_secrets.py fehlt - siehe local_secrets_example.py")
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -22,7 +33,7 @@ class ScreenConfig:
     width: int = 1280
     height: int = 720
     fullscreen: bool = True
-    title: str = "Geburtstagsfeier Mina"
+    title: str = "Fotobox - 150 Jahre-Feier"
     target_fps: int = 30
     hide_mouse: bool = True
 
@@ -82,7 +93,7 @@ class GpioConfig:
 class NetworkConfig:
     raspi_ip: str = "192.168.0.100"
     photo_url_prefix: str = "http://192.168.0.100/fotos"
-    guest_wifi_password: str = "Mina2026"
+    guest_wifi_password: str = GUEST_WIFI_PASSWORD
 
 @dataclass(frozen=True)
 class GalleryConfig:
