@@ -1,7 +1,7 @@
 """
 app_with_hw.py  →  Umbenennen zu app.py auf dem Pi
 ====================================================
-Hauptschleife der Fotobox.
+Hauptschleife der Fotobox V2.
 Schaltet per Feature-Flag zwischen echten Hardware-Providern
 und Fake-Providern um – ohne die State-Machine zu berühren.
 
