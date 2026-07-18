@@ -28,6 +28,7 @@ aufgenommener Fotos als Blickfang.
 - [Tests](#tests)
 - [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings)
 - [Entwicklungs-Workflow](#entwicklungs-workflow)
+- [Sicherheit / Härtung](#sicherheit--härtung)
 - [Datenschutz](#datenschutz)
 
 ## Funktionsumfang
@@ -190,7 +191,8 @@ Zentrale Einstellungen in `config.py` (`AppConfig` und Unter-Configs
 - `timeouts.*` — sämtliche Timeout-/Countdown-Zeiten
 - `gpio.*` — Pin-Belegung (siehe [GPIO-Tabelle](#gpio-pin-tabelle-autoritativ))
 - `network.*` — statische IP, Foto-URL-Präfix, WLAN-Zugangsdaten
-  (Zugangsdaten hier bewusst nicht in dieser README dokumentiert)
+  (echtes Passwort kommt aus `local_secrets.py`, siehe
+  [Sicherheit / Härtung](#sicherheit--härtung) — nicht im Code)
 
 ## Autostart
 
@@ -311,6 +313,96 @@ Weiterentwicklung (z. B. mit Claude) gilt:
 3. Repository-Anbindung im jeweiligen Tool synchronisieren, damit immer
    der aktuelle, released Stand als Grundlage für weitere Anpassungen
    dient.
+
+## Sicherheit / Härtung
+
+Konsolidierter Stand aller Härtungsmaßnahmen (Zielbild: sicher gegen
+neugierige Event-Gäste und gegen gezielte Prüfversuche im eigenen
+Netz — kein Schutz gegen einen entschlossenen Angreifer mit
+physischem Zugriff und viel Zeit, das ist für den Einsatzzweck bewusst
+nicht das Ziel):
+
+### Netzwerk
+- Zwei-Netz-Aufbau (Heimnetz/Fotobox-Netz), zwei getrennte SSIDs im
+  Fotobox-Netz (`Fotobox_Gast` mit Client-Isolation,
+  `Fotobox_Admin` ohne — siehe [Netzwerk-Setup](#netzwerk-setup))
+- `ufw`: Default-deny, nur benötigte Ports offen, SSH zusätzlich auf
+  eine einzelne Host-IP beschränkt
+
+### Zugang
+- SSH ausschließlich per Key, Passwort-Login und Root-Login auf dem Pi
+  komplett deaktiviert (`sshd_config`)
+- VNC nicht direkt exponiert, nur per SSH-Tunnel
+- Feste IP-Reservierung für den Admin-Laptop anhand der echten
+  Hardware-MAC (Randomisierung deaktiviert)
+- Passwortloses `sudo` auf exakt einen Befehl beschränkt (siehe
+  [Autostart](#autostart))
+
+### fail2ban
+Installation:
+```bash
+sudo apt install fail2ban -y
+```
+Konfiguration aus `jail.local` nach `/etc/fail2ban/jail.local` kopieren
+(überschreibt **nicht** `jail.conf`, bleibt bei Updates erhalten):
+```bash
+sudo cp jail.local /etc/fail2ban/jail.local
+sudo systemctl restart fail2ban
+sudo fail2ban-client status sshd
+```
+Bant Wiederholungstäter mit ansteigender Sperrdauer (10 Min. bis
+max. 1 Woche), schließt Heimnetz und Admin-Laptop-IP von Bans aus
+(`ignoreip`). Da SSH ohnehin nur per Key funktioniert, ist der
+praktische Nutzen gegen reines Passwort-Raten gering — der Wert liegt
+im Fernhalten von Verbindungs-/Protokoll-Rauschen und im Abwehren
+gezielter Verbindungsfluten gegen `sshd`.
+
+### Secrets / Zugangsdaten im Code
+Echte Zugangsdaten (Gast-WLAN-Passwort, SMTP-Zugangsdaten für die
+Update-Benachrichtigung) liegen **nicht** in `config.py`, sondern in
+`local_secrets.py` — einmalig aus `local_secrets_example.py` kopieren
+und ausfüllen:
+```bash
+cp local_secrets_example.py local_secrets.py
+nano local_secrets.py
+```
+`local_secrets.py` ist in `.gitignore` eingetragen und wird **nie**
+ins Repository committet — wichtig seit der GitHub-Anbindung des
+Projekts, da sonst Zugangsdaten dauerhaft in der Git-Historie landen
+würden, auch nach späterem Entfernen. `config.py` fällt bei fehlender
+`local_secrets.py` auf einen auffälligen Platzhalterwert zurück
+(`BITTE_local_secrets.py_ANLEGEN`) statt still falsche/leere Werte zu
+verwenden.
+
+### Automatische Update-Benachrichtigung
+`check_updates.py` prüft wöchentlich drei Quellen und verschickt bei
+Funden eine E-Mail: `apt`-Paketupdates (Raspberry Pi OS),
+Raspberry-Pi-Bootloader/EEPROM-Firmware (`rpi-eeprom-update`) und
+TP-Link-Router-Firmware (Web-Scraping der offiziellen
+Download-Seite — kein offizielles API vorhanden, daher am ehesten
+fehleranfällig; meldet sich bei einem Scraping-Fehler selbst statt
+stillschweigend nichts zu melden).
+
+Voraussetzung: `local_secrets.py` mit gültigen SMTP-Zugangsdaten
+(siehe oben). Cronjob (wöchentlich, sonntags 08:00 Uhr):
+```bash
+crontab -e
+```
+Zeile hinzufügen:
+```
+0 8 * * 0 /usr/bin/python3 /home/photobox/photobooth/check_updates.py >> /home/photobox/photobooth/data/logs/update_check.log 2>&1
+```
+
+**Hinweis zur TP-Link-Hardwareversion:** Die Download-URL im Skript
+(`TPLINK_DOWNLOAD_URL`) enthält die Hardware-Version des Routers
+(`v1` als Standard). Steht auf einem Aufkleber auf der Geräteunterseite
+— falls abweichend, in `check_updates.py` anpassen.
+
+### Bewusst nicht umgesetzt (Abwägung dokumentiert)
+- Kein `fail2ban`-Jail für `nginx`/Port 80: Bei einem Event mit vielen
+  gleichzeitigen Gästen im Gäste-WLAN sind kurzfristig viele Zugriffe
+  auf denselben Port völlig normal — ein Jail dort würde eher
+  unschuldige Gäste aussperren als einen Angreifer abwehren.
 
 ## Datenschutz
 
