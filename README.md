@@ -218,18 +218,18 @@ Der TP-Link strahlt im Fotobox-Netz **zwei separate SSIDs** aus:
 | SSID | Zweck | DHCP-Bereich |
 |---|---|---|
 | `Fotobox_Gast` | Gäste-WLAN, nur für den Foto-Download (Port 80) | `.101`–`.199` |
-| `Photobooth` | Admin-Zugang für Wartung/Entwicklung (SSH) | eigener Bereich, siehe unten |
+| `Fotobox_Admin` | Admin-Zugang für Wartung/Entwicklung (SSH) | eigener Bereich, siehe unten |
 
 Beide SSIDs hängen am selben Subnetz `192.168.0.0/24` — die Trennung
 erfolgt **nicht** über getrennte VLANs, sondern ausschließlich über
 `ufw`-Regeln auf dem Pi (siehe unten). Client-Isolation ist nur für
-`Fotobox_Gast` aktiv, nicht für `Photobooth`.
+`Fotobox_Gast` aktiv, nicht für `Fotobox_Admin`.
 
 ### Admin-Zugang (SSH, key-basiert)
 
 Ein einzelner Admin-Laptop hat exklusiven SSH-Zugriff auf den Pi:
 
-- Laptop verbindet sich mit der SSID `Photobooth` (nicht `Fotobox_Gast`)
+- Laptop verbindet sich mit der SSID `Fotobox_Admin` (nicht `Fotobox_Gast`)
 - Feste IP-Reservierung im TP-Link (DHCP → Address Reservation) anhand
   der **echten Hardware-MAC** des Laptop-WLAN-Adapters, auf
   `192.168.0.17` — MAC-Adress-Randomisierung muss für dieses
@@ -242,11 +242,13 @@ Ein einzelner Admin-Laptop hat exklusiven SSH-Zugriff auf den Pi:
   und unvorhersehbarer Quell-IP-Wahl beim Verbindungsaufbau)
 - Authentifizierung ausschließlich per SSH-Key
   (`~/.ssh/id_pihole` / `id_pihole.pub` auf dem Laptop,
-  Public Key in `~/.ssh/authorized_keys` auf dem Pi), kein
-  Passwort-Login für diese Verbindung
+  Public Key in `~/.ssh/authorized_keys` auf dem Pi). Passwort-Login
+  für SSH ist auf dem Pi komplett deaktiviert (`/etc/ssh/sshd_config`:
+  `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
+  `PermitRootLogin no`) — für alle SSH-Verbindungen, nicht nur diese
 - `ufw` auf dem Pi lässt Port 22 zusätzlich gezielt aus
   `192.168.0.17` zu (siehe Tabelle unten) — keine pauschale Freigabe
-  für `192.168.0.0/24` oder das gesamte `Photobooth`-Netz
+  für `192.168.0.0/24` oder das gesamte `Fotobox_Admin`-Netz
 
 ### `ufw`-Regeln auf dem Pi
 
@@ -255,7 +257,7 @@ Ein einzelner Admin-Laptop hat exklusiven SSH-Zugriff auf den Pi:
 | 80 | tcp | `192.168.0.0/24` | Foto-Download übers Fotobox-Netz (beide SSIDs) |
 | 80 | tcp | `192.168.178.0/24` | Foto-Download übers Heimnetz |
 | 22 | tcp | `192.168.178.0/24` | SSH aus dem Heimnetz |
-| 22 | tcp | `192.168.0.17` | SSH exklusiv vom Admin-Laptop (SSID `Photobooth`) |
+| 22 | tcp | `192.168.0.17` | SSH exklusiv vom Admin-Laptop (SSID `Fotobox_Admin`) |
 | 5900 | tcp | `192.168.178.0/24` | VNC aus dem Heimnetz |
 
 VNC für den Admin-Laptop bewusst nicht als eigene `ufw`-Regel auf Port
