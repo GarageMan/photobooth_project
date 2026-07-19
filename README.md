@@ -25,6 +25,7 @@ aufgenommener Fotos als Blickfang.
 - [Konfiguration](#konfiguration)
 - [Autostart](#autostart)
 - [Netzwerk-Setup](#netzwerk-setup)
+- [Backup](#backup)
 - [Tests](#tests)
 - [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings)
 - [Entwicklungs-Workflow](#entwicklungs-workflow)
@@ -266,6 +267,49 @@ VNC für den Admin-Laptop bewusst nicht als eigene `ufw`-Regel auf Port
 5900 freigegeben, sondern per SSH-Tunnel über den bereits offenen
 Port 22 gefahren (`ssh -L 5901:localhost:5900 photobox@192.168.0.100`,
 danach VNC-Viewer gegen `localhost:5901`) — ein offener Port weniger.
+
+## Backup
+
+`raspiBackup` (v0.7.2) sichert den Pi regelmäßig auf eine
+CIFS-Freigabe eines externen Ubuntu-Servers (`192.168.178.75`).
+
+- **Backup-Typ:** `tar` statt `rsync` — rsync-Backups schlagen auf
+  CIFS-Mounts fehl (`RBK0263E`), tar funktioniert zuverlässig
+- **Mount-Konfiguration** (`/etc/fstab`):
+  ```
+  //192.168.178.75/backup /mnt/backup-ubuntu cifs credentials=/etc/cifs-backup-ubuntu.credentials,vers=3.0,noauto,x-systemd.automount,x-systemd.idle-timeout=60,_netdev 0 0
+  ```
+  `x-systemd.automount` + `x-systemd.idle-timeout=60`: Die Freigabe
+  wird erst bei tatsächlichem Zugriff automatisch eingehängt und nach
+  60 Sekunden Inaktivität automatisch wieder ausgehängt — kombiniert
+  automatisches Mounten mit der ursprünglichen Absicht hinter `noauto`
+  (keine dauerhaft offene Verbindung zum Ubuntu-Server). `_netdev`
+  sorgt dafür, dass beim Booten auf eine funktionierende
+  Netzwerkverbindung gewartet wird, bevor gemountet wird.
+
+  ⚠️ **Wichtige Lektion:** Ursprünglich stand hier nur `noauto` ohne
+  `x-systemd.automount`. Das führte zu einem stillen Fehlschlagen:
+  `raspiBackup.sh` lief zwar durch, sicherte dabei aber mangels
+  eingehängter Freigabe versehentlich fast die Root-Partition auf sich
+  selbst — `raspiBackup` hat das zum Glück selbst erkannt und
+  abgebrochen (`RBK0027E`), statt ein nutzloses Backup zu erzeugen.
+  Nach Ergänzung von `x-systemd.automount` funktioniert es zuverlässig
+  ganz ohne manuellen `mount`-Schritt vorab.
+- **Zugangsdaten:** `/etc/cifs-backup-ubuntu.credentials` (chmod 600)
+- **E-Mail-Benachrichtigung bei raspiBackup:** deaktiviert
+  (`DEFAULT_EMAIL=""`) — `ssmtp` ist auf dem Pi nicht installiert. Für
+  Update-Benachrichtigungen siehe stattdessen
+  [Sicherheit / Härtung](#sicherheit--härtung) (`check_updates.py`,
+  nutzt Python `smtplib` direkt)
+
+### Backup manuell ausführen
+
+```bash
+sudo raspiBackup.sh -t tar /mnt/backup-ubuntu
+```
+
+Vor risikoreicheren Eingriffen (z. B. Bootloader/EEPROM-Updates,
+größere System-Updates) empfehlenswert vorher einmal auszuführen.
 
 ## Tests
 
