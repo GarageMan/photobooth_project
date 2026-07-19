@@ -444,10 +444,13 @@ Zeitstempel aus `data/last_check_run.txt`. Kein separates MOTD-Skript
 nötig — `10-fotobox` läuft bereits automatisch über
 `/etc/update-motd.d/` bei jedem SSH-Login.
 
-**Hinweis zur TP-Link-Hardwareversion:** Die Download-URL im Skript
-(`TPLINK_DOWNLOAD_URL`) enthält die Hardware-Version des Routers
-(`v1` als Standard). Steht auf einem Aufkleber auf der Geräteunterseite
-— falls abweichend, in `check_updates.py` anpassen.
+**TP-Link-Hardwareversion:** Bestätigt über die Router-Konfigurationsseite
+(„TL-WR802N v4 00000004“) — `TPLINK_DOWNLOAD_URL` in `check_updates.py`
+ist entsprechend auf `.../tl-wr802n/v4/` gesetzt. Bei einem Tausch des
+Routers dort anpassen; eine falsche Version kann das Gerät laut
+TP-Link-Warnhinweis beschädigen, daher vor jedem manuellen
+Firmware-Flash zusätzlich über System Tools → Backup & Restore die
+Router-Konfiguration sichern.
 
 ### Bewusst nicht umgesetzt (Abwägung dokumentiert)
 - Kein `fail2ban`-Jail für `nginx`/Port 80: Bei einem Event mit vielen
