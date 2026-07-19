@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import smtplib
 import subprocess
+from datetime import datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -32,16 +33,21 @@ from local_secrets import (
     SMTP_USER,
 )
 
-# TP-Link-Download-Seite fuer den WR802N. Die Hardware-Version (v1, v2,
-# v4 ...) steht auf einem Aufkleber auf der Geraeteunterseite - bitte
-# EINMALIG pruefen und hier eintragen, falls sie nicht "v1" ist:
+# TP-Link-Download-Seite fuer den WR802N. Hardware-Version bestaetigt
+# ueber die Router-Konfigurationsseite: "TL-WR802N v4 00000004" -> v4.
+# Falls der Router mal getauscht wird, hier anpassen:
 # https://www.tp-link.com/de/support/download/tl-wr802n/<version>/
-TPLINK_DOWNLOAD_URL = "https://www.tp-link.com/de/support/download/tl-wr802n/v1/"
+TPLINK_DOWNLOAD_URL = "https://www.tp-link.com/de/support/download/tl-wr802n/v4/"
 
 # Speichert die zuletzt gesehene TP-Link-Firmware-Version, um beim
 # naechsten Lauf nur bei tatsaechlicher AENDERUNG zu benachrichtigen
 # (sonst wuerde jede Woche dieselbe Info erneut verschickt).
 STATE_FILE = Path(__file__).resolve().parent / "data" / "last_tplink_fw.txt"
+
+# Zeitstempel des letzten Laufs - wird von der MOTD-Erinnerung
+# (/etc/update-motd.d/, siehe README) ausgelesen, um anzuzeigen, wie
+# lange der letzte manuelle Update-Check her ist.
+LAST_RUN_FILE = Path(__file__).resolve().parent / "data" / "last_check_run.txt"
 
 
 def check_apt_updates() -> list[str]:
@@ -133,6 +139,12 @@ def send_email(subject: str, body: str) -> None:
 
 def main() -> None:
     sections: list[str] = []
+
+    # Zeitstempel IMMER schreiben, auch wenn nichts gefunden wird oder ein
+    # Teilcheck fehlschlaegt - die MOTD-Erinnerung soll zeigen, wann
+    # zuletzt ueberhaupt geprueft wurde, nicht nur wann etwas gefunden wurde.
+    LAST_RUN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAST_RUN_FILE.write_text(datetime.now().isoformat(timespec="seconds"))
 
     apt_updates = check_apt_updates()
     if apt_updates:
