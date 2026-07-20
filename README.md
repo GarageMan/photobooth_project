@@ -268,6 +268,35 @@ VNC für den Admin-Laptop bewusst nicht als eigene `ufw`-Regel auf Port
 Port 22 gefahren (`ssh -L 5901:localhost:5900 photobox@192.168.0.100`,
 danach VNC-Viewer gegen `localhost:5901`) — ein offener Port weniger.
 
+### Port-Weiterleitung am TP-Link (Virtueller Server) — notwendig, nicht optional
+
+⚠️ Frühere Annahme in diesem Dokument war falsch: Die statische Route
+auf der Fritz!Box **allein reicht nicht**, damit das Heimnetz den Pi
+erreicht. Der TP-Link hat auf seiner WAN-Schnittstelle (WISP-Uplink)
+eine eigene Firewall, die unaufgeforderte eingehende Verbindungen
+blockt — unabhängig davon, ob das Ziel dank Route eindeutig ist.
+Zusätzlich zur Route sind daher unter **Weiterleitung → Virtueller
+Server** drei 1:1-Portweiterleitungen erforderlich:
+
+| Dienstport | IP-Adresse | Interner Port | Protokoll |
+|---|---|---|---|
+| 22 | `192.168.0.100` | 22 | TCP |
+| 80 | `192.168.0.100` | 80 | TCP |
+| 5900 | `192.168.0.100` | 5900 | TCP |
+
+**Bekannte Fallstricke dabei:**
+- Der HTTP-Port für "Fernwartung" (Systemtools → Administrator,
+  auch wenn dort "Aktivieren" nicht angehakt ist) darf nicht ebenfalls
+  auf `80` stehen, sonst meldet der Router beim Anlegen der
+  Portweiterleitung 80 einen Konflikt ("port of the remote web
+  management is conflicting"). Fernwartungs-Port auf einen anderen
+  Wert (z. B. `8081`) ändern — dazu muss "Aktivieren" kurz angehakt
+  werden, um das Feld überhaupt bearbeiten zu können, danach wieder
+  entfernen und speichern.
+- Diese Portweiterleitungen gehen bei einem Firmware-Update oder
+  Reset verloren und müssen manuell neu angelegt werden (siehe
+  Abschnitt TP-Link-Router unten).
+
 ## Backup
 
 `raspiBackup` (v0.7.2) sichert den Pi regelmäßig auf eine
@@ -448,9 +477,67 @@ nötig — `10-fotobox` läuft bereits automatisch über
 („TL-WR802N v4 00000004“) — `TPLINK_DOWNLOAD_URL` in `check_updates.py`
 ist entsprechend auf `.../tl-wr802n/v4/` gesetzt. Bei einem Tausch des
 Routers dort anpassen; eine falsche Version kann das Gerät laut
-TP-Link-Warnhinweis beschädigen, daher vor jedem manuellen
-Firmware-Flash zusätzlich über System Tools → Backup & Restore die
-Router-Konfiguration sichern.
+TP-Link-Warnhinweis beschädigen.
+
+**Konkreter Grund für dieses Update:** Firmware-Versionen vor
+`V4_260304` sind laut TP-Link von **CVE-2026-3227** betroffen (Command
+Injection über die Konfigurationsimport-Funktion, CVSS 8.5) — betrifft
+explizit den TL-WR802N v4. Die installierte Version (Build `241231`)
+ist mittlerweile aktualisiert. Update erfolgreich durchgeführt, siehe
+Erfahrungsbericht unten — insbesondere: "Sichern & Wiederherstellen"
+und "Firmware-Upgrade" sind grundsätzlich nur über die lokale
+Verwaltung (LAN) erreichbar, nicht über Fernwartung (WAN), das war
+kein CVE-Zusammenhang und kein Bedienfehler.
+
+### TP-Link-Router: Firmware-Update — Erfahrungen (CVE-2026-3227-Fix)
+
+Firmware-Update auf `V4_260304` (schließt CVE-2026-3227, siehe oben)
+erfolgreich durchgeführt, aber mit mehreren Stolperfallen:
+
+- **Kein Direkt-Update möglich:** Von der Ursprungsversion (Build
+  `241231`) musste über **zwei Zwischenversionen** aktualisiert werden
+  (`0.9.1_3.17` → `0.9.3_3.33 [250821]` → `0.9.3_3.33 [260304]`),
+  jede einzeln von der TP-Link-Downloadseite. Nicht alle Versionen
+  überspringbar.
+- **Komplette Konfiguration ging verloren**, obwohl vorher ein Backup
+  über "Sichern & Wiederherstellen" gemacht wurde — der Restore der
+  gesicherten Konfiguration funktionierte nicht. Der Router musste
+  komplett manuell neu eingerichtet werden. Deshalb: Firmware-Update
+  nur einplanen, wenn Zeit für eine komplette Neukonfiguration da ist,
+  nicht "mal eben zwischendurch".
+- **"Sichern & Wiederherstellen", "Firmware-Upgrade" und
+  "Werkseinstellungen" fehlten anfangs komplett im Menü** (auch nicht
+  per direktem URL-Aufruf erreichbar, 403). **Tatsächliche Ursache
+  (bestätigt, nicht nur vermutet):** Diese drei sicherheitskritischen
+  Funktionen sind bei diesem Router grundsätzlich **nur über die
+  lokale Verwaltung (LAN, `192.168.0.1`) erreichbar, nicht über die
+  Fernwartung (WAN-Seite)** — unabhängig von der Firmware-Version.
+  Der ursprüngliche Zugriff, bei dem sie fehlten, lief vermutlich
+  bereits über einen WAN-artigen Pfad. **Praktische Konsequenz:** Für
+  Firmware-Updates, Werksreset oder Konfigurations-Backup/-Restore
+  immer den **Admin-Laptop im `Fotobox_Admin`-WLAN** verwenden
+  (`http://192.168.0.1` bzw. `https://192.168.0.1`), niemals den
+  Fernwartungs-Zugang vom Windows-PC
+  (`192.168.178.182:8080`/`https://192.168.178.182`) — dort sind diese
+  Menüpunkte nicht vorhanden, ganz gleich wie aktuell die Firmware ist.
+- **Nach dem Neuaufbau fehlten zunächst:** die DHCP-Adressreservierung
+  für den Admin-Laptop (→ bekam `.101` aus dem normalen Pool statt
+  `.17` — Admin-Laptop-Client per `sudo dhclient -r wlp2s0 && sudo
+  dhclient wlp2s0` neu anfordern lassen, nachdem die Reservierung
+  nachgetragen wurde) und alle drei Portweiterleitungen (siehe oben).
+- **DoS-Schutz blockiert testweises Ping vollständig** ("Ping-Pakete
+  am WAN-Port verbieten" + "von LAN-Seite ignorieren") — beim
+  Troubleshooting testweise deaktivieren, danach nicht vergessen
+  wieder zu aktivieren.
+- `TPLink_Konfiguration_Checkliste.md` im Repository enthält den
+  vollständigen Soll-Zustand aller Einstellungen als Referenz für
+  künftige Updates/Resets.
+
+### WPS
+Deaktiviert lassen (bekannte Schwachstellen, z. B. Pixie-Dust-Angriffe
+zum Auslesen des WLAN-Passworts ohne dieses zu kennen). Nach jedem
+Firmware-Update/Reset prüfen, da manche Firmwares es standardmäßig
+wieder aktivieren.
 
 ### Bewusst nicht umgesetzt (Abwägung dokumentiert)
 - Kein `fail2ban`-Jail für `nginx`/Port 80: Bei einem Event mit vielen
