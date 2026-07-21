@@ -59,6 +59,14 @@ aufgenommener Fotos als Blickfang.
 | Auslöse-Taster | Beleuchtet, Ansteuerung über Transistor |
 | Kamera-Auslösung | Optokoppler (PC817) an Nikon MC-DC2-Buchse |
 
+<p align="center">
+  <img src="docs/images/fotobox_vorne.jpg" alt="Fotobox von vorne, aufgebaut und einsatzbereit" width="45%">
+  <img src="docs/images/fotobox_hinten_offen.jpg" alt="Fotobox von hinten mit geöffneter Tür, Blick auf die Innenverkabelung" width="45%">
+</p>
+<p align="center">
+  <img src="docs/images/raspi_kontakte.jpg" alt="Raspberry Pi 5 mit GPIO-Verkabelung im Detail" width="45%">
+</p>
+
 ### GPIO-Pin-Tabelle (autoritativ)
 
 | Pin | GPIO | Funktion |
@@ -80,6 +88,10 @@ aufgenommener Fotos als Blickfang.
 > war eine frühere Planung und ist obsolet.
 
 ### Wichtige Kamera-Einstellungen (Nikon D3300)
+
+<p align="center">
+  <img src="docs/images/nikon_stecker.jpg" alt="Nikon-spezifischer Stecker (MC-DC2-Buchse) für die Optokoppler-Auslösung" width="45%">
+</p>
 
 - Modus: M (Manuell)
 - Fokus: MF (manuell, einmalig eingestellt)
