@@ -6,6 +6,12 @@ from config import AppConfig
 from events import AppEvent, EventType
 from models import AppModel, SessionState, TimerState, TransitionResult, UiState
 from states import AppState
+from shutdown_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine Logik/Dateizugriff
+
+
+# NEU (3.2): Obergrenze fuer die PIN-Eingabe (verhindert unbegrenztes Anwachsen
+# des Puffers). Keine Geheimhaltung noetig, daher Modulkonstante statt config.
+_MAX_PIN_LENGTH = 12
 
 
 class StateMachine:
@@ -42,6 +48,8 @@ class StateMachine:
             return self._go_instructions(model, now)
         if event.type == EventType.TAP_TERMS:
             return self._go_terms(model, now)
+        if event.type == EventType.SHUTDOWN_GESTURE_DETECTED:  # NEU (3.2)
+            return self._go_pin_entry(model, now)
         if event.type == EventType.IDLE_TIMEOUT:
             return self._go_attract_gallery(model, now)
         return TransitionResult(model=model)
@@ -211,6 +219,61 @@ class StateMachine:
             return self._go_main_menu(model, now)
         return TransitionResult(model=model)
 
+    # NEU (3.2): PIN-Eingabe (Ziffernfeld)
+    def _handle_pin_entry(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.PIN_DIGIT:
+            digit = str(event.payload.get("digit", ""))
+            if digit.isdigit() and len(model.ui.pin_entry) < _MAX_PIN_LENGTH:
+                ui = replace(model.ui, pin_entry=model.ui.pin_entry + digit, error_text=None)
+                timers = replace(model.timers, idle_deadline=now + self.config.shutdown.pin_entry_idle_seconds)
+                return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+            return TransitionResult(model=model)
+        if event.type == EventType.PIN_BACKSPACE:
+            ui = replace(model.ui, pin_entry=model.ui.pin_entry[:-1], error_text=None)
+            timers = replace(model.timers, idle_deadline=now + self.config.shutdown.pin_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.PIN_SUBMIT:
+            return self._handle_pin_submit(model, event, now)
+        if event.type in {EventType.PIN_ENTRY_CANCEL, EventType.IDLE_TIMEOUT}:
+            return self._go_main_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (3.2): Auswertung des PIN-Ergebnisses. Die App reicht das PinResult
+    # (plus attempts_left / remaining_seconds) im Payload herein - die State
+    # Machine fasst die Sperr-Datei bewusst nicht selbst an.
+    def _handle_pin_submit(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        result = event.payload.get("pin_result")
+
+        if result == PinResult.ACCEPTED:
+            return self._go_shutdown_goodbye(model, now)
+
+        if result == PinResult.NOT_CONFIGURED:
+            ui = replace(model.ui, pin_entry="", error_text="Shutdown-PIN ist nicht eingerichtet.")
+            return TransitionResult(model=model.evolve(ui=ui))
+
+        # Ab hier: falsche PIN oder Sperre -> Puffer leeren, Fehler-Optik
+        # zuenden (pin_error_deadline wird in _sync_led/_sync_button_led gelesen).
+        timers = replace(model.timers, pin_error_deadline=now + self.config.shutdown.error_flash_seconds)
+
+        if result == PinResult.REJECTED:
+            attempts_left = int(event.payload.get("attempts_left", 0))
+            ui = replace(model.ui, pin_entry="", error_text=f"Falsche PIN - noch {attempts_left} Versuch(e).")
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+
+        # PinResult.LOCKED oder PinResult.REJECTED_NOW_LOCKED
+        remaining = float(event.payload.get("remaining_seconds", 0.0))
+        minutes = max(1, int((remaining + 59) // 60))
+        ui = replace(model.ui, pin_entry="", error_text=f"Gesperrt - bitte {minutes} Min warten.")
+        return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+
+    # NEU (3.2): Abschieds-Animation. Bewusst nicht abbrechbar - der Shutdown
+    # wurde per PIN bestaetigt. Das eigentliche Poweroff loest die App bei
+    # SHUTDOWN_TIMEOUT ueber die "power_off"-Action aus.
+    def _handle_shutdown_goodbye(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.SHUTDOWN_TIMEOUT:
+            return TransitionResult(model=model, actions=("power_off",))
+        return TransitionResult(model=model)
+
     def _go_main_menu(self, model: AppModel, now: float) -> TransitionResult:
         return TransitionResult(model=self._main_menu_model(model, now), actions=("stop_preview", "set_led_main_menu"))
 
@@ -286,6 +349,30 @@ class StateMachine:
         ui = replace(model.ui, countdown_value=countdown_start, status_text="")
         return TransitionResult(model=model.evolve(state=AppState.COUNTDOWN, timers=timers, ui=ui), actions=("set_led_countdown",))
 
+    # NEU (3.2): Wechsel ins Ziffernfeld nach erkannter Geheim-Geste.
+    def _go_pin_entry(self, model: AppModel, now: float) -> TransitionResult:
+        timers = replace(
+            model.timers,
+            idle_deadline=now + self.config.shutdown.pin_entry_idle_seconds,
+            preview_warning_deadline=None,
+            preview_total_deadline=None,
+            preview_auto_countdown_deadline=None,
+            pin_error_deadline=None,
+        )
+        ui = replace(model.ui, pin_entry="", status_text="Wartungs-PIN eingeben", error_text=None, countdown_value=None)
+        return TransitionResult(model=model.evolve(state=AppState.PIN_ENTRY, timers=timers, ui=ui), actions=("stop_preview",))
+
+    # NEU (3.2): Abschieds-Animation, danach faehrt die App den Pi herunter.
+    def _go_shutdown_goodbye(self, model: AppModel, now: float) -> TransitionResult:
+        timers = replace(
+            model.timers,
+            idle_deadline=None,
+            pin_error_deadline=None,
+            shutdown_goodbye_deadline=now + self.config.shutdown.goodbye_seconds,
+        )
+        ui = replace(model.ui, pin_entry="", status_text="Auf Wiedersehen!", error_text=None, countdown_value=None)
+        return TransitionResult(model=model.evolve(state=AppState.SHUTDOWN_GOODBYE, timers=timers, ui=ui), actions=("stop_preview",))
+
     def _main_menu_model(self, model: AppModel, now: float) -> AppModel:
         timers = replace(
             model.timers,
@@ -296,8 +383,17 @@ class StateMachine:
             delete_deadline=None,
             qr_deadline=None,
             countdown_deadline=None,
+            pin_error_deadline=None,           # GEAENDERT (3.2): Shutdown-Deadlines mit aufraeumen
+            shutdown_goodbye_deadline=None,    # GEAENDERT (3.2)
         )
-        ui = replace(model.ui, selected_gallery_index=None, countdown_value=None, status_text="Willkommen an der Fotobox!", error_text=None)
+        ui = replace(
+            model.ui,
+            selected_gallery_index=None,
+            countdown_value=None,
+            status_text="Willkommen an der Fotobox!",
+            error_text=None,
+            pin_entry="",                       # GEAENDERT (3.2): getippte PIN nie liegen lassen
+        )
         return model.evolve(state=AppState.MAIN_MENU, timers=timers, ui=ui)
 
     @staticmethod
