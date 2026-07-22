@@ -649,17 +649,11 @@ class Renderer:
                 pygame.draw.rect(self.screen, border, self.screen.get_rect(), width=12)
 
     def _draw_shutdown_goodbye(self, model: AppModel) -> None:
-        """Abschieds-Screen (AppState.SHUTDOWN_GOODBYE): Wallpaper +
-        "Auf Wiedersehen!". Danach faehrt die App den Pi herunter."""
+        """Abschieds-Screen (AppState.SHUTDOWN_GOODBYE): nur das Wallpaper
+        (der Text steckt im Bild selbst). Danach faehrt die App den Pi herunter."""
         image = self._get_shutdown_background()
         if image is not None:
             self.screen.blit(image, (0, 0))
-        height = self.config.screen.height
-        text = model.ui.status_text or "Auf Wiedersehen!"
-        cy = round(0.82 * height)
-        # Dunkler Schatten fuer Lesbarkeit auf dem hellen Motiv, dann Text.
-        self._blit_center(text, self.font_title, (0, 0, 0), cy + 2)
-        self._blit_center(text, self.font_title, (255, 245, 230), cy)
 
     def _get_shutdown_background(self) -> pygame.Surface | None:
         # Gleiche Cache-/Cover-Skalier-Logik wie _get_boot_background /
