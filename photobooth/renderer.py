@@ -60,6 +60,7 @@ class Renderer:
         self._current_countdown_image: pygame.Surface | None = None
         self._main_menu_background: pygame.Surface | bool | None = None
         self._boot_background: pygame.Surface | bool | None = None
+        self._shutdown_background: pygame.Surface | bool | None = None  # NEU (3.3)
         self.gallery_thumbnail_hitboxes: list[tuple[pygame.Rect, int]] = []
         # Scroll-Position der Anleitung (in Pixeln). Lebt bewusst nur hier im
         # Renderer (reine Anzeige-Angelegenheit), nicht im AppModel/State
@@ -130,6 +131,12 @@ class Renderer:
         if model.state == AppState.TERMS:
             self._draw_terms()
 
+        if model.state == AppState.PIN_ENTRY:            # NEU (3.3)
+            self._draw_pin_entry(model)
+
+        if model.state == AppState.SHUTDOWN_GOODBYE:      # NEU (3.3)
+            self._draw_shutdown_goodbye(model)
+
         # Bei Ziffer 1 (Liveview aus, "bitte laecheln") soll GAR KEIN Text
         # mehr zu sehen sein - weder Titel noch Statuszeile.
         hide_all_text = model.state == AppState.COUNTDOWN and model.ui.countdown_value == 1
@@ -137,7 +144,7 @@ class Renderer:
         # Titel wird in der Anleitung, den Nutzungsbedingungen und bei
         # Ziffer 1 bewusst weggelassen (eigene scrollbare Textansichten,
         # die den vollen Bildschirm brauchen).
-        text_screens = {AppState.INSTRUCTIONS, AppState.TERMS}
+        text_screens = {AppState.INSTRUCTIONS, AppState.TERMS, AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE}
 
         if model.state not in text_screens and not hide_all_text:
             self._draw_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
@@ -152,7 +159,7 @@ class Renderer:
             status_font = self.font_status_main_menu if model.state == AppState.MAIN_MENU else self.font_body
             self._draw_text(model.ui.status_text, status_font, status_color, (60, 240))
 
-        if model.ui.error_text:
+        if model.ui.error_text and model.state not in text_screens:
             self._draw_text(model.ui.error_text, self.font_body, (255, 120, 120), (60, 320))
 
         if model.state == AppState.GALLERY_GRID:
@@ -564,6 +571,103 @@ class Renderer:
         hint_rect = hint_surf.get_rect(center=(width // 2, card_rect.top - 40))
         self.screen.blit(hint_surf, hint_rect)
 
+    def _blit_center(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], cy: int) -> None:
+        # Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
+        # (das uebliche _draw_text ist linksbuendig ab (x, y)).
+        surf = font.render(text, True, color)
+        rect = surf.get_rect(center=(self.config.screen.width // 2, cy))
+        self.screen.blit(surf, rect)
+
+    def _draw_pin_entry(self, model: AppModel) -> None:
+        """Verstecktes Ziffernfeld fuer die Wartungs-PIN (AppState.PIN_ENTRY).
+
+        Erreichbar nur ueber die Geheim-Geste im Hauptmenue (siehe
+        shutdown_service / app_with_hw). Die eingegebene PIN wird maskiert
+        (ein Kreis je Ziffer), das Raster kommt aus layout.pin_keys.
+        """
+        width, height = self.config.screen.width, self.config.screen.height
+
+        # Kopfzeile (vom State gesetzt: "Wartungs-PIN eingeben").
+        header = model.ui.status_text or "Wartungs-PIN eingeben"
+        self._blit_center(header, self.font_title, (255, 255, 255), round(0.07 * height))
+
+        # Maskierte Anzeige: ein gefuellter Kreis pro eingegebener Ziffer.
+        n = len(model.ui.pin_entry)
+        if n:
+            radius = 14
+            spacing = 44
+            total_w = (n - 1) * spacing
+            cx0 = width // 2 - total_w // 2
+            cy = round(0.17 * height)
+            for i in range(n):
+                pygame.draw.circle(self.screen, (240, 240, 240), (cx0 + i * spacing, cy), radius)
+
+        # Fehlermeldung mittig unter der PIN-Anzeige.
+        if model.ui.error_text:
+            self._blit_center(model.ui.error_text, self.font_body, (255, 120, 120), round(0.235 * height))
+
+        # Ziffernfeld aus layout.pin_keys. Ziffern-Schluessel sind bereits
+        # "0".."9"; Sondertasten bekommen sprechende Beschriftungen/Farben.
+        labels = {"backspace": "Löschen", "submit": "OK", "cancel": "Abbrechen"}
+        colors = {"backspace": (120, 90, 0), "submit": (0, 130, 0), "cancel": (100, 100, 100)}
+        for name, rect in self.layout.pin_keys.items():
+            self._draw_button(labels.get(name, name), rect, colors.get(name, (55, 65, 85)))
+
+        # Fehler-Optik: schnelles Rot/Gelb-Blinken am Bildschirmrand als
+        # Bildschirm-Echo zur LED-/Taster-Fehleranzeige, solange
+        # pin_error_deadline laeuft (gleiche Uhr wie die App: time.monotonic).
+        deadline = model.timers.pin_error_deadline
+        if deadline is not None:
+            now = time.monotonic()
+            if now < deadline:
+                phase = int(now * self.config.shutdown.error_button_flash_hz) % 2
+                border = (self.config.shutdown.error_ring_color_rgb if phase == 0
+                          else self.config.shutdown.error_accent_color_rgb)
+                pygame.draw.rect(self.screen, border, self.screen.get_rect(), width=12)
+
+    def _draw_shutdown_goodbye(self, model: AppModel) -> None:
+        """Abschieds-Screen (AppState.SHUTDOWN_GOODBYE): Wallpaper +
+        "Auf Wiedersehen!". Danach faehrt die App den Pi herunter."""
+        image = self._get_shutdown_background()
+        if image is not None:
+            self.screen.blit(image, (0, 0))
+        height = self.config.screen.height
+        text = model.ui.status_text or "Auf Wiedersehen!"
+        cy = round(0.82 * height)
+        # Dunkler Schatten fuer Lesbarkeit auf dem hellen Motiv, dann Text.
+        self._blit_center(text, self.font_title, (0, 0, 0), cy + 2)
+        self._blit_center(text, self.font_title, (255, 245, 230), cy)
+
+    def _get_shutdown_background(self) -> pygame.Surface | None:
+        # Gleiche Cache-/Cover-Skalier-Logik wie _get_boot_background /
+        # _get_main_menu_background.
+        if self._shutdown_background is False:
+            return None
+        if self._shutdown_background is not None:
+            return self._shutdown_background  # type: ignore[return-value]
+
+        path = self.config.assets_dir / "shutdown_wallpaper.png"
+        try:
+            raw = pygame.image.load(str(path)).convert()
+        except (pygame.error, FileNotFoundError):
+            print(f"[Renderer] Shutdown-Hintergrundbild nicht gefunden: {path}")
+            self._shutdown_background = False
+            return None
+
+        target_w, target_h = self.config.screen.width, self.config.screen.height
+        img_w, img_h = raw.get_size()
+        scale = max(target_w / img_w, target_h / img_h)
+        scaled_w, scaled_h = max(1, round(img_w * scale)), max(1, round(img_h * scale))
+        scaled = pygame.transform.smoothscale(raw, (scaled_w, scaled_h))
+
+        canvas = pygame.Surface((target_w, target_h))
+        offset_x = (target_w - scaled_w) // 2
+        offset_y = (target_h - scaled_h) // 2
+        canvas.blit(scaled, (offset_x, offset_y))
+        self._shutdown_background = canvas
+        return canvas
+
+
     def _draw_instructions(self) -> None:
         """Scrollbarer Anleitungstext, ohne Titel darueber (siehe render()).
 
@@ -689,7 +793,7 @@ class Renderer:
             "Lutz Buchholz",
             "Dechant-Fein-Str. 24",
             "51375 Leverkusen",
-            "lutz-peter@imail.de", 
+            "lutz-peter@imail.de",
             "0163 8506144",
         ]
 
@@ -842,5 +946,7 @@ class Renderer:
             AppState.INSTRUCTIONS: (20, 20, 35),
             AppState.TERMS: (20, 20, 35),
             AppState.ERROR_SCREEN: (80, 10, 10),
+            AppState.PIN_ENTRY: (18, 22, 30),          # NEU (3.3)
+            AppState.SHUTDOWN_GOODBYE: (10, 10, 15),   # NEU (3.3)
             AppState.MAINTENANCE: (50, 50, 10),
         }[state]
