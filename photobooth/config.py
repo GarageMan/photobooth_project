@@ -174,6 +174,19 @@ class ShutdownConfig:
     # zurueck.
     lockout_seconds: int = 30 * 60
 
+    # --- Ablauf-Zeiten des PIN-/Shutdown-Flows (Schritt 3) ---
+    # Idle-Timeout der PIN-Eingabe: wird der Screen so lange nicht bedient,
+    # geht es automatisch zurueck ins Hauptmenue (die getippte PIN wird
+    # dabei verworfen).
+    pin_entry_idle_seconds: float = 30.0
+    # Dauer der Fehler-Optik (rot/gelb + Taster-Blitz) nach einer falschen PIN.
+    error_flash_seconds: float = 1.2
+    # Dauer der Abschieds-Animation (SHUTDOWN_GOODBYE), bevor der Pi
+    # tatsaechlich heruntergefahren wird. Muss >= der Laufzeit von
+    # led_shutdown.py (TOTAL_SECONDS ~ 8.72s) sein, damit die
+    # Sonnenuntergangs-Animation vollstaendig durchlaeuft.
+    goodbye_seconds: float = 9.0
+
     # Fehler-Optik bei falscher PIN (rot/gelb am LED-Ring + Taster-LED-Blitz).
     # Nur die Parameter; die eigentliche Ausgabe erfolgt state-derived im
     # LED-/App-Layer (Integrationsschritt).

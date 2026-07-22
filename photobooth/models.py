@@ -21,6 +21,14 @@ class TimerState:
     attract_switch_deadline: float | None = None
     countdown_deadline: float | None = None
     capture_trigger_deadline: float | None = None
+    # --- Verstecktes Herunterfahren (Schritt 3) ---
+    # Laeuft die Fehler-Optik (rot/gelb) nach einer falschen PIN: solange
+    # now < pin_error_deadline, zeigen _sync_led()/_sync_button_led() den
+    # Fehler-Blitz - zustandsgetrieben, analog zur Countdown-Logik.
+    pin_error_deadline: float | None = None
+    # Ende der Abschieds-Animation. Bei Erreichen loest die App SHUTDOWN_TIMEOUT
+    # aus und faehrt den Pi herunter.
+    shutdown_goodbye_deadline: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -30,6 +38,11 @@ class UiState:
     countdown_value: int | None = None
     status_text: str = ""
     error_text: str | None = None
+    # --- Verstecktes Herunterfahren (Schritt 3) ---
+    # Bisher eingegebene PIN-Ziffern im PIN_ENTRY-Screen (fuer die maskierte
+    # Anzeige). Wird beim Betreten und beim Verlassen des Screens geleert,
+    # damit die getippte PIN nie in anderen Zustaenden liegen bleibt.
+    pin_entry: str = ""
 
 
 @dataclass(slots=True, frozen=True)
