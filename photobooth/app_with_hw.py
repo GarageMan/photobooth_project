@@ -53,7 +53,8 @@ from states import AppState
 from storage_service import StorageService
 from layout import build_layout, button_rects_for_state
 from renderer import Renderer
-
+from shutdown_service import PinLockout, SecretGestureDetector  # NEU (3.4)
+import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
 
 # ------------------------------------------------------------------------------
 # Provider-Auswahl per Feature-Flag
@@ -166,6 +167,17 @@ class PhotoboothApp:
         self._qr_surface: pygame.Surface | None = None
         self.running = True
 
+        # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
+        # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
+        # in der State Machine), da es eine Datei schreibt; die State
+        # Machine bekommt bei PIN_SUBMIT nur das fertige PinResult im Payload.
+        self._pin_lockout = PinLockout.from_config(config.shutdown)
+        self._gesture_detector = SecretGestureDetector.from_config(
+            config.shutdown, config.screen.width, config.screen.height
+        )
+        # Verhindert wiederholtes Ausloesen des Poweroffs in SHUTDOWN_GOODBYE.
+        self._power_off_requested = False
+
         print("[App] Initialisierung abgeschlossen.")
 
     # -- Hauptschleife ---------------------------------------------------------
@@ -210,6 +222,12 @@ class PhotoboothApp:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             self.running = False
             return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_F9 and self.config.features.debug_overlay:
+            # NUR Debug: direkt in die PIN-Eingabe springen, ohne die
+            # Geheim-Geste ausfuehren zu muessen.
+            if self.model.state == AppState.MAIN_MENU:
+                self.dispatch(AppEvent(EventType.SHUTDOWN_GESTURE_DETECTED, source="debug_hotkey"))
+            return
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             # Nur Startposition merken - NICHT sofort einen Klick/Tap ausloesen.
@@ -220,6 +238,9 @@ class PhotoboothApp:
             # dadurch praktisch jeder Scroll-Versuch sofort ins Vollbild springen.
             self.touch_start_x = event.pos[0]
             self.touch_start_y = event.pos[1]
+            # NEU (3.4): Geheim-Geste nur im Hauptmenue mitschneiden (Down).
+            if self.model.state == AppState.MAIN_MENU:
+                self._gesture_detector.on_touch_down(event.pos, time.monotonic())
             return
 
         if event.type == pygame.MOUSEBUTTONUP and self.touch_start_x is not None:
@@ -228,6 +249,15 @@ class PhotoboothApp:
             start_pos = (self.touch_start_x, self.touch_start_y)
             self.touch_start_x = None
             self.touch_start_y = None
+
+            # NEU (3.4): Geheim-Geste nur im Hauptmenue auswerten (Up). Erst
+            # die vollstaendige Sequenz loest SHUTDOWN_GESTURE_DETECTED aus;
+            # Beruehrungen ausserhalb der unsichtbaren Ecke ignoriert der
+            # Detektor selbst.
+            if self.model.state == AppState.MAIN_MENU:
+                if self._gesture_detector.on_touch_up(event.pos, time.monotonic()):
+                    self.dispatch(AppEvent(EventType.SHUTDOWN_GESTURE_DETECTED, source="gesture"))
+                    return
 
             if self.model.state == AppState.GALLERY_FULLSCREEN:
                 if dx < -100:
@@ -304,6 +334,9 @@ class PhotoboothApp:
                 if rect.collidepoint(pos):
                     return AppEvent(EventType.TAP_FULLSCREEN_PHOTO, payload={"index": index}, source="touch")
 
+        if state == AppState.PIN_ENTRY:                       # NEU (3.4)
+            return self._map_pin_entry_click(pos)
+
         rects = button_rects_for_state(state, self.layout)
 
         mapping = {
@@ -323,11 +356,55 @@ class PhotoboothApp:
                 return mapping[name]
         return None
 
+    def _map_pin_entry_click(self, pos: tuple[int, int]) -> AppEvent | None:
+        # Ziffernfeld: Treffer gegen layout.pin_keys pruefen und in das
+        # passende Event uebersetzen.
+        for name, rect in self.layout.pin_keys.items():
+            if not rect.collidepoint(pos):
+                continue
+            if name == "cancel":
+                return AppEvent(EventType.PIN_ENTRY_CANCEL, source="touch")
+            if name == "backspace":
+                return AppEvent(EventType.PIN_BACKSPACE, source="touch")
+            if name == "submit":
+                entered = self.model.ui.pin_entry
+                if not entered:
+                    return None  # leere Eingabe: keinen Fehlversuch verbrennen
+                # PIN pruefen (PinLockout lebt in der App, nicht in der State
+                # Machine). Ergebnis + Restinfos als Payload; die State Machine
+                # entscheidet nur ueber den Uebergang.
+                result = self._pin_lockout.check(entered, self.config.shutdown.pin, now_wall=time.time())
+                return AppEvent(
+                    EventType.PIN_SUBMIT,
+                    payload={
+                        "pin_result": result,
+                        "attempts_left": self._pin_lockout.attempts_left(),
+                        "remaining_seconds": self._pin_lockout.remaining_seconds(),
+                    },
+                    source="touch",
+                )
+            if name.isdigit():
+                return AppEvent(EventType.PIN_DIGIT, payload={"digit": name}, source="touch")
+        return None
+
+
     # -- Timer-Events ----------------------------------------------------------
 
     def _emit_due_timers(self, now: float) -> None:
         timers = self.model.timers
         state = self.model.state
+
+        # NEU (3.4): PIN_ENTRY-Idle und Abschieds-Timeout vorab und in sich
+        # abgeschlossen behandeln - unabhaengig von der uebrigen Timer-Kette.
+        if state == AppState.PIN_ENTRY:
+            if self._due(timers.idle_deadline, now):
+                self.dispatch(AppEvent(EventType.IDLE_TIMEOUT, source="timer"), now)
+            return
+        if state == AppState.SHUTDOWN_GOODBYE:
+            if not self._power_off_requested and self._due(timers.shutdown_goodbye_deadline, now):
+                self._power_off_requested = True
+                self.dispatch(AppEvent(EventType.SHUTDOWN_TIMEOUT, source="timer"), now)
+            return
 
         idle_states = {
             AppState.MAIN_MENU,
@@ -443,6 +520,8 @@ class PhotoboothApp:
                 self._generate_qr_surface()
             elif action == "delete_photo":
                 self._delete_photo(previous_model)
+            elif action == "power_off":                      # NEU (3.4)
+                self._power_off()
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -483,6 +562,23 @@ class PhotoboothApp:
             print(f"[App] Foto gelöscht: {path}")
         else:
             print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
+
+def _power_off(self) -> None:
+        # Scharfes Herunterfahren (Schritt 3.4b). Die App laeuft als root,
+        # daher genuegt der direkte Aufruf - die sudoers-Regel muss dafuer
+        # NICHT erweitert werden. Ring- und Taster-LED sind in SHUTDOWN_GOODBYE
+        # bereits aus, die Kamera ist freigegeben (stop_preview beim Wechsel in
+        # den Abschieds-Screen). Der Abschieds-Screen bleibt bewusst stehen
+        # (kein self.running = False), bis das System die App beendet.
+        print("[App] Fahre Pi herunter (shutdown -h now).")
+        try:
+            subprocess.Popen(["shutdown", "-h", "now"])
+        except Exception as exc:
+            # Falls das Kommando nicht ausfuehrbar ist (z.B. nicht als root
+            # gestartet), nicht ewig im Abschieds-Screen haengen bleiben.
+            print(f"[App] FEHLER beim Herunterfahren: {exc}")
+            self.running = False
+
 
     # -- LED & Button-LED synchronisieren --------------------------------------
 
@@ -598,6 +694,7 @@ class PhotoboothApp:
             AppState.CAPTURE_PENDING, AppState.REVIEW, AppState.QR_DISPLAY,
             AppState.DELETE_CONFIRM, AppState.ERROR_SCREEN,
             AppState.BOOT, AppState.MAINTENANCE,
+            AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE,   # NEU (3.4)
         }:
             self._button_provider.set_led(False)
             return
