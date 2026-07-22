@@ -5,14 +5,52 @@ from pathlib import Path
 
 # Echte Zugangsdaten liegen NICHT im Code, sondern in local_secrets.py
 # (nicht versioniert, siehe .gitignore und local_secrets_example.py).
-# Fallback auf einen auffaelligen Platzhalter, falls die Datei auf einem
-# frischen Checkout noch fehlt - fuehrt zu einer klar erkennbaren
-# Fehlanzeige statt eines stillen Fehlers.
+# Jeder Wert wird EINZELN mit getattr geladen und faellt fuer sich auf
+# einen Standard zurueck. Wichtig: ein fehlender neuer Wert (z.B. in einer
+# aelteren local_secrets.py) darf NICHT die bereits vorhandenen Werte mit
+# in den Fallback reissen - genau das wuerde ein "from local_secrets import
+# A, B" tun, sobald B fehlt.
 try:
-    from local_secrets import GUEST_WIFI_PASSWORD
+    import local_secrets as _secrets
 except ImportError:
-    GUEST_WIFI_PASSWORD = "BITTE_local_secrets.py_ANLEGEN"
+    _secrets = None
     print("[Config] WARNUNG: local_secrets.py fehlt - siehe local_secrets_example.py")
+
+_PLACEHOLDER = "BITTE_local_secrets.py_ANLEGEN"
+GUEST_WIFI_PASSWORD = getattr(_secrets, "GUEST_WIFI_PASSWORD", _PLACEHOLDER)
+SHUTDOWN_PIN = getattr(_secrets, "SHUTDOWN_PIN", _PLACEHOLDER)
+
+# Parameter der Geheim-Geste - ebenfalls aus local_secrets.py, damit weder
+# Muster noch Position im Repo stehen. Sinnvolle Standards, falls nicht
+# gesetzt (die Geste funktioniert dann trotzdem, nur eben mit den hier
+# hinterlegten Default-Werten).
+SHUTDOWN_GESTURE_ZONE = getattr(_secrets, "SHUTDOWN_GESTURE_ZONE", "rechts")
+SHUTDOWN_GESTURE_PATTERN = getattr(
+    _secrets, "SHUTDOWN_GESTURE_PATTERN",
+    ("kurz", "kurz", "kurz", "lang", "kurz", "kurz"),
+)
+SHUTDOWN_LONG_PRESS_SECONDS = getattr(_secrets, "SHUTDOWN_LONG_PRESS_SECONDS", 0.6)
+
+
+# Vier waehlbare, unsichtbare Zonen fuer die Geste - jeweils als Bruchteil
+# der Bildschirmflaeche (x, y, Breite, Hoehe). Alle vier sind so gelegt,
+# dass sie KEINEN der vier diagonalen Hauptmenue-Buttons ueberlappen (sonst
+# wuerde ein Tipp doppelt interpretiert). Buttons liegen in x[0.06..0.92],
+# y[0.53..0.885]; die Zonen weichen dem aus.
+_GESTURE_ZONE_FRACTIONS = {
+    "oben":   (0.40, 0.00, 0.20, 0.12),  # oberer Rand, mittig
+    "unten":  (0.40, 0.88, 0.20, 0.12),  # unterer Rand, mittig
+    "links":  (0.00, 0.15, 0.12, 0.16),  # linker Rand, oben
+    "rechts": (0.88, 0.15, 0.12, 0.16),  # rechter Rand, oben
+}
+
+
+def _resolve_gesture_zone(name: str) -> tuple[float, float, float, float]:
+    key = str(name).strip().lower()
+    if key not in _GESTURE_ZONE_FRACTIONS:
+        print(f"[Config] WARNUNG: unbekannte Shutdown-Geste-Zone '{name}' - nutze 'rechts'")
+        key = "rechts"
+    return _GESTURE_ZONE_FRACTIONS[key]
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -81,11 +119,9 @@ class GpioConfig:
     # gemeinsam ueber denselben Optokoppler an shutter_pin (GPIO17) ausgeloest.
     #
     # HINWEIS: Kein led_ring_pin-Feld mehr - das war ein Relikt der urspruenglich
-    # geplanten PWM/GPIO12-Ansteuerung (rpi_ws281x). Seit der Umstellung auf
-    # SPI (siehe hw_led_provider.py) laeuft der LED-Ring fest ueber SPI0/GPIO10
-    # (Pin 19); dieses Feld wurde nirgends mehr gelesen und haette bei einer
-    # kuenftigen Doku/Diagnose faelschlich wieder auf das obsolete GPIO12/Pin32
-    # verwiesen.
+    # geplanten PWM-Ansteuerung (rpi_ws281x). Seit der Umstellung auf SPI
+    # (siehe hw_led_provider.py) laeuft der LED-Ring fest ueber SPI0/GPIO10
+    # (Pin 19); dieses Feld wurde nirgends mehr gelesen.
     led_count: int = 35
 
 
@@ -94,6 +130,7 @@ class NetworkConfig:
     raspi_ip: str = "192.168.0.100"
     photo_url_prefix: str = "http://192.168.0.100/fotos"
     guest_wifi_password: str = GUEST_WIFI_PASSWORD
+
 
 @dataclass(frozen=True)
 class GalleryConfig:
@@ -109,6 +146,48 @@ class GalleryConfig:
 
 
 @dataclass(frozen=True)
+class ShutdownConfig:
+    # Verstecktes Herunterfahren per Geheim-Geste im Hauptmenue + PIN.
+    # PIN, Zone, Muster und Long-Press-Dauer kommen aus local_secrets.py
+    # (Fallbacks siehe oben) - stehen bewusst NICHT im Repo.
+    pin: str = SHUTDOWN_PIN
+
+    # Gewaehlte Zone als Schluesselwort (nur informativ / fuer Debug-Ausgaben).
+    gesture_zone: str = SHUTDOWN_GESTURE_ZONE
+    # Zone als konkretes Bruchteil-Rechteck (x, y, Breite, Hoehe), aus dem
+    # Schluesselwort aufgeloest. Der Detector rechnet das mit der aktuellen
+    # Bildschirmgroesse in Pixel um (SecretGestureDetector.from_config).
+    gesture_corner_fraction: tuple[float, float, float, float] = _resolve_gesture_zone(SHUTDOWN_GESTURE_ZONE)
+
+    # Muster der Geste ("Anzahl"): Reihenfolge aus "kurz"/"lang".
+    gesture_pattern: tuple[str, ...] = SHUTDOWN_GESTURE_PATTERN
+    # Dauer: ab dieser Haltedauer gilt ein Tipp als "lang" (Sekunden).
+    long_press_seconds: float = SHUTDOWN_LONG_PRESS_SECONDS
+    # Groesste erlaubte Pause zwischen zwei Tipps; danach beginnt die Geste
+    # von vorn. Bewusst in config (Robustheits-Konstante, kein Geheimnis).
+    gesture_max_gap_seconds: float = 2.0
+
+    # PIN-Eingabe: nach so vielen Fehlversuchen wird gesperrt ...
+    max_pin_attempts: int = 3
+    # ... und zwar fuer so viele Sekunden (30 Minuten). Persistent, siehe
+    # lockout_file - ein Neustart der App/des Pi setzt die Sperre NICHT
+    # zurueck.
+    lockout_seconds: int = 30 * 60
+
+    # Fehler-Optik bei falscher PIN (rot/gelb am LED-Ring + Taster-LED-Blitz).
+    # Nur die Parameter; die eigentliche Ausgabe erfolgt state-derived im
+    # LED-/App-Layer (Integrationsschritt).
+    error_ring_color_rgb: tuple[int, int, int] = (200, 0, 0)      # Rot
+    error_accent_color_rgb: tuple[int, int, int] = (220, 160, 0)  # Gelb/Amber
+    error_button_flash_count: int = 3
+    error_button_flash_hz: float = 6.0
+
+    # Persistente Sperr-/Zaehlerdatei. Liegt unter data/ (in .gitignore,
+    # ueberlebt Neustart/Reboot). Bewusst NICHT im Repo.
+    lockout_file: Path = DATA_DIR / "shutdown_lockout.json"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     timeouts: TimeoutConfig = field(default_factory=TimeoutConfig)
@@ -116,6 +195,7 @@ class AppConfig:
     gpio: GpioConfig = field(default_factory=GpioConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     gallery: GalleryConfig = field(default_factory=GalleryConfig)
+    shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
     cache_dir: Path = CACHE_DIR
