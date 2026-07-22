@@ -97,8 +97,6 @@ class Renderer:
 
         if model.state == AppState.MAIN_MENU:
             self._draw_main_menu_background()
-            if self.config.features.debug_overlay:              # NUR Debug
-                self._draw_gesture_corner_debug()
 
         if model.state == AppState.BOOT:
             self._draw_boot_background()
@@ -573,27 +571,6 @@ class Renderer:
         hint_rect = hint_surf.get_rect(center=(width // 2, card_rect.top - 40))
         self.screen.blit(hint_surf, hint_rect)
 
-    def _draw_gesture_corner_debug(self) -> None:
-        # NUR Debug: alle vier moeglichen Geste-Zonen einblenden. Die aktive
-        # (aus config.shutdown.gesture_corner_fraction) magenta, die anderen
-        # drei gelb - zum Finden/Treffen der unsichtbaren Ecke beim Testen.
-        w, h = self.config.screen.width, self.config.screen.height
-        zones = {
-            "oben":   (0.40, 0.00, 0.20, 0.12),
-            "unten":  (0.40, 0.88, 0.20, 0.12),
-            "links":  (0.00, 0.15, 0.12, 0.16),
-            "rechts": (0.88, 0.15, 0.12, 0.16),
-        }
-        active = tuple(self.config.shutdown.gesture_corner_fraction)
-        for name, (fx, fy, fw, fh) in zones.items():
-            r = pygame.Rect(round(fx * w), round(fy * h), round(fw * w), round(fh * h))
-            is_active = (fx, fy, fw, fh) == active
-            color = (255, 0, 255) if is_active else (230, 210, 0)
-            pygame.draw.rect(self.screen, color, r, width=3)
-            tag = f"{name} (aktiv)" if is_active else name
-            label = self.font_body.render(tag, True, color)
-            self.screen.blit(label, (r.left, r.bottom + 2))
-
     def _blit_center(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], cy: int) -> None:
         # Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
         # (das uebliche _draw_text ist linksbuendig ab (x, y)).
@@ -810,7 +787,7 @@ class Renderer:
             "Lutz Buchholz",
             "Dechant-Fein-Str. 24",
             "51375 Leverkusen",
-            "lutz-peter@imail.de", 
+            "lutz-peter@imail.de",
             "0163 8506144",
         ]
 
