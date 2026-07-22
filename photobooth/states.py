@@ -20,3 +20,10 @@ class AppState(Enum):
     TERMS = auto()
     ERROR_SCREEN = auto()
     MAINTENANCE = auto()
+    # --- Verstecktes Herunterfahren (Schritt 3) ---
+    # PIN_ENTRY: Ziffernfeld, erscheint nach erkannter Geheim-Geste im
+    # Hauptmenue (siehe shutdown_service.SecretGestureDetector).
+    PIN_ENTRY = auto()
+    # SHUTDOWN_GOODBYE: Abschieds-Animation (Wallpaper shutdown_wallpaper.png
+    # + LED-Sonnenuntergang led_shutdown.py); danach faehrt der Pi herunter.
+    SHUTDOWN_GOODBYE = auto()

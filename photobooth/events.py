@@ -35,6 +35,19 @@ class EventType(Enum):
     PREVIEW_READY = auto()
     PREVIEW_FAILED = auto()
     ERROR_ACKNOWLEDGED = auto()
+    # --- Verstecktes Herunterfahren (Schritt 3) ---
+    # Geheim-Geste im Hauptmenue erkannt -> Wechsel nach PIN_ENTRY.
+    SHUTDOWN_GESTURE_DETECTED = auto()
+    # Ziffernfeld-Eingaben. PIN_DIGIT traegt die getippte Ziffer im payload
+    # als {"digit": "0".."9"}; der State-/App-Layer haengt sie an den
+    # Eingabepuffer an.
+    PIN_DIGIT = auto()
+    PIN_BACKSPACE = auto()      # letzte Ziffer loeschen
+    PIN_SUBMIT = auto()         # aktuelle Eingabe pruefen (PinLockout.check)
+    PIN_ENTRY_CANCEL = auto()   # Eingabe abbrechen -> zurueck ins Hauptmenue
+    # Abschieds-Animation (SHUTDOWN_GOODBYE) abgelaufen -> App loest das
+    # eigentliche Poweroff aus. Analog zu den uebrigen *_TIMEOUT-Events.
+    SHUTDOWN_TIMEOUT = auto()
 
 
 @dataclass(slots=True, frozen=True)
