@@ -66,7 +66,7 @@ class StateMachineTestCase(unittest.TestCase):
         self.boot_and_go_to_countdown_menu()
         result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
         self.assertEqual(result.model.state, AppState.COUNTDOWN)
-        self.assertEqual(result.model.ui.countdown_value, 4)
+        self.assertEqual(result.model.ui.countdown_value, self.config.timeouts.countdown_seconds[0])
 
     def test_countdown_menu_idle_timeout_goes_to_main_menu(self) -> None:
         self.boot_and_go_to_countdown_menu()
