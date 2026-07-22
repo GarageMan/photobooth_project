@@ -563,7 +563,7 @@ class PhotoboothApp:
         else:
             print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
 
-def _power_off(self) -> None:
+    def _power_off(self) -> None:
         # Scharfes Herunterfahren (Schritt 3.4b). Die App laeuft als root,
         # daher genuegt der direkte Aufruf - die sudoers-Regel muss dafuer
         # NICHT erweitert werden. Ring- und Taster-LED sind in SHUTDOWN_GOODBYE
