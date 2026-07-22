@@ -28,6 +28,9 @@ class LayoutRects:
     # sonst ungenutzten Rand am unteren Bildschirmrand fuer mehr Textzeilen
     # nutzbar zu machen (siehe _draw_terms/_draw_instructions).
     text_view_back: pygame.Rect
+    # NEU (3.3): Ziffernfeld fuer die versteckte PIN-Eingabe (PIN_ENTRY).
+    # Schluessel: "0".."9", "backspace", "submit", "cancel".
+    pin_keys: dict[str, pygame.Rect]
 
 
 def build_layout(width: int, height: int) -> LayoutRects:
@@ -80,6 +83,34 @@ def build_layout(width: int, height: int) -> LayoutRects:
     main_instructions = rect(diag_x0 + 2 * diag_x_step, diag_y0 + 2 * diag_y_step, diag_w, diag_h)
     main_terms = rect(diag_x0 + 3 * diag_x_step, diag_y0 + 3 * diag_y_step, diag_w, diag_h)
 
+    # NEU (3.3): Ziffernfeld fuer PIN_ENTRY.
+    # Zentriertes 3x4-Raster: 1-9, dann [backspace] 0 [submit].
+    # "cancel" bewusst abseits oben links, damit es beim Tippen der Ziffern
+    # nicht versehentlich getroffen wird.
+    key_w = 0.14
+    key_h = 0.135
+    gap_x = 0.035
+    gap_y = 0.03
+    grid_w = 3 * key_w + 2 * gap_x
+    grid_x0 = (1.0 - grid_w) / 2.0
+    grid_y0 = 0.30
+
+    def key_rect(col: int, row: int) -> pygame.Rect:
+        return rect(
+            grid_x0 + col * (key_w + gap_x),
+            grid_y0 + row * (key_h + gap_y),
+            key_w,
+            key_h,
+        )
+
+    pin_keys: dict[str, pygame.Rect] = {}
+    for i in range(9):                       # Ziffern 1-9
+        pin_keys[str(i + 1)] = key_rect(i % 3, i // 3)
+    pin_keys["backspace"] = key_rect(0, 3)   # untere Reihe: <-  0  OK
+    pin_keys["0"] = key_rect(1, 3)
+    pin_keys["submit"] = key_rect(2, 3)
+    pin_keys["cancel"] = rect(0.03, 0.03, 0.18, 0.09)
+
     return LayoutRects(
         main_photo=main_photo,
         main_gallery=main_gallery,
@@ -89,6 +120,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         right=right,
         back=back,
         text_view_back=text_view_back,
+        pin_keys=pin_keys,
     )
 
 
@@ -133,4 +165,6 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"cancel": rects.right}
     if state == AppState.ERROR_SCREEN:
         return {"back": rects.back}
+    if state == AppState.PIN_ENTRY:          # NEU (3.3)
+        return rects.pin_keys
     return {}

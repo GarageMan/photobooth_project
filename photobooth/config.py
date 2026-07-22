@@ -71,7 +71,7 @@ class ScreenConfig:
     width: int = 1280
     height: int = 720
     fullscreen: bool = True
-    title: str = "Fotobox - 150 Jahre-Feier"
+    title: str = "Minas Geburtstags-Fotobox"
     target_fps: int = 30
     hide_mouse: bool = True
 
