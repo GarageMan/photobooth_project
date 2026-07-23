@@ -15,8 +15,53 @@ aufgenommener Fotos als Blickfang.
 > Feier und eine Familienfeier). Alle UI-Texte und Code-Kommentare sind
 > auf Deutsch.
 
+## 🆘 Troubleshooting im Notfall (während einer Veranstaltung)
+
+Kurzanleitung für akute Probleme mittendrin — ohne lange Fehlersuche,
+einfach der Reihe nach ausprobieren.
+
+**Gäste finden das WLAN `Fotobox_Gast` nicht (auch nicht manuell):**
+1. TP-Link-Admin-Oberfläche öffnen (`http://192.168.0.1`, im
+   `Fotobox_Admin`-WLAN, oder `http://192.168.178.182:8080` im
+   Heimnetz)
+2. Seite **Gast-WLAN** öffnen, unten bei "Gast-WLAN" auf
+   **Deaktivieren** stellen, **Speichern**, dann sofort wieder auf
+   **Aktivieren**, **Speichern** — frischt das Funkmodul auf,
+   dauert ~30 Sekunden, kein Router-Neustart nötig
+3. Mit einem Handy erneut manuell nach `Fotobox_Gast` suchen (nicht
+   nur automatische Liste — WLAN-Scans werden teils gecacht)
+4. Hilft das nicht: Systemtools → Neustart (Router-Neustart, danach
+   2–3 Minuten warten)
+
+**Foto-Download funktioniert nicht (Handy im Gast-WLAN, aber kein Bild):**
+1. Prüfen, ob die Fotobox-App überhaupt läuft (Bildschirm reagiert?)
+2. Direkt im Handy-Browser testen: `http://192.168.0.100/fotos/`
+   (Adresse aus dem QR-Code notfalls manuell abtippen)
+3. Falls das schon fehlschlägt: `nginx`-Status auf dem Pi prüfen
+   (`sudo systemctl status nginx`), im Zweifel
+   `sudo systemctl restart nginx`
+
+**App reagiert gar nicht mehr / hängt:**
+```bash
+sudo pkill -f app_with_hw.py
+```
+Die Autostart-Schleife (`start_fotobox.sh`) startet die App
+automatisch neu (siehe [Autostart](#autostart)).
+
+**Kamera reagiert nicht / Live-Vorschau bleibt schwarz:**
+1. USB-Kabel zur Nikon D3300 prüfen (Wackelkontakt?)
+2. Kamera aus-/wieder einschalten
+3. `sudo pkill -f app_with_hw.py` (siehe oben) — startet auch die
+   Kamera-Verbindung neu
+
+**Nichts davon hilft:** Als letzter Ausweg Pi einmal neu starten
+(`sudo reboot`) — dauert ~1–2 Minuten, App startet danach automatisch.
+
+---
+
 ## Inhaltsverzeichnis
 
+- [Troubleshooting im Notfall](#-troubleshooting-im-notfall-während-einer-veranstaltung)
 - [Funktionsumfang](#funktionsumfang)
 - [Hardware](#hardware)
 - [Architektur](#architektur)
@@ -24,7 +69,6 @@ aufgenommener Fotos als Blickfang.
 - [Installation auf dem Raspberry Pi](#installation-auf-dem-raspberry-pi)
 - [Konfiguration](#konfiguration)
 - [Autostart](#autostart)
-- [Verstecktes Herunterfahren](#verstecktes-herunterfahren)
 - [Netzwerk-Setup](#netzwerk-setup)
 - [Backup](#backup)
 - [Tests](#tests)
@@ -48,9 +92,6 @@ aufgenommener Fotos als Blickfang.
 - DSGVO/GDPR-Hinweis als eigener, scrollbarer Bildschirm (`TERMS`)
 - Touch- und Hardware-Button-Bedienung, Swipe-Gesten in der Galerie
 - Automatischer Neustart bei Absturz (`start_fotobox.sh`)
-- Verstecktes Herunterfahren per Geheim-Geste + PIN (ohne Tastatur/SSH),
-  mit Sonnenuntergangs-Animation am LED-Ring
-  (siehe [Verstecktes Herunterfahren](#verstecktes-herunterfahren))
 
 ## Hardware
 
@@ -141,8 +182,7 @@ Details — Hardware-Zugriffe stecken ausschließlich in den `hw_*`-Modulen.
 `BOOT → MAIN_MENU → ATTRACT_GALLERY / GALLERY_GRID / GALLERY_FULLSCREEN /
 PHOTO_INTRO → PHOTO_PREVIEW → COUNTDOWN → CAPTURE_PENDING → REVIEW →
 DELETE_CONFIRM → QR_DISPLAY`, außerdem `INSTRUCTIONS`, `TERMS`,
-`ERROR_SCREEN`, `MAINTENANCE` sowie `PIN_ENTRY` und `SHUTDOWN_GOODBYE`
-für das [versteckte Herunterfahren](#verstecktes-herunterfahren).
+`ERROR_SCREEN`, `MAINTENANCE`.
 
 ## Projektstruktur
 
@@ -156,8 +196,6 @@ für das [versteckte Herunterfahren](#verstecktes-herunterfahren).
 | `layout.py` | Layout-Konstanten/Bounding-Boxes für Buttons & Elemente |
 | `config.py` | Zentrale Konfiguration (`AppConfig` und Unter-Configs) |
 | `led_service.py` / `hw_led_provider.py` | LED-Choreografie (Enum-Pipeline) und SPI-Ansteuerung |
-| `led_shutdown.py` | Sonnenuntergangs-Animation des LED-Rings beim Herunterfahren (hardwarefreie `frame_colors(t)`) |
-| `shutdown_service.py` | Verstecktes Herunterfahren: Geheim-Geste-Erkennung + PIN-Sperre (reine Logik, keine Hardware) |
 | `hw_button_provider.py` | GPIO-Taster inkl. Taster-LED-Sync |
 | `hw_capture_provider.py` | Kameraauslösung (GPIO/Optokoppler) + gphoto2-Download |
 | `hw_gphoto2_preview_provider.py` | Live-Vorschau per gphoto2 |
@@ -201,7 +239,7 @@ es 403-Fehler auf Dateien unter `/home/photobox/`.
 
 Zentrale Einstellungen in `config.py` (`AppConfig` und Unter-Configs
 `ScreenConfig`, `TimeoutConfig`, `FeatureFlags`, `GpioConfig`,
-`NetworkConfig`, `GalleryConfig`, `ShutdownConfig`). Wichtige Felder:
+`NetworkConfig`, `GalleryConfig`). Wichtige Felder:
 
 - `photo_prefix` — Präfix für Dateinamen gespeicherter Fotos, Schema
   `{photo_prefix}{JJJJMMTTHHMMSS}.jpg`
@@ -223,66 +261,6 @@ Zentrale Einstellungen in `config.py` (`AppConfig` und Unter-Configs
   `~/photobooth/data/logs/fotobox.log`
 - Passwortloses `sudo` ist strikt auf
   `python3 /home/photobox/photobooth/app_with_hw.py` beschränkt
-
-## Verstecktes Herunterfahren
-
-Die Box lässt sich ohne Tastatur oder SSH sicher herunterfahren — über
-eine versteckte Geste im Hauptmenü, gefolgt von einer PIN. So kommt kein
-neugieriger Gast versehentlich an den Shutdown, der Betreiber aber
-jederzeit.
-
-**Ablauf:**
-
-1. Im Hauptmenü eine geheime Tipp-Geste in einer unsichtbaren
-   Bildschirmecke ausführen (Folge aus kurzen und langen Antippern).
-2. Es erscheint ein Ziffernfeld → PIN eingeben → „OK".
-3. Bei korrekter PIN: Abschieds-Screen mit Sonnenuntergangs-Animation am
-   LED-Ring (~9 s, `led_shutdown.py`), danach `shutdown -h now`.
-
-**Konfiguration in `local_secrets.py`** (bewusst dort, damit Muster und
-Zone der Geste **geheim** bleiben und nicht im Repository stehen — wie das
-Gast-WLAN-Passwort auch):
-
-- `SHUTDOWN_PIN` — die PIN (**Pflicht**; steht hier nur der Platzhalter,
-  verweigert die Box den Shutdown bewusst)
-- `SHUTDOWN_GESTURE_ZONE` — Ecke: `"links"`, `"rechts"`, `"oben"` oder
-  `"unten"`
-- `SHUTDOWN_GESTURE_PATTERN` — Tipp-Muster, z. B.
-  `("kurz", "kurz", "kurz", "lang", "kurz", "kurz")`
-- `SHUTDOWN_LONG_PRESS_SECONDS` — Haltedauer-Schwelle, ab der ein Tipp als
-  „lang" statt „kurz" zählt
-
-Alle drei Geste-Werte sind optional (Fallback in `config.py`); nur die
-PIN ist Pflicht. Die nicht-geheimen Parameter (Sperr-Zeiten, Farben der
-Fehler-Optik, Animationsdauer `goodbye_seconds`) stehen in `config.py` →
-`ShutdownConfig`.
-
-**PIN-Sperre (persistent):** Nach `max_pin_attempts` Fehlversuchen
-(Standard 3) wird für `lockout_seconds` (Standard 30 Min) gesperrt. Zähler
-**und** Sperre liegen in `data/shutdown_lockout.json` und überstehen einen
-Neustart — ein Reboot hebt die Sperre also **nicht** auf (Schutz gegen
-Reboot-Bypass). Von Hand zurücksetzen:
-
-```bash
-rm ~/photobooth/data/shutdown_lockout.json
-```
-
-**Fehler-Optik bei falscher PIN:** roter Bildschirmrand, LED-Ring blinkt
-rot/gelb, Taster-LED blitzt synchron mit.
-
-**Sicherheit:** `app_with_hw.py` läuft ohnehin als root, daher genügt der
-direkte `shutdown`-Aufruf — die restriktive sudoers-Regel muss dafür
-**nicht** erweitert werden. Ein während der Entwicklung genutzter
-Debug-Hotkey (F9 sprang bei `debug_overlay=True` direkt in die
-PIN-Eingabe) wurde für den Produktivbetrieb bewusst wieder **entfernt**,
-damit keine Abkürzung in den Shutdown-Pfad im Code verbleibt. Der einzige
-Weg ist Geste → PIN → Sperre.
-
-**Zugehörige Bausteine:** `shutdown_service.py` (Geste + PIN-Sperre, reine
-Logik), `led_shutdown.py` (Ring-Animation), die Zustände `PIN_ENTRY` /
-`SHUTDOWN_GOODBYE` und der Effekt `LedEffect.SHUTDOWN_SEQUENCE`. Die Logik
-ist durch `test_shutdown_service.py` und `test_state_machine_shutdown.py`
-abgedeckt.
 
 ## Netzwerk-Setup
 
@@ -422,13 +400,8 @@ größere System-Updates) empfehlenswert vorher einmal auszuführen.
 ## Tests
 
 ```bash
-# alle Tests
-python3 -m pytest -q
-
-# oder gezielt
 python3 -m pytest test_state_machine.py test_gallery_service.py \
-    test_storage_service.py test_button_service.py \
-    test_shutdown_service.py test_state_machine_shutdown.py
+    test_storage_service.py test_button_service.py
 ```
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
