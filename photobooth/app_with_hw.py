@@ -123,7 +123,11 @@ class PhotoboothApp:
         self.model: AppModel = self.state_machine.initial_model(time.monotonic())
 
         # Services
-        self.gallery_service = GalleryService(config.photo_dir)
+        # vorher: self.gallery_service = GalleryService(config.photo_dir)
+        self.gallery_service = GalleryService(
+            config.photo_dir,
+            excluded_filenames=config.gallery.excluded_filenames,
+        )
         self.storage_service = StorageService(config.photo_dir, config.web_dir)
         self.storage_service.ensure_directories()
         self.qr_service = QrService(photo_url_prefix=config.network.photo_url_prefix)
@@ -221,12 +225,6 @@ class PhotoboothApp:
             return
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             self.running = False
-            return
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_F9 and self.config.features.debug_overlay:
-            # NUR Debug: direkt in die PIN-Eingabe springen, ohne die
-            # Geheim-Geste ausfuehren zu muessen.
-            if self.model.state == AppState.MAIN_MENU:
-                self.dispatch(AppEvent(EventType.SHUTDOWN_GESTURE_DETECTED, source="debug_hotkey"))
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -657,6 +655,15 @@ class PhotoboothApp:
             effect = LedEffect.GALLERY_STARFIELD
         elif state == AppState.ERROR_SCREEN:
             effect = LedEffect.ERROR
+        elif state == AppState.PIN_ENTRY:
+            # NEU (3.5): nur waehrend der Fehler-Optik rot/gelb, sonst dunkel.
+            deadline = self.model.timers.pin_error_deadline
+            if deadline is not None and now < deadline:
+                effect = LedEffect.PIN_ERROR
+            else:
+                effect = LedEffect.OFF
+        elif state == AppState.SHUTDOWN_GOODBYE:
+            effect = LedEffect.SHUTDOWN_SEQUENCE  # NEU (3.5): Sonnenuntergang
         else:
             effect = LedEffect.OFF
 
@@ -690,11 +697,22 @@ class PhotoboothApp:
                 self._button_provider.set_led(int(now * hz) % 2 == 0)
             return
 
+        if state == AppState.PIN_ENTRY:
+            # NEU (3.5): bei falscher PIN Taster-LED synchron zum Ring blitzen,
+            # sonst aus.
+            deadline = self.model.timers.pin_error_deadline
+            if deadline is not None and now < deadline:
+                hz = self.config.shutdown.error_button_flash_hz
+                self._button_provider.set_led(int(now * hz) % 2 == 0)
+            else:
+                self._button_provider.set_led(False)
+            return
+
         if state in {
             AppState.CAPTURE_PENDING, AppState.REVIEW, AppState.QR_DISPLAY,
             AppState.DELETE_CONFIRM, AppState.ERROR_SCREEN,
             AppState.BOOT, AppState.MAINTENANCE,
-            AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE,   # NEU (3.4)
+            AppState.SHUTDOWN_GOODBYE,   # (PIN_ENTRY jetzt oben separat, 3.5)
         }:
             self._button_provider.set_led(False)
             return
