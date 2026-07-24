@@ -1,0 +1,16 @@
+# Echte Zugangsdaten - NIEMALS committen (siehe local_secrets_example.py)
+local_secrets.py
+
+# Zur Laufzeit erzeugte Daten (Fotos, Web-Export, Cache, Logs)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# System-/Editor-Dateien
+.DS_Store
+*.swp
+*.bak
