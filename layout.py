@@ -50,18 +50,18 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # Zwei-Button-Reihe (unten, mittig links/rechts)
     margin_x = 0.10
     button_w = 0.28   # schmaler als vorher (war ~0.296)
-    button_h = 0.09   # deutlich hoeher als vorher (war ~0.047)
+    button_h = 0.155  # Etappe 5: einheitlich auf Service-Menue-Hoehe (0.155)
     lower_y = 0.80
 
     left = rect(margin_x, lower_y, button_w, button_h)
     right = rect(1 - margin_x - button_w, lower_y, button_w, button_h)
     back = rect(margin_x, lower_y, button_w, button_h)
 
-    # Wie "right", aber tiefer (0.885 statt 0.80 lower_y) - nur fuer
-    # INSTRUCTIONS/TERMS. Bildschirmunterkante bleibt bei button_h=0.09
-    # noch mit ca. 1.6% (≈11px bei 720px Hoehe) Rand erhalten, also nicht
-    # bis an den allerletzten Pixel.
-    text_view_lower_y = 0.885
+    # Wie "right", aber am unteren Rand verankert - nur fuer
+    # INSTRUCTIONS/TERMS. Unterkante bleibt bei 0.975 (ca. 18px Rand
+    # bei 720px Hoehe); durch die groessere Buttonhoehe (0.155,
+    # Etappe 5) waechst der Button nach OBEN statt tiefer zu rutschen.
+    text_view_lower_y = 0.82
     text_view_back = rect(1 - margin_x - button_w, text_view_lower_y, button_w, button_h)
 
     # Hauptmenue: 4 Buttons diagonal versetzt, in der unteren Bildschirmhaelfte.
@@ -71,8 +71,21 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # Diagonale nur fuer den neuen Button abzubrechen, wurden alle 4 Buttons
     # gleichmaessig schmaler/kompakter gemacht, damit die Diagonale optisch
     # konsistent bleibt.
+    #
+    # Etappe 5: diag_h von 0.085 auf 0.155 erhoeht (einheitliche
+    # Buttonhoehe). Eine Neuberechnung der Diagonale ist NICHT noetig:
+    # Zwei Buttons kollidieren nur, wenn sie sich in BEIDEN Achsen
+    # ueberlappen. Der horizontale Schritt (diag_x_step=0.22) ist
+    # groesser als die Buttonbreite (diag_w=0.20), also bleibt zwischen
+    # benachbarten Buttons immer eine Luecke von 0.02*Breite in X -
+    # unabhaengig von der Hoehe. Damit ueberlappt garantiert nichts,
+    # auch wenn sich die vertikalen Baender jetzt ueberschneiden.
+    # diag_y0/diag_y_step bleiben unveraendert, damit die Oberkante
+    # (und der Titelbereich darueber) unberuehrt bleibt; die Gruppe
+    # waechst nur nach unten (unterster Button endet bei 0.955,
+    # ca. 32px Rand bei 720px Hoehe).
     diag_w = 0.20
-    diag_h = 0.085
+    diag_h = 0.155
     diag_x_step = 0.22
     diag_y_step = 0.09
     diag_x0 = 0.06
