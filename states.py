@@ -33,3 +33,37 @@ class AppState(Enum):
     # loeschen, App-Neustart, Herunterfahren). Die PIN schuetzt bewusst
     # das gesamte Menue statt einzelner Punkte - siehe admin_menu.py.
     ADMIN_MENU = auto()
+    # NEU (4.3): Diagnose-Unterseite des Service-Menues.
+    ADMIN_STATUS = auto()
+    # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen nach "App neu
+    # starten" - gibt sichtbares Feedback, bevor die App sich beendet
+    # (die Auto-Restart-Schleife in start_fotobox.sh startet sie danach
+    # automatisch neu).
+    ADMIN_RESTART_PENDING = auto()
+    # NEU (4.4): Sicherheitsabfrage vor dem Loeschen aller Bilder.
+    # Bewusst ein eigener Zustand statt einer Wiederverwendung von
+    # DELETE_CONFIRM - jener loescht nur das eine gerade aufgenommene
+    # Foto, hier geht es um den kompletten Bestand inklusive Kamera.
+    ADMIN_DELETE_CONFIRM = auto()
+    # NEU (4.4): Loeschung laeuft (Hintergrund-Thread), nicht abbrechbar.
+    ADMIN_DELETE_RUNNING = auto()
+    # NEU (4.4): Ergebnis-Screen mit Zusammenfassung und Protokoll-Hinweis.
+    ADMIN_DELETE_DONE = auto()
+    # --- USB-Export (Etappe 4a) ---
+    # ADMIN_USB_WAIT: zeigt den benoetigten Platz und wartet darauf, dass
+    # ein Stick eingesteckt wird (Hintergrund-Suche in app_with_hw).
+    ADMIN_USB_WAIT = auto()
+    # ADMIN_USB_CHECK: einbinden und messen (Hintergrund-Thread).
+    ADMIN_USB_CHECK = auto()
+    # ADMIN_USB_READY: Stick geprueft und ausreichend gross/frei.
+    ADMIN_USB_READY = auto()
+    # ADMIN_USB_PROBLEM: zu klein, zu wenig frei oder nicht beschreibbar.
+    ADMIN_USB_PROBLEM = auto()
+    # ADMIN_USB_EJECT: sync + umount laeuft (Hintergrund-Thread).
+    ADMIN_USB_EJECT = auto()
+    # ADMIN_USB_REMOVE: "Stick kann jetzt entfernt werden".
+    ADMIN_USB_REMOVE = auto()
+    # NEU (4.7): Kopierlauf mit Fortschrittsanzeige.
+    ADMIN_USB_COPY = auto()
+    # NEU (4.7): Ergebnis-Screen nach dem Export.
+    ADMIN_USB_EXPORT_DONE = auto()

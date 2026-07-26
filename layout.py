@@ -167,4 +167,30 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"back": rects.back}
     if state == AppState.PIN_ENTRY:          # NEU (3.3)
         return rects.pin_keys
+    if state == AppState.ADMIN_STATUS:       # NEU (4.3)
+        return {"back": rects.back}
+    if state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
+        # "Nein" bewusst LINKS (die harmlose Wahl an der Stelle, an der
+        # sonst die Standardaktion liegt), "Ja, loeschen" rechts.
+        return {"admin_delete_abort": rects.left, "admin_delete_confirm": rects.right}
+    if state == AppState.ADMIN_DELETE_DONE:      # NEU (4.4)
+        return {"back": rects.back}
+    # --- USB-Export (NEU 4.6) ---
+    if state == AppState.ADMIN_USB_WAIT:
+        # "Weiter" wird immer gezeichnet, ist aber erst wirksam, sobald ein
+        # Stick erkannt wurde (Entscheidung faellt in der State Machine).
+        return {"cancel": rects.left, "usb_continue": rects.right}
+    if state == AppState.ADMIN_USB_READY:
+        return {"cancel": rects.left, "usb_continue": rects.right}
+    if state == AppState.ADMIN_USB_PROBLEM:
+        # NEU (4.7): "usb_clear" steht immer auf dem rechten Button; der
+        # Renderer aendert die Beschriftung je nach Problemtyp, die State
+        # Machine entscheidet ueber die Wirkung.
+        return {"cancel": rects.left, "usb_clear": rects.right}
+    if state == AppState.ADMIN_USB_EXPORT_DONE:   # NEU (4.7)
+        return {"usb_continue": rects.right}
+    if state == AppState.ADMIN_USB_REMOVE:
+        return {"back": rects.back}
+    # ADMIN_DELETE_RUNNING, ADMIN_USB_CHECK, ADMIN_USB_EJECT:
+    # bewusst leer - laufende Vorgaenge sind nicht abbrechbar.
     return {}

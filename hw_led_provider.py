@@ -282,6 +282,41 @@ class HwLedProvider:
                 self._render_starfield(sky)
                 time.sleep(0.35)
 
+            elif effect == LedEffect.ADMIN_USB_COPY:
+                # NEU (4.7): rotierender Teilkreis (~0.8 Umdrehungen/s).
+                # 6 LEDs breit mit weichem Auf-/Abblenden an den Raendern.
+                num = len(self._pixels)
+                center = (now * num * 0.8) % num
+                for i in range(num):
+                    dist = min((i - center) % num, (center - i) % num)
+                    if dist < 3:
+                        b = max(0.0, 1.0 - dist / 3.0)
+                        self._pixels[i] = (0, int(160 * b), int(200 * b))
+                    else:
+                        self._pixels[i] = (0, 0, 0)
+                self._pixels.show()
+                time.sleep(0.02)
+
+            elif effect == LedEffect.ADMIN_USB_WAIT:
+                # NEU (4.6): oranges Blinken (ca. 1.5 Hz) als Aufforderung,
+                # den Stick einzustecken. Hartes An/Aus statt weichem
+                # Pulsieren - es soll auffallen, waehrend der Blick
+                # womoeglich am USB-Port und nicht am Bildschirm ist.
+                on = int(now * 3.0) % 2 == 0
+                self._fill((255, 120, 0) if on else (25, 12, 0))
+                time.sleep(0.02)
+
+            elif effect == LedEffect.ADMIN_DELETE_WARN:
+                # NEU (4.4): langsames Warn-Pulsieren in Rot (ca. 1.2 Hz),
+                # bewusst gemaechlicher als LedEffect.ERROR - kein Stoerungs-,
+                # sondern ein Achtung-Signal vor einer unwiderruflichen
+                # Handlung. Weiches Auf-/Abblenden statt hartem Blinken,
+                # damit es ueber die Dauer der Abfrage nicht aggressiv wirkt.
+                level = (math.sin(now * 2.0 * math.pi * 1.2) + 1.0) / 2.0
+                level = 0.15 + 0.85 * level
+                self._fill((int(230 * level), 0, 0))
+                time.sleep(0.02)
+
             elif effect == LedEffect.ERROR:
                 # Schnelles rotes Blinken (5 Hz)
                 on = int(now * 10) % 2 == 0
@@ -527,6 +562,9 @@ if __name__ == "__main__":
         "gallery_grid":     LedEffect.GALLERY_GRID_BREATHE,
         "starfield":        LedEffect.GALLERY_STARFIELD,
         "error":            LedEffect.ERROR,
+        "delete_warn":      LedEffect.ADMIN_DELETE_WARN,   # NEU (4.4)
+        "usb_wait":         LedEffect.ADMIN_USB_WAIT,      # NEU (4.6)
+        "usb_copy":         LedEffect.ADMIN_USB_COPY,      # NEU (4.7)
         "pin_error":        LedEffect.PIN_ERROR,         # NEU (3.5)
         "shutdown_seq":     LedEffect.SHUTDOWN_SEQUENCE,  # NEU (3.5)
         "off":              LedEffect.OFF,

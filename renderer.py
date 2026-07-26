@@ -138,6 +138,36 @@ class Renderer:
         if model.state == AppState.SHUTDOWN_GOODBYE:      # NEU (3.3)
             self._draw_shutdown_goodbye(model)
 
+        if model.state == AppState.ADMIN_STATUS:          # NEU (4.3)
+            self._draw_admin_status(model)
+
+        if model.state == AppState.ADMIN_RESTART_PENDING:  # NEU (4.3)
+            self._draw_admin_restart_pending(model)
+
+        if model.state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
+            self._draw_admin_delete_confirm(model)
+
+        if model.state == AppState.ADMIN_DELETE_RUNNING:   # NEU (4.4)
+            self._draw_admin_delete_running(model)
+
+        if model.state == AppState.ADMIN_DELETE_DONE:      # NEU (4.4)
+            self._draw_admin_delete_done(model)
+
+        if model.state in {                                # NEU (4.6)
+            AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
+            AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
+        }:
+            self._draw_admin_usb_lines(model)
+
+        if model.state in {AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_EJECT}:  # NEU (4.6)
+            self._draw_admin_usb_busy(model)
+
+        if model.state == AppState.ADMIN_USB_COPY:           # NEU (4.7)
+            self._draw_admin_usb_copy(model)
+
+        if model.state == AppState.ADMIN_USB_EXPORT_DONE:    # NEU (4.7)
+            self._draw_admin_usb_lines(model)
+
         # Bei Ziffer 1 (Liveview aus, "bitte laecheln") soll GAR KEIN Text
         # mehr zu sehen sein - weder Titel noch Statuszeile.
         hide_all_text = model.state == AppState.COUNTDOWN and model.ui.countdown_value == 1
@@ -145,7 +175,15 @@ class Renderer:
         # Titel wird in der Anleitung, den Nutzungsbedingungen und bei
         # Ziffer 1 bewusst weggelassen (eigene scrollbare Textansichten,
         # die den vollen Bildschirm brauchen).
-        text_screens = {AppState.INSTRUCTIONS, AppState.TERMS, AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE, AppState.ADMIN_MENU}
+        text_screens = {
+            AppState.INSTRUCTIONS, AppState.TERMS, AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE,
+            AppState.ADMIN_MENU, AppState.ADMIN_STATUS, AppState.ADMIN_RESTART_PENDING,  # NEU (4.3)
+            AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,                # NEU (4.4)
+            AppState.ADMIN_DELETE_DONE,                                                  # NEU (4.4)
+            AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY, # NEU (4.6)
+            AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_EJECT, AppState.ADMIN_USB_REMOVE,
+            AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
+        }
 
         if model.state not in text_screens and not hide_all_text:
             self._draw_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
@@ -154,6 +192,25 @@ class Renderer:
             # Schrift/Farbe der Menuename - der Titel ist hier nicht der
             # passende Kontext.
             self._draw_text("Service-Menü", self.font_title, (255, 255, 255), (60, 60))
+        elif model.state == AppState.ADMIN_STATUS:
+            # NEU (4.3): eigener Titel statt des Fotobox-Titels, wie ADMIN_MENU.
+            self._draw_text("Status / Diagnose", self.font_title, (255, 255, 255), (60, 60))
+        elif model.state == AppState.ADMIN_DELETE_DONE:
+            # NEU (4.4): Ergebnis der Loeschung.
+            self._draw_text("Löschen abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
+        elif model.state == AppState.ADMIN_USB_EXPORT_DONE:
+            # NEU (4.7): eigener Titel statt des generischen status_text.
+            self._draw_text("Export abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
+        elif model.state in {
+            AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
+            AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
+        }:
+            # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
+            # eine Ueberschrift fuer alle vier Bildschirme, kein Sonderfall
+            # je Zustand.
+            self._draw_text(model.ui.status_text, self.font_title, (255, 255, 255), (60, 60))
+        # ADMIN_RESTART_PENDING zeigt bewusst gar keinen Titel - nur die
+        # grosse zentrierte Statuszeile (siehe _draw_admin_restart_pending).
 
         if self.config.features.debug_overlay:
             self._draw_text(f"Zustand: {model.state.name}", self.font_body, (220, 220, 220), (60, 180))
@@ -869,6 +926,40 @@ class Renderer:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.ADMIN_MENU:
             self._draw_admin_menu_buttons()
+        elif state == AppState.ADMIN_STATUS:
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_DELETE_CONFIRM:
+            # NEU (4.4): "Nein" links neutral-grau, "Ja" rechts deutlich rot -
+            # die gefaehrliche Wahl soll nicht wie die naheliegende aussehen.
+            self._draw_button("Nein, abbrechen", self.layout.left, (70, 70, 75))
+            self._draw_button("Ja, alles löschen", self.layout.right, (160, 0, 0))
+        elif state == AppState.ADMIN_DELETE_DONE:
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_USB_WAIT:
+            # NEU (4.6): "Weiter" bleibt ausgegraut, solange kein Stick
+            # erkannt wurde - dieselbe Bedingung, die auch die State
+            # Machine prueft (_handle_admin_usb_wait).
+            ready = self._usb_continue_enabled
+            self._draw_button("Abbrechen", self.layout.left, (100, 100, 100))
+            self._draw_button("Weiter", self.layout.right, (0, 130, 110) if ready else (55, 55, 60))
+        elif state == AppState.ADMIN_USB_READY:
+            self._draw_button("Abbrechen", self.layout.left, (100, 100, 100))
+            self._draw_button("Export starten", self.layout.right, (0, 130, 110))
+        elif state == AppState.ADMIN_USB_PROBLEM:
+            # NEU (4.7): bei not_enough_free wird "Stick leeren" angeboten.
+            # Bei too_small hilft Aufraeumen nicht - dort ersetzt der
+            # rechte Button die Wirkung von "Weiter".
+            if self._usb_not_enough_free:
+                self._draw_button("Abbrechen", self.layout.left, (100, 100, 100))
+                self._draw_button("Stick leeren", self.layout.right, (180, 80, 0))
+            else:
+                self._draw_button("Weiter", self.layout.right, (120, 90, 0))
+        elif state == AppState.ADMIN_USB_EXPORT_DONE:
+            self._draw_button("Weiter", self.layout.right, (0, 130, 110))
+        elif state == AppState.ADMIN_USB_REMOVE:
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        # ADMIN_RESTART_PENDING / ADMIN_DELETE_RUNNING: bewusst kein Button -
+        # nicht abbrechbar.
 
     def _draw_admin_menu_buttons(self) -> None:
         # Beschriftung, Farbe und Position kommen vollstaendig aus
@@ -881,6 +972,145 @@ class Renderer:
         for item in ADMIN_MENU_ITEMS:
             color = item.color if item.enabled else (55, 55, 60)
             self._draw_button(item.label, rects[item.key], color)
+
+    def _draw_admin_status(self, model: AppModel) -> None:
+        # NEU (4.3): einfache Zeilenliste, kein Scrollen noetig - fuenf
+        # kurze Zeilen passen bequem zwischen Titel und "Zurueck"-Button.
+        width, height = self.config.screen.width, self.config.screen.height
+        y = round(0.22 * height)
+        line_height = self.font_body.get_linesize() + 14
+        if not model.ui.admin_status_lines:
+            self._draw_text("Ermittle Status ...", self.font_body, (200, 200, 200), (60, y))
+            return
+        for line in model.ui.admin_status_lines:
+            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            y += line_height
+
+    # NEU (4.6): merkt sich fuer _draw_buttons, ob "Weiter" aktiv sein
+    # darf. Wird in render() aus dem Modell gesetzt - _draw_buttons
+    # bekommt nur den Zustand uebergeben, nicht das Modell.
+    _usb_continue_enabled: bool = False
+
+    # NEU (4.7): merkt sich, ob "Stick leeren" angeboten werden darf.
+    _usb_not_enough_free: bool = False
+
+    def _draw_admin_usb_copy(self, model: AppModel) -> None:
+        # GEAENDERT (4.8): Fortschrittsbalken statt durchlaufender
+        # Dateinamen. Die Namen wechselten zu schnell zum Mitlesen; ein
+        # Balken beantwortet die eigentliche Frage ("wie lange noch?")
+        # deutlich besser.
+        height = self.config.screen.height
+        text = model.ui.admin_usb_export_progress or "Export wird vorbereitet ..."
+        self._blit_center(text, self.font_status_main_menu, (200, 235, 225), round(0.32 * height))
+        self._draw_progress_bar(model.ui.admin_usb_progress_fraction, round(0.48 * height))
+
+    def _draw_progress_bar(
+        self,
+        fraction: float,
+        y: int,
+        color: tuple[int, int, int] = (0, 185, 110),
+        track: tuple[int, int, int] = (22, 52, 48),
+        border: tuple[int, int, int] = (90, 145, 135),
+    ) -> None:
+        """NEU (4.8): waagerechter Fortschrittsbalken, mittig, mit
+        Prozentangabe darunter.
+
+        GEAENDERT (4.9): Farben sind jetzt Parameter - der Loeschlauf nutzt
+        denselben Balken in Rot. Ein gruener Balken waehrend einer
+        unwiderruflichen Loeschung waere das falsche Signal.
+        """
+        width, height = self.config.screen.width, self.config.screen.height
+        fraction = max(0.0, min(1.0, float(fraction)))
+
+        bar_w = round(0.70 * width)
+        bar_h = round(0.070 * height)
+        bar_x = (width - bar_w) // 2
+        radius = bar_h // 2
+
+        outer = pygame.Rect(bar_x, y, bar_w, bar_h)
+        # Hintergrund (leerer Teil)
+        pygame.draw.rect(self.screen, track, outer, border_radius=radius)
+        # Gefuellter Teil - Mindestbreite, damit bei 1 % nicht nichts zu sehen ist
+        if fraction > 0.0:
+            fill_w = max(bar_h, round(bar_w * fraction))
+            inner = pygame.Rect(bar_x, y, fill_w, bar_h)
+            pygame.draw.rect(self.screen, color, inner, border_radius=radius)
+        # Rahmen
+        pygame.draw.rect(self.screen, border, outer, width=3, border_radius=radius)
+
+        self._blit_center(
+            f"{round(fraction * 100)} %", self.font_body, (220, 240, 235), y + bar_h + 20,
+        )
+
+    def _draw_admin_usb_lines(self, model: AppModel) -> None:
+        # NEU (4.6): Zeilenliste wie bei Diagnose und Loesch-Ergebnis.
+        self._usb_continue_enabled = model.ui.admin_usb_device_ready
+        self._usb_not_enough_free = model.ui.admin_usb_not_enough_free
+        height = self.config.screen.height
+        y = round(0.22 * height)
+        line_height = self.font_body.get_linesize() + 14
+        for line in model.ui.admin_usb_lines:
+            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            y += line_height
+
+    def _draw_admin_usb_busy(self, model: AppModel) -> None:
+        # NEU (4.6): laufender Vorgang - zentrierter Hinweis, kein Button.
+        self._blit_center(
+            model.ui.status_text or "Bitte warten ...",
+            self.font_status_main_menu, (200, 235, 225),
+            round(0.45 * self.config.screen.height),
+        )
+
+    def _draw_admin_delete_confirm(self, model: AppModel) -> None:
+        # NEU (4.4): Warntext gross und zentriert. status_text enthaelt
+        # bereits Zeilenumbrueche (siehe state_machine._go_admin_delete_confirm),
+        # daher zeilenweise zentriert setzen statt in einem Rutsch.
+        height = self.config.screen.height
+        lines = (model.ui.status_text or "").split("\n")
+        y = round(0.30 * height)
+        line_height = self.font_status_main_menu.get_linesize() + 10
+        for line in lines:
+            self._blit_center(line, self.font_status_main_menu, (255, 210, 210), y)
+            y += line_height
+        # Zusaetzlicher Hinweis, was "alles" konkret umfasst - beugt der
+        # Fehlannahme vor, es gehe nur um die Bilder auf dem Bildschirm.
+        self._blit_center(
+            "Betrifft Fotobox, QR-Download und Kamera-Speicherkarte.",
+            self.font_body, (230, 170, 170), y + 16,
+        )
+
+    def _draw_admin_delete_running(self, model: AppModel) -> None:
+        # GEAENDERT (4.9): Fortschrittsbalken wie beim Export, aber in Rot.
+        # Kein Button - die Loeschung ist nicht abbrechbar.
+        height = self.config.screen.height
+        self._blit_center(
+            model.ui.admin_delete_progress or "Bilder werden gelöscht ...",
+            self.font_status_main_menu, (255, 210, 210), round(0.32 * height),
+        )
+        self._draw_progress_bar(
+            model.ui.admin_delete_fraction, round(0.48 * height),
+            color=(200, 45, 45), track=(58, 20, 20), border=(150, 95, 95),
+        )
+
+    def _draw_admin_delete_done(self, model: AppModel) -> None:
+        # NEU (4.4): Zusammenfassung als Zeilenliste, gleiche Optik wie
+        # die Diagnoseseite (_draw_admin_status).
+        height = self.config.screen.height
+        y = round(0.22 * height)
+        line_height = self.font_body.get_linesize() + 14
+        for line in model.ui.admin_delete_lines:
+            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            y += line_height
+
+    def _draw_admin_restart_pending(self, model: AppModel) -> None:
+        # NEU (4.3): grosse, zentrierte Statuszeile - bewusst kein Titel,
+        # kein Button (nicht abbrechbar, siehe state_machine.py).
+        self._blit_center(
+            model.ui.status_text or "App wird neu gestartet ...",
+            self.font_status_main_menu,
+            (255, 220, 120),
+            round(0.45 * self.config.screen.height),
+        )
 
     def _draw_button(self, label: str, rect: pygame.Rect, color: tuple[int, int, int]) -> None:
         # Leichter Schatten nach rechts unten fuer einen dezenten 3D-Effekt.
@@ -964,4 +1194,21 @@ class Renderer:
             AppState.SHUTDOWN_GOODBYE: (10, 10, 15),   # NEU (3.3)
             AppState.MAINTENANCE: (50, 50, 10),
             AppState.ADMIN_MENU: (18, 22, 30),         # NEU (4.1) - wie PIN_ENTRY
+            AppState.ADMIN_STATUS: (18, 22, 30),       # NEU (4.3) - wie ADMIN_MENU
+            AppState.ADMIN_RESTART_PENDING: (20, 40, 20),  # NEU (4.3) - wie CAPTURE_PENDING
+            # NEU (4.4): kraeftiges Dunkelrot als unuebersehbares Warnsignal,
+            # deutlich abgesetzt vom ruhigen Blaugrau der uebrigen Admin-Screens.
+            AppState.ADMIN_DELETE_CONFIRM: (55, 8, 8),
+            AppState.ADMIN_DELETE_RUNNING: (40, 8, 8),
+            AppState.ADMIN_DELETE_DONE: (18, 22, 30),
+            # NEU (4.6): gedecktes Blaugruen - klar unterscheidbar vom
+            # Rot der Loeschwege, gleiche Ruhe wie die uebrigen Admin-Screens.
+            AppState.ADMIN_USB_WAIT: (12, 28, 28),
+            AppState.ADMIN_USB_CHECK: (12, 28, 28),
+            AppState.ADMIN_USB_READY: (10, 32, 26),
+            AppState.ADMIN_USB_PROBLEM: (45, 32, 8),
+            AppState.ADMIN_USB_EJECT: (12, 28, 28),
+            AppState.ADMIN_USB_REMOVE: (10, 32, 26),
+            AppState.ADMIN_USB_COPY: (12, 28, 28),      # NEU (4.7)
+            AppState.ADMIN_USB_EXPORT_DONE: (10, 32, 26),  # NEU (4.7)
         }[state]

@@ -29,6 +29,8 @@ class TimerState:
     # Ende der Abschieds-Animation. Bei Erreichen loest die App SHUTDOWN_TIMEOUT
     # aus und faehrt den Pi herunter.
     shutdown_goodbye_deadline: float | None = None
+    # NEU (4.3): Ende des kurzen Anzeige-Timers in ADMIN_RESTART_PENDING.
+    admin_restart_deadline: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +45,42 @@ class UiState:
     # Anzeige). Wird beim Betreten und beim Verlassen des Screens geleert,
     # damit die getippte PIN nie in anderen Zustaenden liegen bleibt.
     pin_entry: str = ""
+    # NEU (4.3): ermittelte Diagnosezeilen fuer AppState.ADMIN_STATUS.
+    # Leer, solange die Ermittlung noch laeuft (siehe "collect_admin_status"
+    # in app_with_hw.py).
+    admin_status_lines: tuple[str, ...] = ()
+    # NEU (4.4): Zusammenfassung nach dem Loeschen aller Bilder
+    # (AppState.ADMIN_DELETE_DONE). Bewusst getrennt von
+    # admin_status_lines, damit die Diagnoseseite und der Loesch-Report
+    # sich nicht gegenseitig ueberschreiben.
+    admin_delete_lines: tuple[str, ...] = ()
+    # --- USB-Export (Etappe 4a) ---
+    # Anzuzeigende Zeilen des jeweils aktuellen USB-Bildschirms.
+    admin_usb_lines: tuple[str, ...] = ()
+    # True, sobald ein Stick erkannt wurde - erst dann ist "Weiter" aktiv.
+    admin_usb_device_ready: bool = False
+    # True, wenn der Ablauf wegen eines Problems (zu klein / zu wenig
+    # Platz) endete: nach dem Entfernen geht es dann zurueck zum
+    # Wartebildschirm, damit ein anderer Stick probiert werden kann,
+    # statt umstaendlich neu durchs Menue zu muessen.
+    admin_usb_can_retry: bool = False
+    # NEU (4.7): Problem-Typ-Unterscheidung (nur bei not_enough_free wird
+    # "Stick leeren" angeboten; bei too_small hilft Aufraeumen nicht).
+    admin_usb_not_enough_free: bool = False
+    # NEU (4.7): nach erfolgreichem, verifiziertem Export fuehrt das
+    # Entfernen des Sticks zur Loesch-Abfrage statt ins Service-Menue.
+    admin_usb_offer_delete: bool = False
+    # NEU (4.7): Fortschrittstext des laufenden Exports (wird von
+    # app_with_hw direkt aus dem ExportProgress-Objekt gesetzt).
+    admin_usb_export_progress: str = ""
+    # NEU (4.8): Fuellstand des Fortschrittsbalkens, 0.0 bis 1.0.
+    # Deckt BEIDE Phasen ab (Kopieren 0.0-0.5, Pruefen 0.5-1.0), damit
+    # der Balken einmal durchlaeuft statt zweimal von vorn zu beginnen.
+    admin_usb_progress_fraction: float = 0.0
+    # NEU (4.9): Fortschritt des Loeschlaufs - gleiche Mechanik wie beim
+    # Export, damit beide Vorgaenge sich gleich anfuehlen.
+    admin_delete_progress: str = ""
+    admin_delete_fraction: float = 0.0
 
 
 @dataclass(slots=True, frozen=True)

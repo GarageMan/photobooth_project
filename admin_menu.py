@@ -51,7 +51,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(0, 100, 150),
         column=0,
         row=0,
-        enabled=False,          # Etappe 2
+        enabled=True,           # Etappe 2 - implementiert
     ),
     AdminMenuItem(
         key="usb_export",
@@ -60,7 +60,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(0, 130, 110),
         column=1,
         row=0,
-        enabled=False,          # Etappe 4
+        enabled=True,           # Etappe 4a - implementiert
     ),
     AdminMenuItem(
         key="restart_app",
@@ -69,7 +69,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(120, 90, 0),
         column=0,
         row=1,
-        enabled=False,          # Etappe 2
+        enabled=True,           # Etappe 2 - implementiert
     ),
     AdminMenuItem(
         key="shutdown",
@@ -96,7 +96,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(150, 0, 0),
         column=1,
         row=2,
-        enabled=False,          # Etappe 3
+        enabled=True,           # Etappe 3 - implementiert
     ),
 )
 

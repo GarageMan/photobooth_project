@@ -51,6 +51,10 @@ from qr_service import QrService
 from state_machine import StateMachine
 from states import AppState
 from admin_menu import ADMIN_MENU_ITEMS, build_admin_rects  # NEU (4.1)
+from admin_diagnostics import collect_status_lines  # NEU (4.3)
+from admin_delete_service import DeleteProgress, delete_all_photos  # NEU (4.4/4.9)
+import admin_usb_service  # NEU (4.6)
+from admin_usb_export import ExportProgress, export_photos, clear_stick  # NEU (4.7)
 from storage_service import StorageService
 from layout import build_layout, button_rects_for_state
 from renderer import Renderer
@@ -154,6 +158,9 @@ class PhotoboothApp:
         # (gphoto2-Download) teilen sich dieselbe Kamera-Verbindung und
         # duerfen nicht gleichzeitig zugreifen.
         camera_lock = threading.Lock()
+        # NEU (4.4): auch das Loeschen auf der Kamera-Speicherkarte muss
+        # sich dieses Lock teilen - gphoto2 erlaubt nur eine Verbindung.
+        self._camera_lock = camera_lock
         preview_provider = _build_preview_provider(config, camera_lock)
         capture_provider = _build_capture_provider(config, camera_lock)
 
@@ -171,6 +178,33 @@ class PhotoboothApp:
         self.touch_start_y: int | None = None
         self._qr_surface: pygame.Surface | None = None
         self.running = True
+        # NEU (4.3): Startzeitpunkt fuer die Laufzeit-Anzeige im Status-Screen.
+        self._app_start_monotonic = time.monotonic()
+        # NEU (4.4): Hintergrund-Thread fuer das Loeschen aller Bilder.
+        # _delete_result wird vom Thread genau einmal gesetzt und vom
+        # Hauptloop in _emit_due_timers gepollt - eine einzelne Referenz-
+        # zuweisung ist unter dem GIL unteilbar, daher genuegt hier das
+        # Fehlen/Vorhandensein des Werts als Fertigsignal (kein Lock noetig).
+        self._delete_thread: threading.Thread | None = None
+        self._delete_result = None
+        # NEU (4.9): Fortschritt des Loeschlaufs (Muster wie beim Export).
+        self._delete_progress: DeleteProgress | None = None
+        # NEU (4.6): USB-Export. Gleiches Muster wie beim Loeschlauf -
+        # ein Hintergrund-Thread setzt am Ende genau eine Referenz, der
+        # Hauptloop pollt sie in _emit_due_timers.
+        self._usb_thread: threading.Thread | None = None
+        self._usb_job_result = None
+        self._usb_partition = None      # zuletzt erkannter Stick
+        self._usb_stick = None          # eingebundener Stick (MountedStick)
+        self._usb_required_bytes = 0
+        self._usb_next_scan = 0.0       # Drosselung der Stick-Suche
+        self._usb_info_lines: tuple[str, ...] = ()   # Grundtext des Wartebildschirms
+        self._usb_unusable_reported = False          # Hinweis nur einmal zeigen
+        # NEU (4.7): Fortschritt des laufenden Exports. Gleiches Muster wie
+        # bei Loeschlauf und Pruefung - der Thread setzt am Ende genau eine
+        # Referenz, der Hauptloop pollt sie in _emit_due_timers.
+        self._usb_export_progress: ExportProgress | None = None
+        self._usb_export_result = None
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -354,6 +388,13 @@ class PhotoboothApp:
             "delete":         AppEvent(EventType.TAP_DELETE, source="touch"),
             "confirm_delete": AppEvent(EventType.TAP_CONFIRM_DELETE, source="touch"),
             "abort_delete":   AppEvent(EventType.TAP_ABORT_DELETE, source="touch"),
+            # NEU (4.4): Gesamtbestand loeschen - bewusst eigene Events,
+            # nicht die des Einzelfoto-Loeschens im Review-Ablauf.
+            "admin_delete_confirm": AppEvent(EventType.TAP_ADMIN_DELETE_CONFIRM, source="touch"),
+            "admin_delete_abort":   AppEvent(EventType.TAP_ADMIN_DELETE_ABORT, source="touch"),
+            # NEU (4.6): "Weiter" der USB-Bildschirme.
+            "usb_continue":   AppEvent(EventType.TAP_ADMIN_USB_CONTINUE, source="touch"),
+            "usb_clear":      AppEvent(EventType.TAP_ADMIN_USB_CLEAR, source="touch"),    # NEU (4.7)
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -418,6 +459,128 @@ class PhotoboothApp:
                 self._power_off_requested = True
                 self.dispatch(AppEvent(EventType.SHUTDOWN_TIMEOUT, source="timer"), now)
             return
+        # NEU (4.3): kurzer Zwischenscreen vor dem App-Neustart - eigener,
+        # nicht abbrechbarer Timer, analog zu SHUTDOWN_GOODBYE.
+        if state == AppState.ADMIN_RESTART_PENDING:
+            if self._due(timers.admin_restart_deadline, now):
+                self.dispatch(AppEvent(EventType.ADMIN_RESTART_TIMEOUT, source="timer"), now)
+            return
+        # NEU (4.4): Loeschlauf im Hintergrund - hier wird lediglich
+        # gepollt, ob der Thread fertig ist. Bewusst KEIN Timeout: eine
+        # laufende Loeschung darf nicht unterbrochen werden.
+        # NEU (4.7): Kopierlauf mit Fortschrittsanzeige. Der Hintergrund-
+        # Thread aktualisiert _usb_export_progress, hier wird es gepollt
+        # und in den UI-Zustand uebertragen.
+        if state == AppState.ADMIN_USB_COPY:
+            progress = self._usb_export_progress
+            if progress is not None:
+                # GEAENDERT (4.8): Dateinamen wechselten zu schnell zum
+                # Mitlesen - stattdessen Phase, Zaehler und ein
+                # Fortschrittswert fuer den Balken.
+                total = max(1, progress.total_files)
+                if progress.phase == "copy":
+                    text = f"Bilder werden kopiert ... ({progress.copied_files} von {progress.total_files})"
+                    # Kopieren belegt die erste Haelfte des Balkens.
+                    fraction = 0.5 * progress.copied_files / total
+                elif progress.phase == "verify":
+                    text = f"Prüfsummen werden geprüft ... ({progress.verified_files} von {progress.total_files})"
+                    # Pruefen die zweite - so laeuft der Balken einmal
+                    # durch statt zweimal von vorn zu beginnen.
+                    fraction = 0.5 + 0.5 * progress.verified_files / total
+                elif progress.phase == "done":
+                    text = "Abschluss ..."
+                    fraction = 1.0
+                else:
+                    text = "Export wird vorbereitet ..."
+                    fraction = 0.0
+                from dataclasses import replace as dc_replace
+                ui = dc_replace(
+                    self.model.ui,
+                    admin_usb_export_progress=text,
+                    admin_usb_progress_fraction=fraction,
+                )
+                self.model = self.model.evolve(ui=ui)
+            result = self._usb_export_result
+            if result is not None:
+                self._usb_export_result = None
+                self._usb_export_progress = None
+                self._usb_thread = None
+                self.dispatch(
+                    AppEvent(
+                        EventType.ADMIN_USB_EXPORT_FINISHED,
+                        payload={"lines": result.summary_lines(), "ok": result.ok},
+                        source="usb",
+                    ),
+                    now,
+                )
+            return
+
+        # NEU (4.6): laufende USB-Jobs (Pruefen / Auswerfen). Beide sind
+        # bewusst nicht abbrechbar, daher wie beim Loeschlauf mit return.
+        if state in {AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_EJECT}:
+            job = self._usb_job_result
+            if job is not None:
+                self._usb_job_result = None
+                self._usb_thread = None
+                event_type = (
+                    EventType.ADMIN_USB_CHECK_DONE
+                    if state == AppState.ADMIN_USB_CHECK
+                    else EventType.ADMIN_USB_EJECTED
+                )
+                self.dispatch(AppEvent(event_type, payload=job, source="usb"), now)
+            return
+
+        # NEU (4.6): Wartebildschirm - alle 1.5s nach einem Stick suchen.
+        # KEIN return: der Wartebildschirm braucht zusaetzlich den
+        # Idle-Timeout weiter unten.
+        if state == AppState.ADMIN_USB_WAIT:
+            self._poll_usb_detect(now)
+
+        if state == AppState.ADMIN_DELETE_RUNNING:
+            # NEU (4.9): Fortschritt in den UI-Zustand uebertragen, damit
+            # der Renderer den Balken zeichnen kann.
+            progress = self._delete_progress
+            if progress is not None:
+                total = max(1, progress.total_files)
+                if progress.phase == "delete":
+                    text = f"Bilder werden gelöscht ... ({progress.deleted_files} von {progress.total_files})"
+                    # Dateien belegen 0-90 % - die Kamera braucht den Rest.
+                    fraction = 0.90 * progress.deleted_files / total
+                elif progress.phase == "camera":
+                    text = "Kamera-Speicherkarte wird geleert ..."
+                    # Kein Zwischenstand von gphoto2 - Balken bleibt stehen.
+                    fraction = 0.90
+                elif progress.phase == "report":
+                    text = "Löschprotokoll wird geschrieben ..."
+                    fraction = 0.97
+                elif progress.phase == "done":
+                    text = "Abschluss ..."
+                    fraction = 1.0
+                else:
+                    text = "Löschvorgang wird vorbereitet ..."
+                    fraction = 0.0
+                from dataclasses import replace as dc_replace
+                ui = dc_replace(
+                    self.model.ui,
+                    admin_delete_progress=text,
+                    admin_delete_fraction=fraction,
+                )
+                self.model = self.model.evolve(ui=ui)
+
+            result = self._delete_result
+            if result is not None:
+                self._delete_result = None
+                self._delete_thread = None
+                self._delete_progress = None   # NEU (4.9)
+                self.dispatch(
+                    AppEvent(
+                        EventType.ADMIN_DELETE_FINISHED,
+                        payload={"lines": result.summary_lines()},
+                        source="delete",
+                    ),
+                    now,
+                )
+            return
 
         idle_states = {
             AppState.MAIN_MENU,
@@ -433,6 +596,26 @@ class PhotoboothApp:
             # NEU (4.1): Service-Menue schliesst sich nach
             # admin_menu_idle_seconds automatisch (Standard 30s).
             AppState.ADMIN_MENU,
+            # NEU (4.3): Diagnoseseite - gleiches Idle-Verhalten. (Bewusst
+            # OHNE ADMIN_RESTART_PENDING - der hat einen eigenen, nicht
+            # abbrechbaren Timer, siehe oben.)
+            AppState.ADMIN_STATUS,
+            # NEU (4.4): Sicherheitsabfrage vor dem Loeschen - bleibt sie
+            # unbeantwortet stehen, ist "nicht loeschen" die richtige
+            # Annahme. (Bewusst OHNE ADMIN_DELETE_RUNNING/_DONE: dort ist
+            # idle_deadline absichtlich None.)
+            AppState.ADMIN_DELETE_CONFIRM,
+            # NEU (4.6): USB-Bildschirme mit Timeout. Bewusst OHNE
+            # ADMIN_USB_CHECK und ADMIN_USB_EJECT - dort laeuft ein Job,
+            # der nicht unterbrochen werden darf (idle_deadline ist dort
+            # ohnehin None).
+            AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
+            AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
+            # NEU (4.7): Ergebnis-Screen. Bewusst OHNE ADMIN_USB_COPY (nicht
+            # unterbrechbar - idle_deadline dort ohnehin None).
+            AppState.ADMIN_USB_EXPORT_DONE,
+            # NEU (4.5): Ergebnis-Screen - nach 30s zurueck ins Hauptmenue.
+            AppState.ADMIN_DELETE_DONE,
         }
 
         if state == AppState.BOOT and self._due(timers.boot_deadline, now):
@@ -538,6 +721,22 @@ class PhotoboothApp:
                 self._delete_photo(previous_model)
             elif action == "power_off":                      # NEU (3.4)
                 self._power_off()
+            elif action == "collect_admin_status":            # NEU (4.3)
+                self._collect_admin_status()
+            elif action == "restart_app":                     # NEU (4.3)
+                self._restart_app()
+            elif action == "start_delete_all":                # NEU (4.4)
+                self._start_delete_all()
+            elif action == "usb_prepare":                     # NEU (4.6)
+                self._usb_prepare()
+            elif action == "usb_check":                       # NEU (4.6)
+                self._usb_start_check()
+            elif action == "usb_eject":                       # NEU (4.6)
+                self._usb_start_eject()
+            elif action == "usb_start_export":                # NEU (4.7)
+                self._usb_start_export()
+            elif action == "usb_clear_and_check":             # NEU (4.7)
+                self._usb_start_clear_and_check()
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -594,6 +793,291 @@ class PhotoboothApp:
             # gestartet), nicht ewig im Abschieds-Screen haengen bleiben.
             print(f"[App] FEHLER beim Herunterfahren: {exc}")
             self.running = False
+
+    def _restart_app(self) -> None:
+        # NEU (4.3): "sanfter" Neustart - im Unterschied zu _power_off()
+        # wird hier NICHT das Betriebssystem heruntergefahren, sondern nur
+        # die App selbst beendet (Exit-Code 0). Die Auto-Restart-Schleife in
+        # start_fotobox.sh faengt das ab und startet die App innerhalb
+        # weniger Sekunden neu - derselbe Mechanismus wie beim manuellen
+        # "sudo pkill -f app_with_hw.py" aus der Notfallkarte.
+        print("[App] Neustart angefordert - beende App (Exit-Code 0).")
+        self.running = False
+
+    # --- USB-Export (NEU 4.6) ---
+
+    def _usb_prepare(self) -> None:
+        """Platzbedarf ermitteln und anzeigen. Laeuft synchron - es werden
+        nur Dateigroessen addiert, das dauert auch bei mehreren hundert
+        Fotos nur Millisekunden."""
+        self._usb_partition = None
+        self._usb_stick = None
+        self._usb_next_scan = 0.0
+        self._usb_unusable_reported = False
+        # NEU (4.7): Reste eines vorherigen Exportlaufs verwerfen.
+        self._usb_export_progress = None
+        self._usb_export_result = None
+        count, net, gross = admin_usb_service.required_export_bytes(
+            self.config.photo_dir, self.config.gallery.excluded_filenames,
+        )
+        self._usb_required_bytes = gross
+        if count == 0:
+            lines = (
+                "Es sind keine Bilder zum Exportieren vorhanden.",
+                "Bitte mit \"Abbrechen\" zurück ins Service-Menü.",
+            )
+        else:
+            lines = (
+                f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})",
+                f"Benötigter Platz auf dem Stick: {admin_usb_service.format_bytes(gross)}",
+                "",
+                "Bitte einen USB-Stick mit ausreichend freiem Speicher",
+                "in den USB-Port links am Gehäuse einstecken.",
+            )
+        self._usb_info_lines = lines
+        self.dispatch(AppEvent(EventType.ADMIN_USB_INFO_READY, payload={"lines": lines}, source="usb"))
+
+    def _poll_usb_detect(self, now: float) -> None:
+        """Alle 1.5s nach einem Wechseldatentraeger suchen. Gedrosselt,
+        weil lsblk sonst 30x pro Sekunde aufgerufen wuerde."""
+        if self._usb_partition is not None:
+            return  # bereits gefunden
+        if now < self._usb_next_scan:
+            return
+        self._usb_next_scan = now + 1.5
+        partitions = admin_usb_service.find_usb_partitions()
+        if not partitions:
+            return
+        # Nicht einfach die erste Partition nehmen: ein bootfaehiger
+        # Installationsstick bringt eine grosse read-only-ISO-Partition und
+        # eine winzige EFI-Partition mit - beide waeren die falsche Wahl
+        # (siehe admin_usb_service.pick_best_partition).
+        partition = admin_usb_service.pick_best_partition(partitions, self._usb_required_bytes)
+        if partition is None:
+            # Nur schreibgeschuetzte Datentraeger angeschlossen. Einmalig
+            # melden, damit der Wartebildschirm nicht wortlos weiterwartet.
+            if not self._usb_unusable_reported:
+                self._usb_unusable_reported = True
+                self.dispatch(
+                    AppEvent(
+                        EventType.ADMIN_USB_INFO_READY,
+                        payload={"lines": self._usb_info_lines + (
+                            "",
+                            "Hinweis: Der angeschlossene Datenträger ist",
+                            "schreibgeschützt (z.B. ein Boot-Stick) und kann",
+                            "nicht verwendet werden.",
+                        )},
+                        source="usb",
+                    ),
+                    now,
+                )
+            return
+        self._usb_partition = partition
+        print(f"[App] USB-Stick erkannt: {partition.device} ({partition.fstype})")
+        self.dispatch(
+            AppEvent(EventType.ADMIN_USB_DETECTED, payload={"name": partition.display_name()}, source="usb"),
+            now,
+        )
+
+    def _usb_start_check(self) -> None:
+        partition = self._usb_partition
+        if partition is None:
+            # Sollte nicht vorkommen (Weiter ist ohne Stick wirkungslos),
+            # darf den Bildschirm aber nicht haengen lassen.
+            self._usb_job_result = {"ok": False, "lines": ("Kein USB-Stick mehr erkannt.",)}
+            return
+
+        def worker() -> None:
+            try:
+                check = admin_usb_service.check_stick_for_export(
+                    partition, self._usb_required_bytes,
+                )
+                self._usb_stick = check.stick
+                payload = {
+                    "ok": check.ok,
+                    "too_small": check.too_small,
+                    "not_enough_free": check.not_enough_free,
+                    "lines": check.lines,
+                }
+            except Exception as exc:
+                print(f"[App] FEHLER bei der USB-Pruefung: {exc}")
+                payload = {"ok": False, "lines": ("Fehler bei der Prüfung des USB-Sticks.", str(exc)[:70])}
+            self._usb_job_result = payload
+
+        self._usb_thread = threading.Thread(target=worker, name="usb-check", daemon=True)
+        self._usb_thread.start()
+
+    def _usb_start_export(self) -> None:
+        """NEU (4.7): Kopierlauf im Hintergrund-Thread starten."""
+        stick = self._usb_stick
+        if stick is None:
+            self._usb_export_result = type("R", (), {"summary_lines": lambda: ("Kein Stick eingebunden.",), "ok": False})()
+            return
+
+        progress = ExportProgress()
+        self._usb_export_progress = progress
+
+        def worker() -> None:
+            try:
+                result = export_photos(
+                    photo_dir=self.config.photo_dir,
+                    mountpoint=stick.mountpoint,
+                    excluded_filenames=self.config.gallery.excluded_filenames,
+                    progress=progress,
+                    # NEU: Zielordner traegt den Event-Titel statt eines Zeitstempels.
+                    folder_name=self.config.screen.title,
+                    verify=True,
+                )
+                print(
+                    f"[App] Export beendet: {result.copied} kopiert, "
+                    f"{result.skipped} uebersprungen, {result.verified} verifiziert, "
+                    f"Fehler: {len(result.errors)}, Pruefsummenfehler: {len(result.failed_verify)}"
+                )
+                # NEU (4.8): bisher stand nur die ANZAHL im Log - welche
+                # Datei betroffen war, liess sich nicht nachvollziehen.
+                for message in result.errors:
+                    print(f"[App]   Exportfehler: {message}")
+                for name in result.failed_verify:
+                    print(f"[App]   PRUEFSUMMENFEHLER: {name}")
+            except Exception as exc:
+                print(f"[App] FEHLER beim Export: {exc}")
+                from admin_usb_export import ExportResult
+                result = ExportResult()
+                result.errors.append(str(exc))
+                progress.phase = "error"
+            self._usb_export_result = result
+
+        self._usb_thread = threading.Thread(target=worker, name="usb-export", daemon=True)
+        self._usb_thread.start()
+
+    def _usb_start_clear_and_check(self) -> None:
+        """NEU (4.7): Stick leeren, dann erneut pruefen - laeuft im selben
+        Hintergrund-Thread-Muster wie die normale Pruefung."""
+        stick = self._usb_stick
+        if stick is None:
+            self._usb_job_result = {"ok": False, "lines": ("Kein Stick eingebunden.",)}
+            return
+
+        def worker() -> None:
+            try:
+                deleted, errors = clear_stick(stick.mountpoint)
+                print(f"[App] Stick geleert: {deleted} Eintraege, {len(errors)} Fehler")
+                check = admin_usb_service.check_stick_for_export(
+                    self._usb_partition, self._usb_required_bytes,
+                    mountpoint=stick.mountpoint,
+                )
+                self._usb_stick = check.stick
+                payload = {
+                    "ok": check.ok,
+                    "too_small": check.too_small,
+                    "not_enough_free": check.not_enough_free,
+                    "lines": check.lines,
+                }
+            except Exception as exc:
+                print(f"[App] FEHLER beim Leeren/Pruefen: {exc}")
+                payload = {"ok": False, "lines": ("Fehler beim Leeren des Sticks.", str(exc)[:70])}
+            self._usb_job_result = payload
+
+        self._usb_thread = threading.Thread(target=worker, name="usb-clear-check", daemon=True)
+        self._usb_thread.start()
+
+    def _usb_start_eject(self) -> None:
+        stick = self._usb_stick
+
+        def worker() -> None:
+            lines: tuple[str, ...]
+            if stick is None:
+                lines = ("Der USB-Stick kann entfernt werden.",)
+            else:
+                try:
+                    ok, message = admin_usb_service.unmount(stick.mountpoint)
+                    if ok:
+                        lines = (
+                            "Der USB-Stick wurde sicher ausgeworfen.",
+                            "Er kann jetzt abgezogen werden.",
+                        )
+                    else:
+                        # Ehrlich bleiben: ein fehlgeschlagenes umount darf
+                        # nicht als "sicher" gemeldet werden.
+                        lines = (
+                            "ACHTUNG: Der Stick konnte nicht ausgehängt werden.",
+                            message,
+                            "Bitte noch einige Sekunden warten, bevor er abgezogen wird.",
+                        )
+                except Exception as exc:
+                    print(f"[App] FEHLER beim Auswerfen: {exc}")
+                    lines = ("Fehler beim Auswerfen des USB-Sticks.", str(exc)[:70])
+            self._usb_stick = None
+            self._usb_partition = None
+            self._usb_job_result = {"lines": lines}
+
+        self._usb_thread = threading.Thread(target=worker, name="usb-eject", daemon=True)
+        self._usb_thread.start()
+
+    def _start_delete_all(self) -> None:
+        # NEU (4.4): Loeschung in einem Hintergrund-Thread starten. Anders
+        # als die Diagnose (die synchron laeuft, weil sie unter einer
+        # Sekunde bleibt) kann das Leeren der Kamera-Speicherkarte ueber
+        # USB deutlich laenger dauern - synchron wuerde die Pygame-Schleife
+        # so lange stehen und die App wirkte abgestuerzt.
+        if self._delete_thread is not None and self._delete_thread.is_alive():
+            print("[App] Loeschlauf laeuft bereits - Anforderung ignoriert.")
+            return
+
+        progress = DeleteProgress()          # NEU (4.9)
+        self._delete_progress = progress
+
+        def worker() -> None:
+            try:
+                result = delete_all_photos(
+                    photo_dir=self.config.photo_dir,
+                    web_dir=self.config.web_dir,
+                    log_dir=self.config.log_dir,
+                    excluded_filenames=self.config.gallery.excluded_filenames,
+                    camera_lock=self._camera_lock,
+                    delete_from_camera=True,
+                    progress=progress,          # NEU (4.9)
+                )
+                print(
+                    f"[App] Loeschlauf beendet: {result.deleted_photos} Fotos, "
+                    f"{result.deleted_web_copies} Web-Kopien, Kamera: {result.camera_status}"
+                )
+                if result.report_path is not None:
+                    print(f"[App] Loeschprotokoll: {result.report_path}")
+                # NEU (4.9): wie beim Export - nicht nur die Anzahl, sondern
+                # auch die betroffene Datei ins Log schreiben.
+                for message in result.errors:
+                    print(f"[App]   Loeschfehler: {message}")
+            except Exception as exc:
+                # Darf den Thread niemals unbemerkt sterben lassen - sonst
+                # bliebe der Bildschirm ewig auf "Bilder werden geloescht".
+                print(f"[App] FEHLER im Loeschlauf: {exc}")
+                from admin_delete_service import DeleteResult
+                result = DeleteResult()
+                result.camera_status = "nicht geprüft"
+                result.errors.append(str(exc))
+            # Galerie-Zwischenspeicher leeren, damit keine Vorschaubilder
+            # bereits geloeschter Fotos zurueckbleiben.
+            self.gallery_service.clear_caches()
+            # Letzte Zuweisung = Fertigsignal fuer den Hauptloop.
+            self._delete_result = result
+
+        self._delete_thread = threading.Thread(target=worker, name="delete-all", daemon=True)
+        self._delete_thread.start()
+
+    def _collect_admin_status(self) -> None:
+        # NEU (4.3): Diagnosezeilen synchron ermitteln (dauert i.d.R. < 1s,
+        # hoechstens ein paar Sekunden bei der Kamera-Pruefung) - ausgeloest
+        # durch einen bewussten Tap im Service-Menue, daher kein Hintergrund-
+        # Thread noetig. Ergebnis kommt als eigenes Event zurueck, damit die
+        # State Machine (die keine Hardware kennt) unveraendert bleibt.
+        photo_count = len(self.gallery_service.list_photos())
+        lines = collect_status_lines(
+            photo_dir=self.config.photo_dir,
+            photo_count=photo_count,
+            app_start_monotonic=self._app_start_monotonic,
+        )
+        self.dispatch(AppEvent(EventType.ADMIN_STATUS_READY, payload={"lines": lines}, source="diagnostics"))
 
 
     # -- LED & Button-LED synchronisieren --------------------------------------
@@ -680,6 +1164,39 @@ class PhotoboothApp:
             # Eigene Effekte (rotes Warnblinken beim Loeschen, oranges
             # USB-Blinken, rotierender Teilkreis) folgen in Etappe 3 und 4.
             effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_STATUS:
+            # NEU (4.3): gleiche ruhige Welle wie das Menue selbst.
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_RESTART_PENDING:
+            # NEU (4.3): gruen wie waehrend der Kamera-Verarbeitung -
+            # signalisiert "es passiert gerade etwas", kein neuer Effekt noetig.
+            effect = LedEffect.CAPTURE_PROCESSING
+        elif state in {AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING}:
+            # NEU (4.4): langsames, kraeftiges rotes Warnblinken - eigener
+            # Effekt, damit es sich klar von LedEffect.ERROR (schnelles
+            # Blinken bei einer Stoerung) unterscheidet.
+            effect = LedEffect.ADMIN_DELETE_WARN
+        elif state == AppState.ADMIN_DELETE_DONE:
+            # NEU (4.4): zurueck zur ruhigen Welle - die Gefahr ist vorbei.
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_USB_WAIT:
+            # NEU (4.6): oranges Blinken als Aufforderung, den Stick
+            # einzustecken (eigener Effekt, siehe led_service.py).
+            effect = LedEffect.ADMIN_USB_WAIT
+        elif state == AppState.ADMIN_USB_COPY:
+            # NEU (4.7): rotierender Teilkreis waehrend des Exports.
+            effect = LedEffect.ADMIN_USB_COPY
+        elif state == AppState.ADMIN_USB_EXPORT_DONE:
+            # NEU (4.7): zurueck zur ruhigen Welle - Export ist fertig.
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state in {AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_EJECT}:
+            # NEU (4.6): "es passiert gerade etwas" - wie beim Neustart.
+            effect = LedEffect.CAPTURE_PROCESSING
+        elif state == AppState.ADMIN_USB_PROBLEM:
+            # NEU (4.6): gelbes Atmen - Aufmerksamkeit, aber keine Stoerung.
+            effect = LedEffect.REVIEW_BREATHE
+        elif state in {AppState.ADMIN_USB_READY, AppState.ADMIN_USB_REMOVE}:
+            effect = LedEffect.INSTRUCTIONS_WAVE
         elif state == AppState.PIN_ENTRY:
             # NEU (3.5): nur waehrend der Fehler-Optik rot/gelb, sonst dunkel.
             deadline = self.model.timers.pin_error_deadline
@@ -739,6 +1256,18 @@ class PhotoboothApp:
             AppState.BOOT, AppState.MAINTENANCE,
             # NEU (4.1): im Service-Menue loest der Taster nichts aus.
             AppState.ADMIN_MENU,
+            # NEU (4.3): Diagnoseseite und Neustart-Zwischenscreen - gleiche
+            # Begruendung wie ADMIN_MENU.
+            AppState.ADMIN_STATUS, AppState.ADMIN_RESTART_PENDING,
+            # NEU (4.4): waehrend Abfrage, Loeschlauf und Ergebnis darf der
+            # Taster nichts ausloesen.
+            AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,
+            AppState.ADMIN_DELETE_DONE,
+            # NEU (4.6): auch im gesamten USB-Ablauf darf der Taster nichts
+            # ausloesen.
+            AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY,
+            AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_EJECT, AppState.ADMIN_USB_REMOVE,
+            AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
             AppState.SHUTDOWN_GOODBYE,   # (PIN_ENTRY jetzt oben separat, 3.5)
         }:
             self._button_provider.set_led(False)

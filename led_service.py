@@ -53,6 +53,18 @@ class LedEffect(Enum):
     # NEU (3.5): Rot/Gelb-Fehlerblitz am Ring nach falscher PIN (transient,
     # solange pin_error_deadline laeuft).
     PIN_ERROR = auto()
+    # NEU (4.4): langsames, kraeftiges rotes Warnblinken waehrend der
+    # Sicherheitsabfrage und des Loeschlaufs ("Alle Bilder loeschen").
+    # Bewusst langsamer als LedEffect.ERROR - dort signalisiert schnelles
+    # Blinken eine Stoerung, hier geht es um eine bevorstehende, bewusst
+    # ausgeloeste, unwiderrufliche Handlung.
+    ADMIN_DELETE_WARN = auto()
+    # NEU (4.6): oranges Blinken waehrend "Bitte USB-Stick einstecken".
+    # Auffordernd, aber nicht alarmierend - deutlich langsamer als der
+    # Fehlerblitz und in warmem Orange statt Rot.
+    ADMIN_USB_WAIT = auto()
+    # NEU (4.7): rotierender Teilkreis waehrend des USB-Exports.
+    ADMIN_USB_COPY = auto()
 
 
 @dataclass

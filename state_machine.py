@@ -224,24 +224,166 @@ class StateMachine:
     def _handle_admin_menu(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.TAP_ADMIN_SHUTDOWN:
             return self._go_shutdown_goodbye(model, now)
+        if event.type == EventType.TAP_ADMIN_STATUS:          # NEU (4.3)
+            return self._go_admin_status(model, now)
+        if event.type == EventType.TAP_ADMIN_RESTART_APP:     # NEU (4.3)
+            return self._go_admin_restart_pending(model, now)
+        if event.type == EventType.TAP_ADMIN_DELETE_ALL:      # NEU (4.4)
+            return self._go_admin_delete_confirm(model, now)
+        if event.type == EventType.TAP_ADMIN_USB_EXPORT:      # NEU (4.6)
+            return self._go_admin_usb_wait(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
-        # Noch nicht implementierte Menuepunkte (Etappe 2-4): Zustand
-        # unveraendert lassen, aber den Idle-Timer neu aufziehen - ein
-        # Fehlgriff soll das Menue nicht vorzeitig schliessen.
-        if event.type in {
-            EventType.TAP_ADMIN_STATUS,
-            EventType.TAP_ADMIN_USB_EXPORT,
-            EventType.TAP_ADMIN_DELETE_ALL,
-            EventType.TAP_ADMIN_RESTART_APP,
-        }:
-            timers = replace(
-                model.timers,
-                idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds,
-            )
-            return TransitionResult(model=model.evolve(timers=timers))
         # BUTTON_PRESS wird hier bewusst NICHT behandelt: der Hardware-
         # Taster darf im Service-Menue kein Foto ausloesen.
+        return TransitionResult(model=model)
+
+    # NEU (4.3): Diagnose-Unterseite.
+    def _handle_admin_status(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_STATUS_READY:
+            lines = tuple(event.payload.get("lines", ()))
+            ui = replace(model.ui, admin_status_lines=lines)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen vor dem
+    # eigentlichen Neustart (analog zu SHUTDOWN_GOODBYE).
+    def _handle_admin_restart_pending(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_RESTART_TIMEOUT:
+            return TransitionResult(model=model, actions=("restart_app",))
+        return TransitionResult(model=model)
+
+    # NEU (4.4): Sicherheitsabfrage vor dem Loeschen des Gesamtbestands.
+    def _handle_admin_delete_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_DELETE_CONFIRM:
+            return self._go_admin_delete_running(model, now)
+        # Jeder andere Ausstieg (Nein, Zurueck, Untaetigkeit) fuehrt
+        # zurueck ins Menue, OHNE etwas zu loeschen. Der Idle-Timeout ist
+        # hier bewusst erlaubt: bleibt die Abfrage unbeantwortet stehen,
+        # ist "nicht loeschen" die richtige Annahme.
+        if event.type in {
+            EventType.TAP_ADMIN_DELETE_ABORT,
+            EventType.TAP_BACK,
+            EventType.IDLE_TIMEOUT,
+        }:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (4.4): Loeschung laeuft im Hintergrund-Thread. Bewusst KEIN
+    # Idle-Timeout und keine Abbruchmoeglichkeit - ein Abbruch mittendrin
+    # wuerde einen halb geloeschten Bestand hinterlassen.
+    def _handle_admin_delete_running(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_DELETE_FINISHED:
+            lines = tuple(event.payload.get("lines", ()))
+            return self._go_admin_delete_done(model, now, lines)
+        return TransitionResult(model=model)
+
+    # NEU (4.4): Ergebnis-Screen.
+    # --- USB-Export (NEU 4.6) ---
+
+    def _handle_admin_usb_wait(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_USB_INFO_READY:
+            ui = replace(model.ui, admin_usb_lines=tuple(event.payload.get("lines", ())))
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.ADMIN_USB_DETECTED:
+            name = str(event.payload.get("name", "USB-Stick"))
+            ui = replace(
+                model.ui,
+                admin_usb_device_ready=True,
+                admin_usb_lines=model.ui.admin_usb_lines + (f"Erkannt: {name}",),
+            )
+            # Idle-Timer neu aufziehen: ab jetzt muss nur noch "Weiter"
+            # gedrueckt werden, dafuer reicht die volle Frist erneut.
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_wait_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_USB_CONTINUE:
+            # Ohne erkannten Stick bleibt "Weiter" wirkungslos - der
+            # Renderer zeichnet den Button dann ausgegraut.
+            if not model.ui.admin_usb_device_ready:
+                return TransitionResult(model=model)
+            return self._go_admin_usb_check(model, now)
+        if event.type in {EventType.TAP_CANCEL, EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    def _handle_admin_usb_check(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_USB_CHECK_DONE:
+            lines = tuple(event.payload.get("lines", ()))
+            if bool(event.payload.get("ok", False)):
+                return self._go_admin_usb_ready(model, now, lines)
+            # NEU (4.7): not_enough_free durchreichen - der Problem-Screen
+            # zeigt "Stick leeren" nur dann an.
+            not_enough_free = bool(event.payload.get("not_enough_free", False))
+            return self._go_admin_usb_problem(model, now, lines, not_enough_free)
+        return TransitionResult(model=model)
+
+    def _handle_admin_usb_ready(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        # NEU (4.7): "Export starten" startet den Kopierlauf.
+        if event.type == EventType.TAP_ADMIN_USB_CONTINUE:
+            return self._go_admin_usb_copy(model, now)
+        # Abbruch/Timeout: Stick sauber auswerfen, ohne zu kopieren.
+        if event.type in {EventType.TAP_CANCEL, EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_usb_eject(model, now, can_retry=False)
+        return TransitionResult(model=model)
+
+    def _handle_admin_usb_problem(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        # NEU (4.7): "Stick leeren" (nur bei not_enough_free, nicht bei
+        # too_small - da hilft Aufraeumen nicht). Bei too_small reagiert
+        # der Button wie Abbrechen (eject + neuer Stick).
+        if event.type == EventType.TAP_ADMIN_USB_CLEAR:
+            if model.ui.admin_usb_not_enough_free:
+                # Stick leeren und erneut pruefen (reuse ADMIN_USB_CHECK).
+                ui = replace(model.ui, status_text="Stick wird geleert und geprüft ...", error_text=None)
+                timers = replace(model.timers, idle_deadline=None)
+                return TransitionResult(
+                    model=model.evolve(state=AppState.ADMIN_USB_CHECK, ui=ui, timers=timers),
+                    actions=("usb_clear_and_check",),
+                )
+            # too_small: gleiche Wirkung wie Abbrechen.
+            return self._go_admin_usb_eject(model, now, can_retry=True)
+        if event.type in {EventType.TAP_CANCEL, EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_usb_eject(model, now, can_retry=True)
+        return TransitionResult(model=model)
+
+    # NEU (4.7): Kopierlauf laeuft im Hintergrund, nicht abbrechbar.
+    def _handle_admin_usb_copy(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_USB_EXPORT_FINISHED:
+            lines = tuple(event.payload.get("lines", ()))
+            ok = bool(event.payload.get("ok", False))
+            return self._go_admin_usb_export_done(model, now, lines, ok)
+        return TransitionResult(model=model)
+
+    # NEU (4.7): Ergebnis-Screen - zeigt Zusammenfassung des Exports.
+    def _handle_admin_usb_export_done(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_ADMIN_USB_CONTINUE, EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_usb_eject(model, now, can_retry=False)
+        return TransitionResult(model=model)
+
+    def _handle_admin_usb_eject(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_USB_EJECTED:
+            return self._go_admin_usb_remove(model, now, tuple(event.payload.get("lines", ())))
+        return TransitionResult(model=model)
+
+    def _handle_admin_usb_remove(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_BACK, EventType.TAP_CANCEL, EventType.IDLE_TIMEOUT}:
+            if model.ui.admin_usb_can_retry:
+                return self._go_admin_usb_wait(model, now)
+            # NEU (4.7): nach einem erfolgreichen, verifizierten Export
+            # direkt zur Loesch-Abfrage statt ins Service-Menue.
+            if model.ui.admin_usb_offer_delete:
+                return self._go_admin_delete_confirm(model, now)
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    def _handle_admin_delete_done(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_BACK, EventType.TAP_CANCEL}:
+            return self._go_admin_menu(model, now)
+        # NEU (4.5): unbeaufsichtigt stehen gelassen -> ganz raus aus dem
+        # PIN-geschuetzten Bereich, direkt ins Hauptmenue.
+        if event.type == EventType.IDLE_TIMEOUT:
+            return self._go_main_menu(model, now)
         return TransitionResult(model=model)
 
     def _go_admin_menu(self, model: AppModel, now: float) -> TransitionResult:
@@ -254,6 +396,165 @@ class StateMachine:
             pin_error_deadline=None,
         )
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_MENU, ui=ui, timers=timers))
+
+    # NEU (4.3): Diagnose-Unterseite - Idle-Timer wie im Menue selbst,
+    # admin_status_lines wird geleert; die Zeilen kommen etwas spaeter per
+    # ADMIN_STATUS_READY (App sammelt sie synchron, siehe "collect_admin_status"
+    # in app_with_hw.py).
+    def _go_admin_status(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(model.ui, status_text="Status / Diagnose", error_text=None, admin_status_lines=())
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_STATUS, ui=ui, timers=timers),
+            actions=("collect_admin_status",),
+        )
+
+    # NEU (4.3): kurzer Zwischenscreen vor dem eigentlichen App-Neustart.
+    # Bewusst NICHT abbrechbar (wie SHUTDOWN_GOODBYE) - "App neu starten"
+    # ist bereits die bestaetigte Handlung, ein zweiter Tap sollte nichts
+    # mehr aendern koennen.
+    def _go_admin_delete_confirm(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text=(
+                "Alle Bilder werden unwiderruflich\n"
+                "von der Fotobox und der Kamera gelöscht.\n"
+                "Bist du dir sicher?"
+            ),
+            error_text=None,
+            admin_delete_lines=(),
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_DELETE_CONFIRM, ui=ui, timers=timers))
+
+    def _go_admin_delete_running(self, model: AppModel, now: float) -> TransitionResult:
+        # idle_deadline bewusst auf None: der Loeschlauf darf nicht durch
+        # einen Timeout unterbrochen werden (siehe _handle_admin_delete_running).
+        ui = replace(
+            model.ui,
+            status_text="Bilder werden gelöscht ...",
+            error_text=None,
+            admin_delete_progress="",          # NEU (4.9)
+            admin_delete_fraction=0.0,         # NEU (4.9)
+        )
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_DELETE_RUNNING, ui=ui, timers=timers),
+            actions=("start_delete_all",),
+        )
+
+    def _go_admin_delete_done(self, model: AppModel, now: float, lines: tuple[str, ...]) -> TransitionResult:
+        # session.photos leeren: die Galerie darf nach dem Loeschen keine
+        # Pfade mehr halten, die es nicht mehr gibt.
+        session = replace(model.session, photos=(), current_photo_path=None, last_saved_photo_path=None)
+        ui = replace(model.ui, status_text="Löschen abgeschlossen", error_text=None, admin_delete_lines=lines)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_DELETE_DONE, ui=ui, timers=timers, session=session),
+        )
+
+    # --- USB-Export (NEU 4.6) ---
+
+    def _go_admin_usb_wait(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Bilder auf USB-Stick",
+            error_text=None,
+            admin_usb_lines=("Ermittle benötigten Speicherplatz ...",),
+            admin_usb_device_ready=False,
+            admin_usb_can_retry=False,
+            admin_usb_offer_delete=False,
+            admin_usb_not_enough_free=False,
+            admin_usb_export_progress="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_wait_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_USB_WAIT, ui=ui, timers=timers),
+            actions=("usb_prepare",),
+        )
+
+    def _go_admin_usb_check(self, model: AppModel, now: float) -> TransitionResult:
+        # Kein Idle-Timeout: Einbinden und Messen darf nicht unterbrochen
+        # werden, sonst bliebe der Stick eingehaengt zurueck.
+        ui = replace(model.ui, status_text="USB-Stick wird geprüft ...", error_text=None)
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_USB_CHECK, ui=ui, timers=timers),
+            actions=("usb_check",),
+        )
+
+    # NEU (4.7): Kopierlauf - Idle-Timeout ist None (nicht unterbrechbar).
+    def _go_admin_usb_copy(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Export läuft ...",
+            error_text=None,
+            admin_usb_export_progress="",
+            admin_usb_progress_fraction=0.0,   # NEU (4.8)
+        )
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_USB_COPY, ui=ui, timers=timers),
+            actions=("usb_start_export",),
+        )
+
+    # NEU (4.7): Ergebnis-Screen nach dem Export.
+    def _go_admin_usb_export_done(self, model: AppModel, now: float, lines: tuple[str, ...], ok: bool) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Export abgeschlossen",
+            error_text=None,
+            admin_usb_lines=lines,
+            admin_usb_offer_delete=ok,
+            admin_usb_export_progress="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_EXPORT_DONE, ui=ui, timers=timers))
+
+    def _go_admin_usb_ready(self, model: AppModel, now: float, lines: tuple[str, ...]) -> TransitionResult:
+        ui = replace(model.ui, status_text="USB-Stick bereit", error_text=None, admin_usb_lines=lines)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_READY, ui=ui, timers=timers))
+
+    def _go_admin_usb_problem(self, model: AppModel, now: float, lines: tuple[str, ...], not_enough_free: bool = False) -> TransitionResult:
+        ui = replace(model.ui, status_text="USB-Stick nicht verwendbar", error_text=None, admin_usb_lines=lines, admin_usb_not_enough_free=not_enough_free)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_PROBLEM, ui=ui, timers=timers))
+
+    def _go_admin_usb_eject(self, model: AppModel, now: float, can_retry: bool) -> TransitionResult:
+        # Kein Idle-Timeout: sync + umount muss zu Ende laufen, sonst
+        # koennte der Stick mit vollem Schreibpuffer abgezogen werden.
+        ui = replace(
+            model.ui,
+            status_text="USB-Stick wird ausgeworfen ...",
+            error_text=None,
+            admin_usb_can_retry=can_retry,
+        )
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_USB_EJECT, ui=ui, timers=timers),
+            actions=("usb_eject",),
+        )
+
+    def _go_admin_usb_remove(self, model: AppModel, now: float, lines: tuple[str, ...]) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="USB-Stick kann jetzt entfernt werden",
+            error_text=None,
+            admin_usb_lines=lines,
+            admin_usb_device_ready=False,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_REMOVE, ui=ui, timers=timers))
+
+    def _go_admin_restart_pending(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(model.ui, status_text="App wird neu gestartet ...", error_text=None)
+        timers = replace(
+            model.timers,
+            idle_deadline=None,
+            admin_restart_deadline=now + self.config.timeouts.admin_restart_delay_seconds,
+        )
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_RESTART_PENDING, ui=ui, timers=timers))
 
     # NEU (3.2): PIN-Eingabe (Ziffernfeld)
     def _handle_pin_entry(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:

@@ -57,6 +57,36 @@ class EventType(Enum):
     TAP_ADMIN_DELETE_ALL = auto()
     TAP_ADMIN_RESTART_APP = auto()
     TAP_ADMIN_SHUTDOWN = auto()
+    # NEU (4.3): Diagnosezeilen sind fertig ermittelt (app_with_hw sammelt
+    # sie synchron nach TAP_ADMIN_STATUS und liefert sie im payload zurueck).
+    ADMIN_STATUS_READY = auto()
+    # NEU (4.3): der kurze Anzeige-Timer in ADMIN_RESTART_PENDING ist
+    # abgelaufen - loest die "restart_app"-Action aus.
+    ADMIN_RESTART_TIMEOUT = auto()
+    # NEU (4.4): Ja/Nein der Sicherheitsabfrage vor dem Loeschen. Bewusst
+    # eigene Events statt TAP_CONFIRM_DELETE/TAP_ABORT_DELETE - jene
+    # gehoeren zum Loeschen eines EINZELNEN Fotos im Review-Ablauf und
+    # duerfen sich mit dem Loeschen des Gesamtbestands nicht vermischen.
+    TAP_ADMIN_DELETE_CONFIRM = auto()
+    TAP_ADMIN_DELETE_ABORT = auto()
+    # NEU (4.4): Hintergrund-Thread ist fertig; payload enthaelt unter
+    # "lines" die Zusammenfassung fuer den Abschluss-Screen.
+    ADMIN_DELETE_FINISHED = auto()
+    # --- USB-Export (Etappe 4a) ---
+    # Platzbedarf ist berechnet; payload["lines"] enthaelt die Anzeige.
+    ADMIN_USB_INFO_READY = auto()
+    # Ein Stick wurde gefunden; payload["name"] beschreibt ihn.
+    ADMIN_USB_DETECTED = auto()
+    # "Weiter" auf dem Warte- bzw. Bereit-Bildschirm.
+    TAP_ADMIN_USB_CONTINUE = auto()
+    # Pruefung abgeschlossen; payload: ok, too_small, not_enough_free, lines.
+    ADMIN_USB_CHECK_DONE = auto()
+    # sync + umount abgeschlossen; payload["lines"].
+    ADMIN_USB_EJECTED = auto()
+    # NEU (4.7): Hintergrund-Thread (Kopieren+Verifikation) ist fertig.
+    ADMIN_USB_EXPORT_FINISHED = auto()
+    # NEU (4.7): "Stick leeren" im Problem-Screen (nur bei not_enough_free).
+    TAP_ADMIN_USB_CLEAR = auto()
 
 
 @dataclass(slots=True, frozen=True)

@@ -106,6 +106,14 @@ class TimeoutConfig:
     # muss dieser Timer pausiert werden, sonst reisst er die laufende
     # Aktion mittendrin weg.
     admin_menu_idle_seconds: float = 30.0
+    # NEU (4.3): so lange steht der "App wird neu gestartet ..."-Screen,
+    # bevor die App sich tatsaechlich beendet - reines Feedback, damit der
+    # Bildschirm nicht unvermittelt schwarz wird.
+    admin_restart_delay_seconds: float = 1.5
+    # NEU (4.6): Wartebildschirm "Bitte USB-Stick einstecken". Bewusst
+    # deutlich laenger als admin_menu_idle_seconds - Stick suchen,
+    # Gehaeuse aufklappen und einstecken dauert laenger als 30 Sekunden.
+    admin_usb_wait_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
