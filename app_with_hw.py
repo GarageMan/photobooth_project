@@ -54,7 +54,12 @@ from admin_menu import ADMIN_MENU_ITEMS, build_admin_rects  # NEU (4.1)
 from admin_diagnostics import collect_status_lines  # NEU (4.3)
 from admin_delete_service import DeleteProgress, delete_all_photos  # NEU (4.4/4.9)
 import admin_usb_service  # NEU (4.6)
-from admin_usb_export import ExportProgress, export_photos, clear_stick  # NEU (4.7)
+from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolutions
+    ExportProgress,
+    apply_conflict_resolutions,
+    clear_stick,
+    export_photos,
+)
 from storage_service import StorageService
 from layout import build_layout, button_rects_for_state
 from renderer import Renderer
@@ -205,6 +210,14 @@ class PhotoboothApp:
         # Referenz, der Hauptloop pollt sie in _emit_due_timers.
         self._usb_export_progress: ExportProgress | None = None
         self._usb_export_result = None
+        # NEU (6b): das ExportResult-Objekt aus Phase 1 (Kopieren) wird
+        # hier zwischengehalten, falls Konflikte offen bleiben - Phase 2
+        # (usb_apply_resolutions) baut darauf auf, statt bei null Zaehlern
+        # neu anzufangen. Die aktuellen Entscheidungen kommen dabei aus
+        # dem UI-Zustand (model.ui.admin_usb_conflicts), nicht aus diesem
+        # Objekt - der Nutzer kann sie auf dem Konflikt-Screen jederzeit
+        # noch aendern, bevor "Ausfuehren" getippt wird.
+        self._usb_export_pending_result = None
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -329,6 +342,17 @@ class PhotoboothApp:
                         0, self.renderer.terms_scroll_offset - 150
                     )
                     return
+            elif self.model.state == AppState.ADMIN_USB_CONFLICTS:
+                # NEU (6c): gleiches Prinzip wie INSTRUCTIONS/TERMS - reiner
+                # Anzeige-Offset im Renderer, kein Event/State-Machine noetig.
+                if dy < -60:
+                    self.renderer.usb_conflicts_scroll_offset += 150
+                    return
+                if dy > 60:
+                    self.renderer.usb_conflicts_scroll_offset = max(
+                        0, self.renderer.usb_conflicts_scroll_offset - 150
+                    )
+                    return
 
             # Kein Swipe erkannt -> als normaler Tap an der Startposition werten.
             # Kleine Toleranz (Zittern beim Antippen soll nicht dazu fuehren,
@@ -367,6 +391,19 @@ class PhotoboothApp:
                 if rect.collidepoint(pos):
                     return AppEvent(EventType.TAP_FULLSCREEN_PHOTO, payload={"index": index}, source="touch")
 
+        # NEU (6c): Einzelentscheidung je Konfliktzeile - eigene Trefferpruefung,
+        # da die Zeilenposition vom Scroll-Offset abhaengt und daher nicht ueber
+        # das statische layout.py-Rect-System abgebildet werden kann (gleiches
+        # Prinzip wie gallery_thumbnail_hitboxes oben).
+        if state == AppState.ADMIN_USB_CONFLICTS:
+            for rect, name, decision in self.renderer.usb_conflict_row_hitboxes:
+                if rect.collidepoint(pos):
+                    return AppEvent(
+                        EventType.TAP_ADMIN_USB_CONFLICT_DECISION,
+                        payload={"name": name, "decision": decision},
+                        source="touch",
+                    )
+
         if state == AppState.PIN_ENTRY:                       # NEU (3.4)
             return self._map_pin_entry_click(pos)
 
@@ -395,6 +432,10 @@ class PhotoboothApp:
             # NEU (4.6): "Weiter" der USB-Bildschirme.
             "usb_continue":   AppEvent(EventType.TAP_ADMIN_USB_CONTINUE, source="touch"),
             "usb_clear":      AppEvent(EventType.TAP_ADMIN_USB_CLEAR, source="touch"),    # NEU (4.7)
+            # NEU (6c): Sammelaktionen + "Ausfuehren" auf dem Konflikt-Screen.
+            "usb_conflicts_overwrite_all": AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_OVERWRITE_ALL, source="touch"),
+            "usb_conflicts_rename_all":    AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_RENAME_ALL, source="touch"),
+            "usb_conflicts_apply":         AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, source="touch"),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -508,6 +549,52 @@ class PhotoboothApp:
                 self.dispatch(
                     AppEvent(
                         EventType.ADMIN_USB_EXPORT_FINISHED,
+                        # NEU (6b): "conflicts" durchreichen - leer im
+                        # Normalfall (dann unveraendertes altes Verhalten).
+                        payload={
+                            "lines": result.summary_lines(),
+                            "ok": result.ok,
+                            "conflicts": tuple(getattr(result, "conflicts", ())),
+                        },
+                        source="usb",
+                    ),
+                    now,
+                )
+            return
+
+        # NEU (6b): Konfliktaufloesung (Phase 2) - gleiches Fortschritts-
+        # und Polling-Muster wie ADMIN_USB_COPY oben, eigenes Zielevent.
+        if state == AppState.ADMIN_USB_RESOLVE:
+            progress = self._usb_export_progress
+            if progress is not None:
+                total = max(1, progress.total_files)
+                if progress.phase == "resolve":
+                    text = f"Konflikte werden aufgelöst ... ({progress.resolved_files} von {progress.total_files})"
+                    fraction = 0.5 * progress.resolved_files / total
+                elif progress.phase == "verify":
+                    text = f"Prüfsummen werden geprüft ... ({progress.verified_files} von {progress.total_files})"
+                    fraction = 0.5 + 0.5 * progress.verified_files / total
+                elif progress.phase == "done":
+                    text = "Abschluss ..."
+                    fraction = 1.0
+                else:
+                    text = "Auflösung wird vorbereitet ..."
+                    fraction = 0.0
+                from dataclasses import replace as dc_replace
+                ui = dc_replace(
+                    self.model.ui,
+                    admin_usb_export_progress=text,
+                    admin_usb_progress_fraction=fraction,
+                )
+                self.model = self.model.evolve(ui=ui)
+            result = self._usb_export_result
+            if result is not None:
+                self._usb_export_result = None
+                self._usb_export_progress = None
+                self._usb_thread = None
+                self.dispatch(
+                    AppEvent(
+                        EventType.ADMIN_USB_RESOLVE_FINISHED,
                         payload={"lines": result.summary_lines(), "ok": result.ok},
                         source="usb",
                     ),
@@ -587,6 +674,7 @@ class PhotoboothApp:
             AppState.PHOTO_INTRO,
             AppState.PHOTO_PREVIEW,
             AppState.GALLERY_GRID,
+            AppState.GALLERY_EMPTY,   # NEU (Etappe 7)
             AppState.GALLERY_FULLSCREEN,
             AppState.REVIEW,
             # TERMS: anders als INSTRUCTIONS soll diese Ansicht nach
@@ -614,6 +702,10 @@ class PhotoboothApp:
             # NEU (4.7): Ergebnis-Screen. Bewusst OHNE ADMIN_USB_COPY (nicht
             # unterbrechbar - idle_deadline dort ohnehin None).
             AppState.ADMIN_USB_EXPORT_DONE,
+            # NEU (6b): interaktive Konfliktauswahl - bewusst OHNE
+            # ADMIN_USB_RESOLVE (dort laeuft ein Hintergrund-Thread, nicht
+            # unterbrechbar, idle_deadline ist dort ohnehin None).
+            AppState.ADMIN_USB_CONFLICTS,
             # NEU (4.5): Ergebnis-Screen - nach 30s zurueck ins Hauptmenue.
             AppState.ADMIN_DELETE_DONE,
         }
@@ -703,7 +795,19 @@ class PhotoboothApp:
         result = self.state_machine.transition(self.model, event, now)
         self.model = result.model
         self._apply_actions(result.actions, now, previous_model)
-        if self.model.state in {AppState.GALLERY_GRID, AppState.GALLERY_FULLSCREEN, AppState.ATTRACT_GALLERY}:
+        if self.model.state in {
+            AppState.GALLERY_GRID, AppState.GALLERY_FULLSCREEN, AppState.ATTRACT_GALLERY,
+            # NEU (Etappe 7): MAIN_MENU ist das Drehkreuz nach jeder Aufnahme
+            # (REVIEW -> QR_DISPLAY -> MAIN_MENU) - session.photos wird
+            # NIRGENDS sonst beim Speichern aktualisiert. Ohne diesen
+            # Eintrag saehe die neue TAP_GALLERY-Weiche (state_machine.py,
+            # "if not model.session.photos") immer noch die veraltete Liste
+            # vom letzten Aufruf, und da GALLERY_EMPTY selbst NICHT
+            # aktualisiert, waere die Galerie fuer immer "leer" - ein sich
+            # selbst verstaerkender Fehler. Mit MAIN_MENU hier ist die Liste
+            # bereits aktuell, bevor "Galerie" ueberhaupt angetippt wird.
+            AppState.MAIN_MENU,
+        }:
             photos = tuple(self.gallery_service.list_photos())
             self.model = self.model.evolve(session=replace(self.model.session, photos=photos))
 
@@ -737,6 +841,8 @@ class PhotoboothApp:
                 self._usb_start_export()
             elif action == "usb_clear_and_check":             # NEU (4.7)
                 self._usb_start_clear_and_check()
+            elif action == "usb_apply_resolutions":            # NEU (6b)
+                self._usb_start_resolve()
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -927,10 +1033,14 @@ class PhotoboothApp:
                     # NEU: Zielordner traegt den Event-Titel statt eines Zeitstempels.
                     folder_name=self.config.screen.title,
                     verify=True,
+                    # NEU (6b): schaltet die inhaltsbasierte Konflikterkennung
+                    # aus Etappe 6a scharf (war dort dormant, Default=False).
+                    collect_conflicts=True,
                 )
                 print(
                     f"[App] Export beendet: {result.copied} kopiert, "
                     f"{result.skipped} uebersprungen, {result.verified} verifiziert, "
+                    f"Konflikte: {len(result.conflicts)}, "
                     f"Fehler: {len(result.errors)}, Pruefsummenfehler: {len(result.failed_verify)}"
                 )
                 # NEU (4.8): bisher stand nur die ANZAHL im Log - welche
@@ -939,16 +1049,85 @@ class PhotoboothApp:
                     print(f"[App]   Exportfehler: {message}")
                 for name in result.failed_verify:
                     print(f"[App]   PRUEFSUMMENFEHLER: {name}")
+                self._write_usb_export_log(result.log_actions)      # NEU (6b)
             except Exception as exc:
                 print(f"[App] FEHLER beim Export: {exc}")
                 from admin_usb_export import ExportResult
                 result = ExportResult()
                 result.errors.append(str(exc))
                 progress.phase = "error"
+            # NEU (6b): fuer eine evtl. folgende Konfliktaufloesung (Phase 2)
+            # vorhalten - unabhaengig davon, ob tatsaechlich Konflikte
+            # offen sind (dann bleibt das Objekt einfach ungenutzt).
+            self._usb_export_pending_result = result
             self._usb_export_result = result
 
         self._usb_thread = threading.Thread(target=worker, name="usb-export", daemon=True)
         self._usb_thread.start()
+
+    def _usb_start_resolve(self) -> None:
+        """NEU (6b): Konfliktaufloesung (Phase 2) im Hintergrund-Thread
+        starten. Baut auf dem in Phase 1 zwischengehaltenen ExportResult
+        auf und uebernimmt die aktuellen Entscheidungen aus dem UI-Zustand
+        (der Nutzer kann sie auf dem Konflikt-Screen bis zuletzt aendern)."""
+        result = self._usb_export_pending_result
+        if result is None:
+            self._usb_export_result = type(
+                "R", (), {"summary_lines": lambda: ("Kein Exportergebnis vorhanden.",), "ok": False}
+            )()
+            return
+
+        # Aktuelle Entscheidungen aus dem Modell uebernehmen, BEVOR der
+        # Thread startet - der Hauptloop darf model.ui danach unbehelligt
+        # weiterlaufen lassen (der Thread liest ab hier nur noch "result").
+        result.conflicts = list(self.model.ui.admin_usb_conflicts)
+
+        progress = ExportProgress()
+        progress.total_files = len(result.conflicts)
+        self._usb_export_progress = progress
+
+        def worker() -> None:
+            try:
+                apply_conflict_resolutions(
+                    photo_dir=self.config.photo_dir,
+                    result=result,
+                    progress=progress,
+                    verify=True,
+                )
+                print(
+                    f"[App] Konfliktaufloesung beendet: {result.overwritten} ueberschrieben, "
+                    f"{result.renamed} umbenannt, Fehler: {len(result.errors)}, "
+                    f"Pruefsummenfehler: {len(result.failed_verify)}"
+                )
+                for message in result.errors:
+                    print(f"[App]   Fehler bei der Konfliktaufloesung: {message}")
+                self._write_usb_export_log(result.log_actions)
+            except Exception as exc:
+                print(f"[App] FEHLER bei der Konfliktaufloesung: {exc}")
+                result.errors.append(str(exc))
+                progress.phase = "error"
+            self._usb_export_pending_result = None
+            self._usb_export_result = result
+
+        self._usb_thread = threading.Thread(target=worker, name="usb-resolve", daemon=True)
+        self._usb_thread.start()
+
+    def _write_usb_export_log(self, messages) -> None:
+        """NEU (6b): haengt Kopier-/Ueberschreib-/Umbenennungsaktionen des
+        USB-Exports an eine fortlaufende Logdatei an (data/logs/usb_export.log).
+        Ergaenzend zu den bestehenden print()-Ausgaben - die Datei ueberlebt
+        einen Neustart der App, das Terminal nicht."""
+        if not messages:
+            return
+        try:
+            self.config.log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = self.config.log_dir / "usb_export.log"
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as fh:
+                for message in messages:
+                    fh.write(f"{timestamp}  {message}\n")
+        except OSError as exc:
+            print(f"[App] USB-Exportprotokoll konnte nicht geschrieben werden: {exc}")
 
     def _usb_start_clear_and_check(self) -> None:
         """NEU (4.7): Stick leeren, dann erneut pruefen - laeuft im selben
@@ -1153,6 +1332,8 @@ class PhotoboothApp:
             effect = LedEffect.QR
         elif state == AppState.GALLERY_GRID:
             effect = LedEffect.GALLERY_GRID_BREATHE
+        elif state == AppState.GALLERY_EMPTY:      # NEU (Etappe 7)
+            effect = LedEffect.GALLERY_EMPTY_INVITE
         elif state == AppState.GALLERY_FULLSCREEN:
             effect = LedEffect.GALLERY_STARFIELD
         elif state == AppState.ERROR_SCREEN:
@@ -1185,6 +1366,16 @@ class PhotoboothApp:
             effect = LedEffect.ADMIN_USB_WAIT
         elif state == AppState.ADMIN_USB_COPY:
             # NEU (4.7): rotierender Teilkreis waehrend des Exports.
+            effect = LedEffect.ADMIN_USB_COPY
+        elif state == AppState.ADMIN_USB_CONFLICTS:
+            # NEU (6b): gelbes Atmen - Aufmerksamkeit noetig (Entscheidung
+            # gefragt), aber keine Stoerung. Gleicher Effekt wie beim
+            # nicht-verwendbaren Stick (ADMIN_USB_PROBLEM).
+            effect = LedEffect.REVIEW_BREATHE
+        elif state == AppState.ADMIN_USB_RESOLVE:
+            # NEU (6b): weiterhin "es wird kopiert" - derselbe rotierende
+            # Teilkreis wie beim eigentlichen Export, kein eigener Effekt
+            # noetig.
             effect = LedEffect.ADMIN_USB_COPY
         elif state == AppState.ADMIN_USB_EXPORT_DONE:
             # NEU (4.7): zurueck zur ruhigen Welle - Export ist fertig.
@@ -1268,6 +1459,7 @@ class PhotoboothApp:
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY,
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_EJECT, AppState.ADMIN_USB_REMOVE,
             AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
+            AppState.ADMIN_USB_CONFLICTS, AppState.ADMIN_USB_RESOLVE,  # NEU (6b)
             AppState.SHUTDOWN_GOODBYE,   # (PIN_ENTRY jetzt oben separat, 3.5)
         }:
             self._button_provider.set_led(False)

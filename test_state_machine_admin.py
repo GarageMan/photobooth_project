@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import unittest
 
+from admin_usb_export import ExportConflict
 from config import DEFAULT_CONFIG
 from events import AppEvent, EventType
 from shutdown_service import PinResult
@@ -397,6 +398,9 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         # dort laeuft ein Job, der nicht unterbrochen werden darf.
         "ADMIN_USB_WAIT", "ADMIN_USB_READY", "ADMIN_USB_PROBLEM", "ADMIN_USB_REMOVE",
         "ADMIN_USB_EXPORT_DONE",   # NEU (4.7)
+        # NEU (6b) - bewusst OHNE ADMIN_USB_RESOLVE: dort laeuft ein
+        # Hintergrund-Thread, der nicht unterbrochen werden darf.
+        "ADMIN_USB_CONFLICTS",
     )
 
     def test_states_with_idle_deadline_are_emitted_by_the_app(self) -> None:
@@ -774,6 +778,167 @@ class AdminUsbExportFlowTestCase(unittest.TestCase):
         # Gleicher Button -> aber eject statt clear
         result = self.transition(EventType.TAP_ADMIN_USB_CLEAR, now_offset=11.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_EJECT)
+
+
+class AdminUsbConflictFlowTestCase(unittest.TestCase):
+    """Tests fuer die Konfliktbehebung nach dem USB-Export (Etappe 6b):
+    ADMIN_USB_COPY -> (bei offenen Konflikten) ADMIN_USB_CONFLICTS ->
+    ADMIN_USB_RESOLVE -> ADMIN_USB_EXPORT_DONE."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_copy(self):
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=5.0)
+        self.transition(EventType.PIN_SUBMIT, now_offset=6.0, payload={"pin_result": PinResult.ACCEPTED})
+        self.transition(EventType.TAP_ADMIN_USB_EXPORT, now_offset=7.0)
+        self.transition(EventType.ADMIN_USB_DETECTED, now_offset=8.0, payload={"name": "S"})
+        self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=9.0)
+        self.transition(EventType.ADMIN_USB_CHECK_DONE, now_offset=10.0, payload={"ok": True, "lines": ()})
+        return self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=11.0)
+
+    @staticmethod
+    def _conflict(name: str, decision: str = "rename") -> ExportConflict:
+        return ExportConflict(
+            name=name, src_size=100, dst_size=90, src_mtime=1.0, dst_mtime=2.0, decision=decision,
+        )
+
+    def _go_to_conflicts(self, conflicts):
+        self._go_to_copy()
+        return self.transition(
+            EventType.ADMIN_USB_EXPORT_FINISHED, now_offset=15.0,
+            payload={"ok": False, "lines": ("Export nicht abgeschlossen",), "conflicts": conflicts},
+        )
+
+    # -- Ankunft auf dem Konflikt-Screen ------------------------------------
+
+    def test_conflicts_in_payload_lead_to_conflicts_screen(self) -> None:
+        result = self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_CONFLICTS)
+        self.assertEqual(len(result.model.ui.admin_usb_conflicts), 1)
+        self.assertEqual(result.model.ui.admin_usb_conflicts[0].name, "a.jpg")
+
+    def test_no_conflicts_keeps_old_behavior(self) -> None:
+        # Regressionsschutz: leere Konfliktliste -> unveraendertes
+        # Verhalten wie vor Etappe 6b (direkt zum Ergebnis-Screen).
+        self._go_to_copy()
+        result = self.transition(
+            EventType.ADMIN_USB_EXPORT_FINISHED, now_offset=15.0,
+            payload={"ok": True, "lines": ("5 Bilder exportiert",)},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_EXPORT_DONE)
+
+    def test_conflicts_screen_has_idle_deadline(self) -> None:
+        result = self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.assertIsNotNone(result.model.timers.idle_deadline)
+
+    # -- Einzelentscheidung und Sammelaktionen ------------------------------
+
+    def test_toggle_single_decision(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"), self._conflict("b.jpg")))
+        result = self.transition(
+            EventType.TAP_ADMIN_USB_CONFLICT_DECISION, now_offset=16.0,
+            payload={"name": "a.jpg", "decision": "overwrite"},
+        )
+        by_name = {c.name: c.decision for c in result.model.ui.admin_usb_conflicts}
+        self.assertEqual(by_name["a.jpg"], "overwrite")
+        self.assertEqual(by_name["b.jpg"], "rename")   # unangetastet
+
+    def test_invalid_decision_is_ignored(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        result = self.transition(
+            EventType.TAP_ADMIN_USB_CONFLICT_DECISION, now_offset=16.0,
+            payload={"name": "a.jpg", "decision": "loeschen"},
+        )
+        self.assertEqual(result.model.ui.admin_usb_conflicts[0].decision, "rename")
+
+    def test_overwrite_all(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"), self._conflict("b.jpg")))
+        result = self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_OVERWRITE_ALL, now_offset=16.0)
+        decisions = {c.decision for c in result.model.ui.admin_usb_conflicts}
+        self.assertEqual(decisions, {"overwrite"})
+
+    def test_rename_all(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg", "overwrite"), self._conflict("b.jpg", "overwrite")))
+        result = self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_RENAME_ALL, now_offset=16.0)
+        decisions = {c.decision for c in result.model.ui.admin_usb_conflicts}
+        self.assertEqual(decisions, {"rename"})
+
+    # -- Uebergang zur Aufloesung --------------------------------------------
+
+    def test_apply_starts_resolve(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        result = self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, now_offset=16.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
+        self.assertIn("usb_apply_resolutions", result.actions)
+        self.assertIsNone(result.model.timers.idle_deadline)
+
+    def test_back_also_starts_resolve(self) -> None:
+        # Kein sinnvolles "Abbrechen" mehr moeglich - TAP_BACK loest wie
+        # "Ausfuehren" die Aufloesung mit den aktuellen Entscheidungen aus.
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        result = self.transition(EventType.TAP_BACK, now_offset=16.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
+
+    def test_cancel_also_starts_resolve(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        result = self.transition(EventType.TAP_CANCEL, now_offset=16.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
+
+    def test_idle_timeout_also_starts_resolve(self) -> None:
+        # Unbeaufsichtigt bleibt die Box nicht haengen - die nicht-
+        # destruktive Standardentscheidung ("rename") wird automatisch
+        # angewendet.
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=16.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
+
+    # -- Aufloesungslauf (Hintergrund, nicht abbrechbar) --------------------
+
+    def test_resolve_ignores_taps(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, now_offset=16.0)
+        for ev in (EventType.TAP_BACK, EventType.TAP_CANCEL, EventType.BUTTON_PRESS):
+            result = self.transition(ev, now_offset=17.0)
+            self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
+
+    def test_resolve_finished_leads_to_export_done(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, now_offset=16.0)
+        result = self.transition(
+            EventType.ADMIN_USB_RESOLVE_FINISHED, now_offset=17.0,
+            payload={"ok": True, "lines": ("1 umbenannt",)},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_USB_EXPORT_DONE)
+        self.assertTrue(result.model.ui.admin_usb_offer_delete)
+
+    def test_export_done_clears_conflict_list(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, now_offset=16.0)
+        result = self.transition(
+            EventType.ADMIN_USB_RESOLVE_FINISHED, now_offset=17.0,
+            payload={"ok": True, "lines": ()},
+        )
+        self.assertEqual(result.model.ui.admin_usb_conflicts, ())
+
+    def test_resolve_failed_does_not_offer_delete(self) -> None:
+        self._go_to_conflicts((self._conflict("a.jpg"),))
+        self.transition(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, now_offset=16.0)
+        result = self.transition(
+            EventType.ADMIN_USB_RESOLVE_FINISHED, now_offset=17.0,
+            payload={"ok": False, "lines": ("Prüfsummenfehler!",)},
+        )
+        self.assertFalse(result.model.ui.admin_usb_offer_delete)
 
 
 class AdminMenuItemsTestCase(unittest.TestCase):

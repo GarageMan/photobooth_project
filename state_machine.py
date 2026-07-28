@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from admin_usb_export import ExportConflict
 from config import AppConfig
 from events import AppEvent, EventType
 from models import AppModel, SessionState, TimerState, TransitionResult, UiState
@@ -43,6 +44,10 @@ class StateMachine:
         if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
             return self._go_photo_intro(model, now)
         if event.type == EventType.TAP_GALLERY:
+            # NEU (Etappe 7): ohne Fotos zeigt GALLERY_GRID nur einen leeren
+            # Dateipfad - stattdessen ein eigener, einladender Zustand.
+            if not model.session.photos:
+                return self._go_gallery_empty(model, now)
             return self._go_gallery_grid(model, now)
         if event.type == EventType.TAP_INSTRUCTIONS:
             return self._go_instructions(model, now)
@@ -78,6 +83,16 @@ class StateMachine:
 
     def _handle_attract_gallery(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type in {EventType.TAP_BACK, EventType.BUTTON_PRESS, EventType.TAP_PHOTO, EventType.TAP_GALLERY}:
+            return self._go_main_menu(model, now)
+        return TransitionResult(model=model)
+
+    def _handle_gallery_empty(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        # NEU (Etappe 7): "Jetzt fotografieren" fuehrt direkt in
+        # PHOTO_INTRO - gleiche Events wie auf GALLERY_GRID/MAIN_MENU
+        # (TAP_PHOTO per Button, BUTTON_PRESS per Hardware-Taster).
+        if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
+            return self._go_photo_intro(model, now)
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
         return TransitionResult(model=model)
 
@@ -352,6 +367,60 @@ class StateMachine:
         if event.type == EventType.ADMIN_USB_EXPORT_FINISHED:
             lines = tuple(event.payload.get("lines", ()))
             ok = bool(event.payload.get("ok", False))
+            # NEU (6b): bleiben inhaltliche Konflikte offen, geht es NICHT
+            # direkt zum Ergebnis-Screen, sondern zur interaktiven Auswahl.
+            # Ohne Konflikte (Normalfall, altes Verhalten) unveraendert.
+            conflicts = tuple(event.payload.get("conflicts", ()))
+            if conflicts:
+                return self._go_admin_usb_conflicts(model, now, conflicts)
+            return self._go_admin_usb_export_done(model, now, lines, ok)
+        return TransitionResult(model=model)
+
+    # NEU (6b): interaktive Konfliktauswahl - der Nutzer entscheidet pro
+    # Datei (oder per Sammelaktion) zwischen Ueberschreiben und Umbenennen,
+    # bevor die Aufloesung angewendet wird.
+    def _handle_admin_usb_conflicts(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_USB_CONFLICT_DECISION:
+            name = event.payload.get("name")
+            decision = event.payload.get("decision")
+            if decision not in ("overwrite", "rename"):
+                return TransitionResult(model=model)
+            conflicts = tuple(
+                replace(c, decision=decision) if c.name == name else c
+                for c in model.ui.admin_usb_conflicts
+            )
+            ui = replace(model.ui, admin_usb_conflicts=conflicts)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_USB_CONFLICTS_OVERWRITE_ALL:
+            conflicts = tuple(replace(c, decision="overwrite") for c in model.ui.admin_usb_conflicts)
+            ui = replace(model.ui, admin_usb_conflicts=conflicts)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_USB_CONFLICTS_RENAME_ALL:
+            conflicts = tuple(replace(c, decision="rename") for c in model.ui.admin_usb_conflicts)
+            ui = replace(model.ui, admin_usb_conflicts=conflicts)
+            return TransitionResult(model=model.evolve(ui=ui))
+        # NEU (6b): "Ausfuehren" wendet die aktuellen Entscheidungen an.
+        # TAP_BACK/TAP_CANCEL/IDLE_TIMEOUT tun bewusst dasselbe statt den
+        # Screen kommentarlos zu verlassen - fuer bereits kopierte Neu-
+        # Dateien gibt es kein sinnvolles "Abbrechen" mehr, und die
+        # Standardentscheidung ("rename") ist ohnehin nicht-destruktiv.
+        # So bleibt die Fotobox auch unbeaufsichtigt (Idle-Timeout) nicht
+        # auf halbem Weg stehen.
+        if event.type in {
+            EventType.TAP_ADMIN_USB_CONFLICTS_APPLY,
+            EventType.TAP_BACK,
+            EventType.TAP_CANCEL,
+            EventType.IDLE_TIMEOUT,
+        }:
+            return self._go_admin_usb_resolve(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (6b): Aufloesung laeuft im Hintergrund, nicht abbrechbar - gleiche
+    # Begruendung wie beim Kopierlauf selbst.
+    def _handle_admin_usb_resolve(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_USB_RESOLVE_FINISHED:
+            lines = tuple(event.payload.get("lines", ()))
+            ok = bool(event.payload.get("ok", False))
             return self._go_admin_usb_export_done(model, now, lines, ok)
         return TransitionResult(model=model)
 
@@ -498,6 +567,37 @@ class StateMachine:
             actions=("usb_start_export",),
         )
 
+    # NEU (6b): interaktive Konfliktauswahl - kein Hintergrund-Job, daher
+    # regulaerer Idle-Timeout wie bei den anderen interaktiven USB-Screens.
+    def _go_admin_usb_conflicts(
+        self, model: AppModel, now: float, conflicts: tuple[ExportConflict, ...]
+    ) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Dateien mit abweichendem Inhalt gefunden",
+            error_text=None,
+            admin_usb_conflicts=conflicts,
+            admin_usb_export_progress="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_CONFLICTS, ui=ui, timers=timers))
+
+    # NEU (6b): Aufloesung im Hintergrund - kein Idle-Timeout, gleiche
+    # Begruendung wie beim eigentlichen Kopierlauf.
+    def _go_admin_usb_resolve(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Konflikte werden aufgelöst ...",
+            error_text=None,
+            admin_usb_export_progress="",
+            admin_usb_progress_fraction=0.0,
+        )
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_USB_RESOLVE, ui=ui, timers=timers),
+            actions=("usb_apply_resolutions",),
+        )
+
     # NEU (4.7): Ergebnis-Screen nach dem Export.
     def _go_admin_usb_export_done(self, model: AppModel, now: float, lines: tuple[str, ...], ok: bool) -> TransitionResult:
         ui = replace(
@@ -507,18 +607,23 @@ class StateMachine:
             admin_usb_lines=lines,
             admin_usb_offer_delete=ok,
             admin_usb_export_progress="",
+            # NEU (6b): eine evtl. noch gefuellte Konfliktliste aufraeumen,
+            # damit sie bei einem spaeteren erneuten Export nicht als
+            # veralteter Rest haengen bleibt (Vorbild: pin_entry wird beim
+            # Verlassen des PIN-Screens ebenso geleert).
+            admin_usb_conflicts=(),
         )
-        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_EXPORT_DONE, ui=ui, timers=timers))
 
     def _go_admin_usb_ready(self, model: AppModel, now: float, lines: tuple[str, ...]) -> TransitionResult:
         ui = replace(model.ui, status_text="USB-Stick bereit", error_text=None, admin_usb_lines=lines)
-        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_READY, ui=ui, timers=timers))
 
     def _go_admin_usb_problem(self, model: AppModel, now: float, lines: tuple[str, ...], not_enough_free: bool = False) -> TransitionResult:
         ui = replace(model.ui, status_text="USB-Stick nicht verwendbar", error_text=None, admin_usb_lines=lines, admin_usb_not_enough_free=not_enough_free)
-        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_PROBLEM, ui=ui, timers=timers))
 
     def _go_admin_usb_eject(self, model: AppModel, now: float, can_retry: bool) -> TransitionResult:
@@ -544,7 +649,7 @@ class StateMachine:
             admin_usb_lines=lines,
             admin_usb_device_ready=False,
         )
-        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_usb_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_USB_REMOVE, ui=ui, timers=timers))
 
     def _go_admin_restart_pending(self, model: AppModel, now: float) -> TransitionResult:
@@ -632,6 +737,21 @@ class StateMachine:
         )
         ui = replace(model.ui, selected_gallery_index=None, gallery_scroll_offset=0, status_text="")
         return TransitionResult(model=model.evolve(state=AppState.GALLERY_GRID, timers=timers, ui=ui), actions=("stop_preview", "set_led_gallery"))
+
+    def _go_gallery_empty(self, model: AppModel, now: float) -> TransitionResult:
+        # NEU (Etappe 7): eigener Zustand statt eines Leer-Falls in
+        # GALLERY_GRID - gleicher Idle-Timeout wie das normale Grid.
+        timers = replace(
+            model.timers,
+            idle_deadline=now + self.config.timeouts.gallery_idle_seconds,
+            preview_warning_deadline=None,
+            preview_total_deadline=None,
+        )
+        ui = replace(model.ui, selected_gallery_index=None, gallery_scroll_offset=0, status_text="")
+        return TransitionResult(
+            model=model.evolve(state=AppState.GALLERY_EMPTY, timers=timers, ui=ui),
+            actions=("stop_preview", "set_led_gallery_empty"),
+        )
 
     def _go_photo_intro(self, model: AppModel, now: float) -> TransitionResult:
         timers = replace(

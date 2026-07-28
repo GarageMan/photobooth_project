@@ -84,9 +84,29 @@ class EventType(Enum):
     # sync + umount abgeschlossen; payload["lines"].
     ADMIN_USB_EJECTED = auto()
     # NEU (4.7): Hintergrund-Thread (Kopieren+Verifikation) ist fertig.
+    # NEU (6b): payload traegt zusaetzlich "conflicts" - ein Tupel
+    # offener ExportConflict-Eintraege (leer, wenn keine Konflikte
+    # gefunden wurden; dann bleibt der bisherige Ablauf unveraendert).
     ADMIN_USB_EXPORT_FINISHED = auto()
     # NEU (4.7): "Stick leeren" im Problem-Screen (nur bei not_enough_free).
     TAP_ADMIN_USB_CLEAR = auto()
+    # --- USB-Export Konfliktbehebung (Etappe 6b) ---
+    # Einzelne Entscheidung fuer eine Datei aendern.
+    # payload: {"name": str, "decision": "overwrite"|"rename"}.
+    TAP_ADMIN_USB_CONFLICT_DECISION = auto()
+    # Sammelaktionen: alle noch offenen Konflikte auf dieselbe Entscheidung
+    # setzen (ersetzt keine bereits einzeln geaenderten Eintraege NICHT
+    # gesondert - wirkt gleichermassen auf alle, das ist bewusst einfach
+    # gehalten: "alles ueberschreiben"/"alles umbenennen" meint wirklich
+    # alles).
+    TAP_ADMIN_USB_CONFLICTS_OVERWRITE_ALL = auto()
+    TAP_ADMIN_USB_CONFLICTS_RENAME_ALL = auto()
+    # "Ausfuehren": wendet die aktuellen Entscheidungen an (startet den
+    # Hintergrund-Thread fuer admin_usb_export.apply_conflict_resolutions).
+    TAP_ADMIN_USB_CONFLICTS_APPLY = auto()
+    # Hintergrund-Thread (Phase 2 - Konfliktaufloesung) ist fertig.
+    # payload: "lines", "ok" - gleiche Form wie ADMIN_USB_EXPORT_FINISHED.
+    ADMIN_USB_RESOLVE_FINISHED = auto()
 
 
 @dataclass(slots=True, frozen=True)

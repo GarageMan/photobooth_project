@@ -297,6 +297,14 @@ class HwLedProvider:
                 self._pixels.show()
                 time.sleep(0.02)
 
+            elif effect == LedEffect.GALLERY_EMPTY_INVITE:
+                # NEU (Etappe 7): einzelner, langsam wandernder Punkt -
+                # deutlich gemaechlicher als PHOTO_INTRO (dessen Tempo den
+                # unmittelbar bevorstehenden Ausloesemoment signalisiert).
+                self._render_gallery_empty_invite(chase_pos)
+                chase_pos = (chase_pos + 1) % _LED_COUNT
+                time.sleep(0.06)
+
             elif effect == LedEffect.ADMIN_USB_WAIT:
                 # NEU (4.6): oranges Blinken (ca. 1.5 Hz) als Aufforderung,
                 # den Stick einzustecken. Hartes An/Aus statt weichem
@@ -536,6 +544,26 @@ class HwLedProvider:
             self._pixels[i] = (int(90 * level), int(35 * level), int(200 * level))
         self._pixels.show()
 
+    def _render_gallery_empty_invite(self, chase_pos: int) -> None:
+        """
+        NEU (Etappe 7): GALLERY_GRID ohne Fotos - ein einzelner, weich
+        auslaufender Lichtpunkt in Gruen-Tuerkis wandert langsam (deutlich
+        gemaechlicher als PHOTO_INTRO) einmal um den Ring. Anders als der
+        doppelte Kometen-Effekt von PHOTO_INTRO (zwei Punkte, gegenlaeufig,
+        schnell) ist hier nur EIN Punkt unterwegs, langsamer - ein
+        Fingerzeig statt einer Aufforderung zur Eile: "hier ist noch nichts,
+        aber schau mal her".
+        """
+        tail = 9
+        for i in range(_LED_COUNT):
+            dist = (chase_pos - i) % _LED_COUNT
+            if dist < tail:
+                level = (1.0 - dist / tail) ** 1.5
+                self._pixels[i] = (0, int(200 * level), int(140 * level))
+            else:
+                self._pixels[i] = (0, 4, 3)  # sehr dunkles Grundtuerkis
+        self._pixels.show()
+
 
 # ------------------------------------------------------------------------------
 # Manuelle Schnell-Tests (direkt auf dem Pi ausführen)
@@ -560,6 +588,7 @@ if __name__ == "__main__":
         "delete_confirm":   LedEffect.DELETE_CONFIRM,
         "qr":               LedEffect.QR,
         "gallery_grid":     LedEffect.GALLERY_GRID_BREATHE,
+        "gallery_empty":    LedEffect.GALLERY_EMPTY_INVITE,  # NEU (Etappe 7)
         "starfield":        LedEffect.GALLERY_STARFIELD,
         "error":            LedEffect.ERROR,
         "delete_warn":      LedEffect.ADMIN_DELETE_WARN,   # NEU (4.4)

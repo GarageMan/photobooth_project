@@ -31,6 +31,13 @@ class LayoutRects:
     # NEU (3.3): Ziffernfeld fuer die versteckte PIN-Eingabe (PIN_ENTRY).
     # Schluessel: "0".."9", "backspace", "submit", "cancel".
     pin_keys: dict[str, pygame.Rect]
+    # NEU (6c): Sammelaktionen auf dem USB-Konflikt-Screen. "Ausfuehren"
+    # nutzt bewusst KEIN eigenes Rect, sondern das bereits vorhandene
+    # "right" (gleiche Position wie "Weiter"/"Export starten" bei den
+    # uebrigen USB-Screens) - ein Screen, ein gewohnter Platz fuer die
+    # Hauptaktion.
+    usb_conflicts_overwrite_all: pygame.Rect
+    usb_conflicts_rename_all: pygame.Rect
 
 
 def build_layout(width: int, height: int) -> LayoutRects:
@@ -124,6 +131,17 @@ def build_layout(width: int, height: int) -> LayoutRects:
     pin_keys["submit"] = key_rect(2, 3)
     pin_keys["cancel"] = rect(0.03, 0.03, 0.18, 0.09)
 
+    # NEU (6c, ueberarbeitet nach Nutzer-Feedback): Kontrollkaesten der
+    # "Alle auswaehlen"-Zeile - kompakt statt grosse Buttons, damit sie
+    # optisch zu den Kontrollkaesten der einzelnen Dateizeilen passen
+    # (siehe renderer._draw_admin_usb_conflicts). Die X-Position (centerx)
+    # ist zugleich die EINZIGE Quelle fuer die Spaltenposition ueberhaupt -
+    # der Renderer liest sie fuer Spaltenkoepfe UND jede einzelne
+    # Dateizeile aus, damit nirgends zwei Stellen synchron gehalten werden
+    # muessen.
+    usb_conflicts_overwrite_all = rect(0.55, 0.245, 0.10, 0.075)
+    usb_conflicts_rename_all = rect(0.77, 0.245, 0.10, 0.075)
+
     return LayoutRects(
         main_photo=main_photo,
         main_gallery=main_gallery,
@@ -134,6 +152,8 @@ def build_layout(width: int, height: int) -> LayoutRects:
         back=back,
         text_view_back=text_view_back,
         pin_keys=pin_keys,
+        usb_conflicts_overwrite_all=usb_conflicts_overwrite_all,
+        usb_conflicts_rename_all=usb_conflicts_rename_all,
     )
 
 
@@ -164,6 +184,11 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"cancel": rects.right}
     if state == AppState.GALLERY_GRID:
         return {"back": rects.back}
+    # NEU (Etappe 7): gleiche links/rechts-Zuordnung wie PHOTO_INTRO (auf
+    # das der "photo"-Button hier direkt fuehrt) - vertrautes Layout beim
+    # Uebergang zwischen den beiden Screens.
+    if state == AppState.GALLERY_EMPTY:
+        return {"photo": rects.left, "back": rects.right}
     if state == AppState.ATTRACT_GALLERY:
         # Bewusst leer: kein sichtbarer Button, nur Tippen irgendwo/Taster
         # fuehrt zurueck ins Hauptmenue (siehe app_with_hw.py).
@@ -204,6 +229,17 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"usb_continue": rects.right}
     if state == AppState.ADMIN_USB_REMOVE:
         return {"back": rects.back}
-    # ADMIN_DELETE_RUNNING, ADMIN_USB_CHECK, ADMIN_USB_EJECT:
+    # NEU (6c): Sammelaktionen + "Ausfuehren" (auf "right", wie bei den
+    # uebrigen USB-Screens). Die Einzelentscheidung je Datei laeuft NICHT
+    # ueber diese Rects, sondern ueber renderer.usb_conflict_row_hitboxes
+    # (siehe app_with_hw._map_click_to_event) - die Zeilenposition ist erst
+    # nach dem Zeichnen (Scroll-Offset!) bekannt.
+    if state == AppState.ADMIN_USB_CONFLICTS:
+        return {
+            "usb_conflicts_overwrite_all": rects.usb_conflicts_overwrite_all,
+            "usb_conflicts_rename_all": rects.usb_conflicts_rename_all,
+            "usb_conflicts_apply": rects.right,
+        }
+    # ADMIN_DELETE_RUNNING, ADMIN_USB_CHECK, ADMIN_USB_EJECT, ADMIN_USB_RESOLVE:
     # bewusst leer - laufende Vorgaenge sind nicht abbrechbar.
     return {}

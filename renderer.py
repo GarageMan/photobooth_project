@@ -72,6 +72,17 @@ class Renderer:
         # ein Wechsel zwischen "Anleitung" und "Nutzungsbedingungen" die
         # jeweils andere Scroll-Position nicht zuruecksetzt/vermischt.
         self.terms_scroll_offset: int = 0
+        # NEU (6c): Scroll-Position der USB-Konfliktliste - gleiches Prinzip
+        # wie instructions_scroll_offset/terms_scroll_offset (reine Anzeige-
+        # Angelegenheit, lebt nur hier im Renderer).
+        self.usb_conflicts_scroll_offset: int = 0
+        # NEU (6c): Trefferflaechen der aktuell sichtbaren Konfliktzeilen -
+        # (Rect, Dateiname, "overwrite"|"rename"). Wird bei jedem Aufruf von
+        # _draw_admin_usb_conflicts() neu befuellt (Positionen haengen vom
+        # Scroll-Offset ab, sind also erst nach dem Zeichnen bekannt) und in
+        # app_with_hw._map_click_to_event gegen den Tap geprueft - gleiches
+        # Muster wie gallery_thumbnail_hitboxes.
+        self.usb_conflict_row_hitboxes: list[tuple[pygame.Rect, str, str]] = []
         self._last_rendered_state: AppState | None = None
 
     def render(
@@ -87,6 +98,10 @@ class Renderer:
             self.instructions_scroll_offset = 0
         if model.state == AppState.TERMS and self._last_rendered_state != AppState.TERMS:
             self.terms_scroll_offset = 0
+        # NEU (6c): gleiches Prinzip - jeder neue Konflikt-Screen (z.B. nach
+        # einem erneuten Export) beginnt oben, nicht an einer alten Position.
+        if model.state == AppState.ADMIN_USB_CONFLICTS and self._last_rendered_state != AppState.ADMIN_USB_CONFLICTS:
+            self.usb_conflicts_scroll_offset = 0
         # Neuer Countdown-Durchlauf (State-Wechsel IN COUNTDOWN hinein) -
         # zufaellig ein neues "bitte laecheln"-Bild fuer diesen Durchlauf
         # ziehen, damit es bei jedem Foto wechselt statt immer gleich zu sein.
@@ -165,6 +180,17 @@ class Renderer:
         if model.state == AppState.ADMIN_USB_COPY:           # NEU (4.7)
             self._draw_admin_usb_copy(model)
 
+        # NEU (6b/6c): Aufloesungslauf (Phase 2) zeigt denselben Fortschritts-
+        # balken wie der Kopierlauf - app_with_hw.py fuellt dieselben UI-
+        # Felder (admin_usb_export_progress/admin_usb_progress_fraction),
+        # daher genuegt die Wiederverwendung derselben Zeichenfunktion statt
+        # einer Kopie.
+        if model.state == AppState.ADMIN_USB_RESOLVE:
+            self._draw_admin_usb_copy(model)
+
+        if model.state == AppState.ADMIN_USB_CONFLICTS:       # NEU (6c)
+            self._draw_admin_usb_conflicts(model)
+
         if model.state == AppState.ADMIN_USB_EXPORT_DONE:    # NEU (4.7)
             self._draw_admin_usb_lines(model)
 
@@ -183,6 +209,7 @@ class Renderer:
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY, # NEU (4.6)
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_EJECT, AppState.ADMIN_USB_REMOVE,
             AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
+            AppState.ADMIN_USB_CONFLICTS, AppState.ADMIN_USB_RESOLVE,  # NEU (6c)
         }
 
         if model.state not in text_screens and not hide_all_text:
@@ -204,13 +231,13 @@ class Renderer:
         elif model.state in {
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
+            AppState.ADMIN_USB_CONFLICTS,   # NEU (6c): "Dateien mit abweichendem Inhalt gefunden"
         }:
             # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
-            # eine Ueberschrift fuer alle vier Bildschirme, kein Sonderfall
-            # je Zustand.
+            # eine Ueberschrift fuer alle Screens, kein Sonderfall je Zustand.
             self._draw_text(model.ui.status_text, self.font_title, (255, 255, 255), (60, 60))
-        # ADMIN_RESTART_PENDING zeigt bewusst gar keinen Titel - nur die
-        # grosse zentrierte Statuszeile (siehe _draw_admin_restart_pending).
+        # ADMIN_RESTART_PENDING/ADMIN_USB_RESOLVE zeigen bewusst gar keinen
+        # Titel - nur die grosse zentrierte Statuszeile.
 
         if self.config.features.debug_overlay:
             self._draw_text(f"Zustand: {model.state.name}", self.font_body, (220, 220, 220), (60, 180))
@@ -227,6 +254,9 @@ class Renderer:
 
         if model.state == AppState.GALLERY_GRID:
             self._draw_gallery_grid(model)
+
+        if model.state == AppState.GALLERY_EMPTY:            # NEU (Etappe 7)
+            self._draw_gallery_empty(model)
 
         self._draw_buttons(model.state)
         self._draw_footer(model, fps)
@@ -284,6 +314,21 @@ class Renderer:
                 col = 0
                 x = margin
                 y += cell_h + gap
+
+    def _draw_gallery_empty(self, model: AppModel) -> None:
+        """NEU (Etappe 7): GALLERY_GRID wurde angetippt, aber es gibt noch
+        keine Fotos. Ersetzt den vorherigen technischen Pfad-Hinweis
+        ("Keine Fotos gefunden in: /home/...") durch eine einladende,
+        gastfreundliche Nachricht mit direktem Weg zum ersten Foto."""
+        height = self.config.screen.height
+        self._blit_center(
+            "Noch keine Fotos vorhanden!", self.font_status_main_menu, (210, 235, 225),
+            round(0.42 * height),
+        )
+        self._blit_center(
+            "Sei die/der Erste - mach jetzt ein Foto!", self.font_body, (190, 190, 195),
+            round(0.42 * height) + 70,
+        )
 
     def _get_thumbnail_surface(self, path: str, size: tuple[int, int]) -> pygame.Surface | None:
         target_w, target_h = size
@@ -912,6 +957,9 @@ class Renderer:
             self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
         elif state == AppState.GALLERY_GRID:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.GALLERY_EMPTY:              # NEU (Etappe 7)
+            self._draw_button("Jetzt fotografieren", self.layout.left, (0, 150, 0))
+            self._draw_button("Zurück", self.layout.right, (100, 100, 100))
         elif state == AppState.GALLERY_FULLSCREEN:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.REVIEW:
@@ -958,8 +1006,13 @@ class Renderer:
             self._draw_button("Weiter", self.layout.right, (0, 130, 110))
         elif state == AppState.ADMIN_USB_REMOVE:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
-        # ADMIN_RESTART_PENDING / ADMIN_DELETE_RUNNING: bewusst kein Button -
-        # nicht abbrechbar.
+        elif state == AppState.ADMIN_USB_CONFLICTS:            # NEU (6c)
+            # Sammelaktionen ("Alle auswaehlen"-Zeile) und Dateizeilen samt
+            # Kontrollkaestchen zeichnet _draw_admin_usb_conflicts() bereits
+            # vollstaendig mit - hier nur die eine echte Haupt-Aktion.
+            self._draw_button("Ausführen", self.layout.right, (0, 130, 110))
+        # ADMIN_RESTART_PENDING / ADMIN_DELETE_RUNNING / ADMIN_USB_RESOLVE:
+        # bewusst kein Button - nicht abbrechbar.
 
     def _draw_admin_menu_buttons(self) -> None:
         # Beschriftung, Farbe und Position kommen vollstaendig aus
@@ -1060,6 +1113,144 @@ class Renderer:
             self.font_status_main_menu, (200, 235, 225),
             round(0.45 * self.config.screen.height),
         )
+
+    def _truncate_text(self, text: str, font: pygame.font.Font, max_width: int) -> str:
+        """Kuerzt text mit angehaengtem '...', falls er in max_width (Pixel)
+        nicht hineinpasst. Lineares Abschneiden reicht hier - Dateinamen
+        sind kurz genug, dass die Performance keine Rolle spielt."""
+        if font.size(text)[0] <= max_width:
+            return text
+        ellipsis = "..."
+        truncated = text
+        while truncated and font.size(truncated + ellipsis)[0] > max_width:
+            truncated = truncated[:-1]
+        return (truncated + ellipsis) if truncated else ellipsis
+
+    def _draw_conflict_checkbox(self, hitbox: pygame.Rect, checked: bool) -> None:
+        """NEU (6c, ueberarbeitet nach Nutzer-Feedback): echte Kontrollkasten-
+        Optik statt grosser Buttons - ein kleines Quadrat, zentriert im
+        (fuer Touch bewusst groesseren) hitbox-Rect. Gefuellt und weiss
+        umrandet, wenn ausgewaehlt, sonst nur ein duenner, gedaempfter
+        Rahmen. Eine einzige Auswahlfarbe fuer beide Spalten (vorher zwei
+        verschiedene Farben je Spalte) - liest sich naeher an einem
+        echten Kontrollkaestchen."""
+        size = round(min(hitbox.width, hitbox.height) * 0.55)
+        box = pygame.Rect(0, 0, size, size)
+        box.center = hitbox.center
+        if checked:
+            pygame.draw.rect(self.screen, (0, 130, 110), box, border_radius=6)
+            pygame.draw.rect(self.screen, (255, 255, 255), box, width=2, border_radius=6)
+        else:
+            pygame.draw.rect(self.screen, (40, 40, 45), box, border_radius=6)
+            pygame.draw.rect(self.screen, (120, 120, 125), box, width=2, border_radius=6)
+
+    def _draw_admin_usb_conflicts(self, model: AppModel) -> None:
+        """NEU (6c, ueberarbeitet nach Nutzer-Feedback): scrollbare Liste
+        offener Namenskonflikte im Kontrollkasten-Look (zwei Spalten
+        "Ueberschreiben"/"Umbenennen"), mit einer festen "Alle auswaehlen"-
+        Zeile ganz oben fuer die Sammelaktion.
+
+        GEAENDERT: die vorherige Fassung zeichnete einen Hinweistext
+        ("N Dateien ...") auf derselben Bildschirmzeile wie die (damals
+        noch grossen) Sammelaktions-Buttons - beide ueberlappten sich
+        sichtbar. Der Hinweistext entfaellt jetzt ersatzlos (der Titel
+        "Dateien mit abweichendem Inhalt gefunden" plus die sichtbaren
+        Zeilen sagen bereits genug), stattdessen klare eigene Zeilen fuer
+        Spaltenkoepfe und "Alle auswaehlen".
+
+        Die X-Position beider Spalten kommt bewusst aus layout.py
+        (usb_conflicts_overwrite_all/_rename_all .centerx) statt hier neu
+        berechnet zu werden - dieselbe Spalte fuer Kopf, "Alle auswaehlen"
+        und jede einzelne Dateizeile, ohne Duplizierung.
+
+        Scrollen wie bei INSTRUCTIONS/TERMS ueber einen rein im Renderer
+        gehaltenen Offset (reine Anzeigesache). Tipp-Erkennung je
+        Dateizeile ueber usb_conflict_row_hitboxes (siehe
+        app_with_hw._map_click_to_event) - die "Alle auswaehlen"-Zeile
+        scrollt dagegen NICHT mit und nutzt daher die statischen Rects aus
+        layout.py, genau wie jeder andere Button im Programm.
+        """
+        width, height = self.config.screen.width, self.config.screen.height
+        conflicts = model.ui.admin_usb_conflicts
+        self.usb_conflict_row_hitboxes = []
+
+        overwrite_x = self.layout.usb_conflicts_overwrite_all.centerx
+        rename_x = self.layout.usb_conflicts_rename_all.centerx
+
+        # -- Spaltenkoepfe -------------------------------------------------
+        # NEU (Feedback): urspruenglich 0.185 - sass fast auf dem Titel.
+        # +16px Luft zwischen Titel-Unterkante und dieser Zeile.
+        header_y = round(0.185 * height) + 16
+        for text, cx in (("Überschreiben", overwrite_x), ("Umbenennen", rename_x)):
+            surf = self.font_small.render(text, True, (200, 200, 205))
+            rect = surf.get_rect(center=(cx, header_y))
+            self.screen.blit(surf, rect)
+
+        # -- "Alle auswaehlen"-Zeile (fest, scrollt nicht mit) --------------
+        # NEU (Feedback): das Haekchen dieser Zeile ist kein eigener,
+        # persistenter Zustand, sondern wird bei jedem Zeichnen live aus
+        # den TATSAECHLICHEN Entscheidungen abgeleitet - sind gerade ALLE
+        # offenen Konflikte auf "overwrite" gesetzt, ist das Haekchen dort
+        # aktiv, analog fuer "rename". Bei gemischten Entscheidungen (z.B.
+        # weil eine einzelne Zeile danach wieder umgestellt wurde) bleiben
+        # beide leer - das ist korrekt und entspricht dem Verhalten einer
+        # echten Checkbox-Gruppe (kein State-Machine-Feld noetig).
+        all_row = self.layout.usb_conflicts_overwrite_all
+        label_y = all_row.y + (all_row.height - self.font_body.get_linesize()) // 2
+        self._draw_text("Alle auswählen", self.font_body, (210, 210, 215), (60, label_y))
+        all_overwrite = bool(conflicts) and all(c.decision == "overwrite" for c in conflicts)
+        all_rename = bool(conflicts) and all(c.decision == "rename" for c in conflicts)
+        self._draw_conflict_checkbox(self.layout.usb_conflicts_overwrite_all, all_overwrite)
+        self._draw_conflict_checkbox(self.layout.usb_conflicts_rename_all, all_rename)
+
+        # -- Scrollbare Liste ------------------------------------------------
+        top = round(0.335 * height)
+        bottom = round(0.77 * height)
+        row_h = round(0.075 * height)
+        gap = round(0.012 * height)
+
+        if not conflicts:
+            # Sollte praktisch nie sichtbar werden (der Screen wird nur bei
+            # mindestens einem Konflikt betreten), ist aber kein Fehlerfall.
+            self._blit_center(
+                "Keine offenen Konflikte mehr.", self.font_body, (200, 200, 200), (top + bottom) // 2,
+            )
+            return
+
+        viewport = pygame.Rect(0, top, width, bottom - top)
+        total_height = len(conflicts) * (row_h + gap)
+        max_scroll = max(0, total_height - viewport.height)
+        self.usb_conflicts_scroll_offset = max(0, min(self.usb_conflicts_scroll_offset, max_scroll))
+
+        checkbox_hitbox_w = round(0.09 * width)
+        name_max_w = overwrite_x - checkbox_hitbox_w // 2 - 60 - round(0.02 * width)
+
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(viewport)
+        y = top - self.usb_conflicts_scroll_offset
+
+        for conflict in conflicts:
+            if y + row_h >= top and y <= bottom:
+                name_y = y + (row_h - self.font_body.get_linesize()) // 2
+                label = self._truncate_text(conflict.name, self.font_body, name_max_w)
+                self._draw_text(label, self.font_body, (230, 230, 230), (60, name_y))
+
+                overwrite_rect = pygame.Rect(0, 0, checkbox_hitbox_w, row_h)
+                overwrite_rect.center = (overwrite_x, y + row_h // 2)
+                rename_rect = pygame.Rect(0, 0, checkbox_hitbox_w, row_h)
+                rename_rect.center = (rename_x, y + row_h // 2)
+
+                self._draw_conflict_checkbox(overwrite_rect, conflict.decision == "overwrite")
+                self._draw_conflict_checkbox(rename_rect, conflict.decision == "rename")
+
+                # Hitboxen in Bildschirm-Koordinaten (nicht relativ zum
+                # Clip) - app_with_hw.py prueft sie gegen die tatsaechliche
+                # Tap-Position.
+                self.usb_conflict_row_hitboxes.append((overwrite_rect, conflict.name, "overwrite"))
+                self.usb_conflict_row_hitboxes.append((rename_rect, conflict.name, "rename"))
+            y += row_h + gap
+
+        self.screen.set_clip(previous_clip)
 
     def _draw_admin_delete_confirm(self, model: AppModel) -> None:
         # NEU (4.4): Warntext gross und zentriert. status_text enthaelt
@@ -1180,6 +1371,11 @@ class Renderer:
             AppState.PHOTO_INTRO: (30, 30, 40),
             AppState.ATTRACT_GALLERY: (25, 25, 45),
             AppState.GALLERY_GRID: (15, 15, 20),
+            # NEU (Etappe 7): dasselbe ruhige Dunkel-Tuerkis wie
+            # GALLERY_GRID_BREATHE (LED) andeutungsweise im Hintergrund -
+            # sichtbar zur Galerie-Familie gehoerig, aber warm genug fuer
+            # eine einladende Botschaft statt eines rein technischen Grids.
+            AppState.GALLERY_EMPTY: (10, 22, 20),
             AppState.GALLERY_FULLSCREEN: (5, 5, 5),
             AppState.PHOTO_PREVIEW: (30, 30, 40),
             AppState.COUNTDOWN: (60, 30, 20),
@@ -1211,4 +1407,11 @@ class Renderer:
             AppState.ADMIN_USB_REMOVE: (10, 32, 26),
             AppState.ADMIN_USB_COPY: (12, 28, 28),      # NEU (4.7)
             AppState.ADMIN_USB_EXPORT_DONE: (10, 32, 26),  # NEU (4.7)
+            # NEU (6c): gelblich gedeckt - Aufmerksamkeit noetig (Entscheidung
+            # gefragt), aber keine Stoerung; angelehnt an ADMIN_USB_PROBLEM,
+            # nur weniger intensiv (kein echtes Problem, nur eine Nachfrage).
+            AppState.ADMIN_USB_CONFLICTS: (38, 30, 10),
+            # NEU (6c): gleiches Blaugruen wie der eigentliche Kopierlauf -
+            # aus Sicht des Gastes/Betreibers "es wird weiter geschrieben".
+            AppState.ADMIN_USB_RESOLVE: (12, 28, 28),
         }[state]

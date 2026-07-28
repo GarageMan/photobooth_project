@@ -65,6 +65,16 @@ class LedEffect(Enum):
     ADMIN_USB_WAIT = auto()
     # NEU (4.7): rotierender Teilkreis waehrend des USB-Exports.
     ADMIN_USB_COPY = auto()
+    # NEU (Etappe 7): GALLERY_GRID, wenn noch keine Fotos existieren -
+    # ein einzelner, sanft aufblitzender Punkt wandert langsam einmal um
+    # den Ring ("schau her, hier passiert gleich was") - ruhiger als
+    # PHOTO_INTRO (das signalisiert den unmittelbar bevorstehenden
+    # Ausloesemoment), aber erkennbar lebendiger als das reine Amber-
+    # Atmen von MAIN_MENU. Farblich in der Gruen-Tuerkis-Familie von
+    # GALLERY_GRID_BREATHE, damit die Zugehoerigkeit zur Galerie sichtbar
+    # bleibt, aber mit klar anderer Dynamik (wandernder Einzelpunkt statt
+    # Atmen) leicht unterscheidbar.
+    GALLERY_EMPTY_INVITE = auto()
 
 
 @dataclass

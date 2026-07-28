@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from dataclasses import replace
 
 from config import DEFAULT_CONFIG
 from events import AppEvent, EventType
@@ -133,16 +134,80 @@ class StateMachineTestCase(unittest.TestCase):
 
     def test_gallery_grid_idle_timeout_goes_to_main_menu(self) -> None:
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        # NEU (Etappe 7): TAP_GALLERY fuehrt bei LEERER Fotoliste jetzt nach
+        # GALLERY_EMPTY statt GALLERY_GRID (siehe test_gallery_empty_*
+        # unten). Damit dieser Test wirklich GALLERY_GRID prueft (nicht nur
+        # zufaellig ueber GALLERY_EMPTY denselben Zielzustand trifft), wird
+        # hier ein Foto "eingespeist" - in der echten App erledigt das
+        # app_with_hw.py beim Betreten von MAIN_MENU (gallery_service.
+        # list_photos()), hier simulieren wir das direkt am Modell.
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("test.jpg",)))
         self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=self.config.timeouts.gallery_idle_seconds + 1)
         self.assertEqual(result.model.state, AppState.MAIN_MENU)
 
     def test_gallery_fullscreen_idle_timeout_goes_back_to_grid(self) -> None:
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        # NEU (Etappe 7): siehe Kommentar oben - ohne mindestens ein Foto
+        # wuerde TAP_GALLERY nach GALLERY_EMPTY fuehren, das
+        # TAP_FULLSCREEN_PHOTO gar nicht kennt (unveraendert liegen
+        # bleiben wuerde der Zustand).
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("test.jpg",)))
         self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
         self.transition(EventType.TAP_FULLSCREEN_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3, payload={"index": 0})
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=self.config.timeouts.gallery_fullscreen_idle_seconds + 1)
         self.assertEqual(result.model.state, AppState.GALLERY_GRID)
+
+    # -- Leere Galerie (Etappe 7) --------------------------------------------
+    # GALLERY_GRID ohne Fotos zeigte frueher einen technischen Pfad-Hinweis
+    # ("Keine Fotos gefunden in: /home/..."). TAP_GALLERY fuehrt bei leerer
+    # session.photos jetzt stattdessen nach GALLERY_EMPTY - eigener Zustand
+    # mit einladender Nachricht und direktem Weg zum ersten Foto.
+
+    def test_tap_gallery_without_photos_goes_to_gallery_empty(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.assertEqual(self.model.session.photos, ())
+        result = self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.GALLERY_EMPTY)
+
+    def test_tap_gallery_with_photos_still_goes_to_gallery_grid(self) -> None:
+        # Regressionsschutz: die eigentliche GALLERY_GRID-Anzeige darf sich
+        # durch Etappe 7 nicht veraendern, sobald Fotos existieren.
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("a.jpg", "b.jpg")))
+        result = self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.GALLERY_GRID)
+
+    def test_gallery_empty_tap_photo_leads_to_photo_intro(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
+
+    def test_gallery_empty_button_press_leads_to_photo_intro(self) -> None:
+        # Der physische Ausloeser-Taster soll auf GALLERY_EMPTY dasselbe
+        # bewirken wie der "Jetzt fotografieren"-Button.
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
+
+    def test_gallery_empty_back_goes_to_main_menu(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.TAP_BACK, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_gallery_empty_idle_timeout_goes_to_main_menu(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=self.config.timeouts.gallery_idle_seconds + 1)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_gallery_empty_has_idle_deadline(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        result = self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertIsNotNone(result.model.timers.idle_deadline)
 
 
 if __name__ == "__main__":

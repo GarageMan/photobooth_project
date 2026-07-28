@@ -8,6 +8,11 @@ class AppState(Enum):
     MAIN_MENU = auto()
     ATTRACT_GALLERY = auto()
     GALLERY_GRID = auto()
+    # NEU (Etappe 7): GALLERY_GRID wird betreten, aber es gibt noch keine
+    # Fotos - eigener Zustand statt eines Leer-Falls INNERHALB von
+    # GALLERY_GRID, weil hier andere Buttons ("Jetzt fotografieren" statt
+    # Thumbnails) und ein eigener LED-Effekt gelten (siehe led_service.py).
+    GALLERY_EMPTY = auto()
     GALLERY_FULLSCREEN = auto()
     PHOTO_INTRO = auto()
     PHOTO_PREVIEW = auto()
@@ -65,5 +70,13 @@ class AppState(Enum):
     ADMIN_USB_REMOVE = auto()
     # NEU (4.7): Kopierlauf mit Fortschrittsanzeige.
     ADMIN_USB_COPY = auto()
+    # NEU (6b): mindestens eine Datei mit ABWEICHENDEM Inhalt gefunden
+    # (Etappe 6a erkennt das inhaltsbasiert per SHA256). Der Ablauf
+    # pausiert hier fuer die interaktive Auswahl (ueberschreiben/umbenennen
+    # je Datei oder als Sammelaktion), bevor er fortgesetzt wird.
+    ADMIN_USB_CONFLICTS = auto()
+    # NEU (6b): die auf dem Konflikt-Screen getroffenen Entscheidungen
+    # werden angewendet - Hintergrund-Thread, analog zu ADMIN_USB_COPY.
+    ADMIN_USB_RESOLVE = auto()
     # NEU (4.7): Ergebnis-Screen nach dem Export.
     ADMIN_USB_EXPORT_DONE = auto()

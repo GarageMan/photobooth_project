@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from admin_usb_export import ExportConflict
 from events import AppEvent
 from states import AppState
 
@@ -81,6 +82,13 @@ class UiState:
     # Export, damit beide Vorgaenge sich gleich anfuehlen.
     admin_delete_progress: str = ""
     admin_delete_fraction: float = 0.0
+    # NEU (6b): offene Namenskonflikte des laufenden USB-Exports (Etappe 6a
+    # erkennt sie inhaltsbasiert per SHA256). Jeder Eintrag traegt seine
+    # eigene Entscheidung (ExportConflict.decision) - eine Aenderung
+    # ersetzt den betroffenen Eintrag per dataclasses.replace() und baut
+    # daraus ein neues Tupel, das Modell selbst bleibt dabei frozen. Leer,
+    # solange kein Konflikt offen ist (Normalfall).
+    admin_usb_conflicts: tuple[ExportConflict, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

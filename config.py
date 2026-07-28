@@ -114,6 +114,15 @@ class TimeoutConfig:
     # deutlich laenger als admin_menu_idle_seconds - Stick suchen,
     # Gehaeuse aufklappen und einstecken dauert laenger als 30 Sekunden.
     admin_usb_wait_seconds: float = 120.0
+    # NEU (Feedback nach 6c): eigener, deutlich laengerer Idle-Timeout fuer
+    # die uebrigen USB-Export-Screens (bereit/Problem/Export fertig/
+    # entfernen/Konfliktauswahl) - bewusst GETRENNT von
+    # admin_menu_idle_seconds (30s), das fuer die schnellen Admin-
+    # Bestaetigungen (Status, Loeschen) angemessen bleibt. Beim
+    # USB-Export - besonders auf dem Konflikt-Screen, wo womoeglich mehrere
+    # Dateien einzeln durchgegangen werden - reissen 30s zu leicht mitten
+    # in der Bedienung ab.
+    admin_usb_idle_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
