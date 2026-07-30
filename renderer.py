@@ -252,6 +252,26 @@ class Renderer:
         if model.ui.error_text and model.state not in text_screens:
             self._draw_text(model.ui.error_text, self.font_body, (255, 120, 120), (60, 320))
 
+        if model.state == AppState.MAIN_MENU and self.config.needs_event_setup:
+            # NEU (Etappe 8, Feedback): dezenter Hinweisstreifen ganz oben -
+            # eigene halbtransparente Leiste statt einer weiteren Textzeile
+            # im ohnehin schon belegten status_text/error_text-Bereich, und
+            # unabhaengig vom Hintergrundbild lesbar. Gedacht fuer
+            # Entwickler/neue GitHub-Nutzer, die die Box frisch aufsetzen -
+            # verschwindet automatisch, sobald data/event_config.json echte
+            # Werte enthaelt. Bewusst kein Alarm-Look (kein Rot, kein
+            # Blinken) und keine Bedienungssperre - die Box funktioniert mit
+            # Standardwerten technisch einwandfrei, nur eben noch nicht
+            # event-spezifisch konfiguriert.
+            banner_height = 34
+            banner = pygame.Surface((self.config.screen.width, banner_height), pygame.SRCALPHA)
+            banner.fill((0, 0, 0, 165))
+            self.screen.blit(banner, (0, 0))
+            self._draw_text(
+                "Hinweis: Standardkonfiguration aktiv - data/event_config.json anpassen",
+                self.font_small, (255, 210, 120), (16, 6),
+            )
+
         if model.state == AppState.GALLERY_GRID:
             self._draw_gallery_grid(model)
 
@@ -873,9 +893,9 @@ class Renderer:
             "",
             "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto nach der Aufnahme per QR-Code",
             f"herunterladen (Kennwort: {wifi}).",
-            "Da es sich um ein Veranstaltungsnetzwerk handelt, sind die Bilddateien dabei",
-            "theoretisch für andere angemeldete Nutzer einsehbar. Lade keine Bilder herunter,",
-            "wenn du damit nicht einverstanden bist.",
+            "Da es sich um ein Veranstaltungsnetzwerk handelt, sind die Bilddateien während",
+            "der Übertragung theoretisch für andere angemeldete Nutzer einsehbar.",
+            "Lade keine Bilder herunter, wenn du damit nicht einverstanden bist.",
             "",
             self._heading("Deine Rechte"),
             "",

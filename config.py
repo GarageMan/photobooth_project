@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,7 +18,6 @@ except ImportError:
     print("[Config] WARNUNG: local_secrets.py fehlt - siehe local_secrets_example.py")
 
 _PLACEHOLDER = "BITTE_local_secrets.py_ANLEGEN"
-GUEST_WIFI_PASSWORD = getattr(_secrets, "GUEST_WIFI_PASSWORD", _PLACEHOLDER)
 SHUTDOWN_PIN = getattr(_secrets, "SHUTDOWN_PIN", _PLACEHOLDER)
 
 # Parameter der Geheim-Geste - ebenfalls aus local_secrets.py, damit weder
@@ -62,6 +62,83 @@ LOG_DIR = DATA_DIR / "logs"
 ASSETS_DIR = BASE_DIR / "assets"
 
 
+# --- Etappe 8: konfigurierbare Event-Parameter -----------------------------
+# Titel, Foto-Praefix und Gaeste-WLAN-Passwort aendern sich JEDE Veranstaltung
+# - anders als PIN/Geheim-Geste (local_secrets.py) sind das keine Geheimnisse,
+# sondern reine Event-Parameter. Damit dafuer nicht bei jeder Party Code
+# angefasst werden muss, liegen sie in einer eigenen JSON-Datei.
+#
+# BEWUSST im Hauptverzeichnis (wie local_secrets.py), NICHT unter data/:
+# data/ ist fuer Laufzeitdaten reserviert, die die App selbst erzeugt/
+# aktualisiert (Fotos, Logs, shutdown_lockout.json). event_config.json wird
+# dagegen wie local_secrets.py von Hand vor jedem Event angepasst - beide
+# "Setup-Dateien" liegen daher konsistent am selben Ort (nicht versioniert,
+# siehe .gitignore und event_config_example.json).
+_EVENT_CONFIG_PATH = BASE_DIR / "event_config.json"
+
+
+def load_event_config(path: Path) -> dict:
+    """Laedt die Event-Konfiguration aus path.
+
+    Gibt bei fehlender, nicht lesbarer oder inhaltlich falscher Datei ein
+    LEERES dict zurueck (nie eine Exception) - die Aufrufer entscheiden
+    danach jeweils EINZELN ueber ihren Fallback-Wert, genau wie beim
+    local_secrets-Muster oben. Eigenstaendige, parametrisierte Funktion
+    (statt Modul-Code, der beim Import einmalig laeuft) - dadurch ohne
+    echte Datei und ohne Neu-Import des Moduls offline testbar
+    (siehe test_config.py).
+    """
+    if not path.exists():
+        print(f"[Config] WARNUNG: {path.name} fehlt - siehe event_config_example.json. Nutze Standardwerte.")
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[Config] WARNUNG: {path.name} konnte nicht gelesen werden ({exc}) - nutze Standardwerte.")
+        return {}
+    if not isinstance(data, dict):
+        print(f"[Config] WARNUNG: {path.name} hat kein JSON-Objekt als Wurzel - nutze Standardwerte.")
+        return {}
+    return data
+
+
+_event_config = load_event_config(_EVENT_CONFIG_PATH)
+
+# "Fotobox" als generischer Fallback - die App hat keine Versionsbezeichnung
+# und keinen Namen, solange kein Event-Titel konfiguriert ist.
+EVENT_TITLE = str(_event_config.get("event_title") or "Fotobox")
+PHOTO_PREFIX = str(_event_config.get("photo_prefix") or "foto_")
+
+# NEU (Etappe 8): das Gaeste-WLAN-Passwort zieht von local_secrets.py in
+# diese Event-Konfiguration um - es ist kein Geraete-Geheimnis wie der
+# Shutdown-PIN, sondern aendert sich mit jeder Veranstaltung. UEBERGANGS-
+# WEISE (fuer bestehende Installationen, die event_config.json noch nicht
+# angelegt haben) faellt der Wert, falls in der JSON nicht gesetzt, noch auf
+# ein eventuell vorhandenes local_secrets.GUEST_WIFI_PASSWORD zurueck, bevor
+# der generische Platzhalter greift. Neu eingerichtete Installationen tragen
+# das Passwort nur noch in event_config.json ein.
+_event_wifi_password = _event_config.get("guest_wifi_password")
+if _event_wifi_password:
+    GUEST_WIFI_PASSWORD = str(_event_wifi_password)
+else:
+    GUEST_WIFI_PASSWORD = getattr(_secrets, "GUEST_WIFI_PASSWORD", _PLACEHOLDER)
+
+# NEU (Etappe 8, Feedback): erkennt, ob die Event-Konfiguration noch auf den
+# generischen Platzhaltern steht - entweder weil data/event_config.json
+# komplett fehlt, oder weil sie 1:1 aus event_config_example.json kopiert
+# wurde, ohne die Werte anzupassen. Gedacht als Hinweis fuer andere GitHub-
+# Nutzer, die das Projekt frisch aufsetzen: Konsolen-Warnungen beim Start
+# werden leicht uebersehen, ein sichtbarer Hinweis im Hauptmenue (siehe
+# renderer.py) und in der Diagnose (ADMIN_STATUS, siehe app_with_hw.py)
+# nicht. Verschwindet automatisch, sobald echte Werte eingetragen sind -
+# kein manuelles Wegklicken noetig.
+NEEDS_EVENT_SETUP = (
+    EVENT_TITLE == "Fotobox"
+    or GUEST_WIFI_PASSWORD in ("BITTE_ANPASSEN", _PLACEHOLDER)
+)
+
+
 @dataclass(frozen=True)
 class ScreenConfig:
     # Touch Display V2: physisch 720x1280 (Hochformat), per OS-Rotation
@@ -71,7 +148,9 @@ class ScreenConfig:
     width: int = 1280
     height: int = 720
     fullscreen: bool = True
-    title: str = "Minas Geburtstags-Fotobox"
+    # NEU (Etappe 8): kommt aus data/event_config.json (Fallback "Fotobox"),
+    # nicht mehr fest im Code - siehe load_event_config() oben.
+    title: str = EVENT_TITLE
     target_fps: int = 30
     hide_mouse: bool = True
 
@@ -151,8 +230,12 @@ class GpioConfig:
 
 @dataclass(frozen=True)
 class NetworkConfig:
-    raspi_ip: str = "192.168.0.100"
-    photo_url_prefix: str = "http://192.168.0.100/fotos"
+    # NEU: Pi-Adresse von .100 auf .10 umgestellt - Gaeste-DHCP-Pool auf dem
+    # TP-Link liegt jetzt bei .50-.254, .10/.17 (Admin-Laptop) liegen als
+    # feste Reservierungen ausserhalb davon. Portweiterleitungen (22/80/5900)
+    # und Adressreservierung auf dem TP-Link bereits entsprechend angepasst.
+    raspi_ip: str = "192.168.0.10"
+    photo_url_prefix: str = "http://192.168.0.10/fotos"
     guest_wifi_password: str = GUEST_WIFI_PASSWORD
 
 
@@ -244,10 +327,15 @@ class AppConfig:
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
     # Praefix fuer die Dateinamen der gespeicherten Fotos (siehe
-    # hw_capture_provider.py _fetch_image) - "mina" ist das Kuerzel der
-    # Person, die zur aktuellen Party eingeladen hat. Ergebnis-Schema:
+    # hw_capture_provider.py _fetch_image). Ergebnis-Schema:
     # {photo_prefix}{JJJJMMTTHHMMSS}.jpg, z.B. "mina_20260711153045.jpg".
-    photo_prefix: str = "mina_"
+    # NEU (Etappe 8): kommt aus data/event_config.json (Fallback "foto_"),
+    # nicht mehr fest im Code - siehe load_event_config() oben.
+    photo_prefix: str = PHOTO_PREFIX
+    # NEU (Etappe 8, Feedback): True, solange Titel oder Gaeste-WLAN-
+    # Passwort noch auf den generischen Platzhaltern stehen - siehe
+    # NEEDS_EVENT_SETUP oben fuer die genaue Bedingung.
+    needs_event_setup: bool = NEEDS_EVENT_SETUP
 
     def ensure_directories(self) -> None:
         for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):

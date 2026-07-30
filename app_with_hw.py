@@ -1,7 +1,7 @@
 """
 app_with_hw.py  →  Umbenennen zu app.py auf dem Pi
 ====================================================
-Hauptschleife der Fotobox V2.
+Hauptschleife der Fotobox.
 Schaltet per Feature-Flag zwischen echten Hardware-Providern
 und Fake-Providern um – ohne die State-Machine zu berühren.
 
@@ -1256,6 +1256,14 @@ class PhotoboothApp:
             photo_count=photo_count,
             app_start_monotonic=self._app_start_monotonic,
         )
+        # NEU (Etappe 8, Feedback): sichtbarer Hinweis in der Diagnose,
+        # falls die Event-Konfiguration noch auf den Platzhaltern steht -
+        # ergaenzt die Konsolen-Warnung aus config.py um eine Stelle, die
+        # auch ohne Terminal-Zugriff einsehbar ist.
+        if self.config.needs_event_setup:
+            lines = lines + (
+                "Event-Konfiguration: Standardwerte aktiv (data/event_config.json anpassen)",
+            )
         self.dispatch(AppEvent(EventType.ADMIN_STATUS_READY, payload={"lines": lines}, source="diagnostics"))
 
 
