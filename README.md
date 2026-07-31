@@ -11,9 +11,8 @@ Bestätigung/Löschung an, exportiert gespeicherte Fotos für den QR-Code-
 Download und zeigt zwischendurch eine "Fliegende Galerie" bereits
 aufgenommener Fotos als Blickfang.
 
-> Aktuell im Einsatz für private Veranstaltungen (u. a. eine 150-Jahre-
-> Feier und eine Familienfeier). Alle UI-Texte und Code-Kommentare sind
-> auf Deutsch.
+> Aktuell im Einsatz für private Veranstaltungen. 
+> Alle UI-Texte und Code-Kommentare sind auf Deutsch.
 
 ## 🆘 Troubleshooting im Notfall (während einer Veranstaltung)
 
@@ -288,6 +287,35 @@ CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
 | `test_*.py` | Unit-Tests (pytest) |
 
 ## Installation auf dem Raspberry Pi
+
+### Repository herunterladen
+
+Auf einem frisch aufgesetzten Raspberry Pi (Raspberry Pi OS / Debian,
+siehe [Hardware](#hardware)):
+
+```bash
+cd ~
+git clone https://github.com/GarageMan/photobooth_project.git photobooth
+cd photobooth
+```
+
+Für einen stabilen, getesteten Stand statt des aktuellen `main`-Branchs
+empfiehlt sich, einen konkreten
+[Release](https://github.com/GarageMan/photobooth_project/releases)
+auszuchecken:
+
+```bash
+git checkout v1.0.1
+```
+
+`main` kann bereits Arbeit an der nächsten Version enthalten — für den
+Nachbau ist ein Release-Tag der verlässlichere Ausgangspunkt. Ist das
+Repository nicht öffentlich einsehbar, entweder Zugriff beim Betreiber
+anfragen oder statt der HTTPS-Adresse die SSH-Variante
+(`git@github.com:GarageMan/photobooth_project.git`) mit einem
+freigeschalteten Schlüssel verwenden.
+
+### Systempakete und Python-Abhängigkeiten
 
 ```bash
 # Systempakete
