@@ -104,6 +104,29 @@ def download_path_line(photo_url_prefix: str, timeout_seconds: float = 3.0) -> s
     return f"Foto-Download-Pfad: unerwarteter Status {status}"
 
 
+def protected_files_line(
+    photo_dir: Path,
+    web_dir: Path,
+    protected_photo_filenames: tuple[str, ...],
+    protected_web_filenames: tuple[str, ...],
+) -> str:
+    """Prueft, ob alle geschuetzten Dateien (Beispielbilder, Testbild) noch
+    an ihrem festen Platz liegen - diese werden zwar vor Loeschen/Export
+    geschuetzt (siehe config.protected_filenames), koennten aber trotzdem
+    von Hand versehentlich entfernt oder verschoben werden. Meldet fehlende
+    Dateien NAMENTLICH, statt nur "irgendetwas fehlt" zu sagen."""
+    missing: list[str] = []
+    for name in protected_photo_filenames:
+        if not (photo_dir / name).exists():
+            missing.append(name)
+    for name in protected_web_filenames:
+        if not (web_dir / name).exists():
+            missing.append(name)
+    if not missing:
+        return "Geschützte Dateien (Beispielbilder/Testbild): alle vorhanden"
+    return f"ACHTUNG - fehlende geschützte Dateien: {', '.join(missing)}"
+
+
 def ip_address_line() -> str:
     """Best-effort lokale IP-Adresse (Fotobox-Netz, ueber Ethernet zum
     TP-Link). Nutzt einen UDP-'Verbindungsversuch' ohne tatsaechlichen
@@ -132,9 +155,12 @@ def uptime_line(app_start_monotonic: float, now_monotonic: float) -> str:
 
 def collect_status_lines(
     photo_dir: Path,
+    web_dir: Path,
     photo_count: int,
     app_start_monotonic: float,
     photo_url_prefix: str,
+    protected_photo_filenames: tuple[str, ...],
+    protected_web_filenames: tuple[str, ...],
 ) -> tuple[str, ...]:
     """Buendelt alle Diagnosezeilen fuer den Status-Screen. Jede Zeile wird
     unabhaengig ermittelt - ein Fehler bei einer Quelle (z.B. Kamera nicht
@@ -144,6 +170,7 @@ def collect_status_lines(
         photo_count_line(photo_count),
         camera_status_line(),
         download_path_line(photo_url_prefix),
+        protected_files_line(photo_dir, web_dir, protected_photo_filenames, protected_web_filenames),
         ip_address_line(),
         uptime_line(app_start_monotonic, time.monotonic()),
     )

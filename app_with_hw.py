@@ -1036,7 +1036,9 @@ class PhotoboothApp:
                 result = export_photos(
                     photo_dir=self.config.photo_dir,
                     mountpoint=stick.mountpoint,
-                    excluded_filenames=self.config.gallery.excluded_filenames,
+                    # NEU (Feedback): Loesch-/Kopierschutz statt reiner
+                    # Anzeige-Ausblendung - siehe config.protected_filenames.
+                    excluded_filenames=self.config.protected_filenames,
                     progress=progress,
                     # NEU: Zielordner traegt den Event-Titel statt eines Zeitstempels.
                     folder_name=self.config.screen.title,
@@ -1220,7 +1222,9 @@ class PhotoboothApp:
                     photo_dir=self.config.photo_dir,
                     web_dir=self.config.web_dir,
                     log_dir=self.config.log_dir,
-                    excluded_filenames=self.config.gallery.excluded_filenames,
+                    # NEU (Feedback): Loesch-/Kopierschutz statt reiner
+                    # Anzeige-Ausblendung - siehe config.protected_filenames.
+                    excluded_filenames=self.config.protected_filenames,
                     camera_lock=self._camera_lock,
                     delete_from_camera=True,
                     progress=progress,          # NEU (4.9)
@@ -1303,9 +1307,12 @@ class PhotoboothApp:
         photo_count = len(photo_paths)
         lines = collect_status_lines(
             photo_dir=self.config.photo_dir,
+            web_dir=self.config.web_dir,  # NEU (Feedback: geschuetzte Dateien)
             photo_count=photo_count,
             app_start_monotonic=self._app_start_monotonic,
             photo_url_prefix=self.config.network.photo_url_prefix,  # NEU (Diagnose-Feedback)
+            protected_photo_filenames=self.config.gallery.example_fly_in_filenames,  # NEU (Feedback)
+            protected_web_filenames=("testbild.png",),  # NEU (Feedback)
         )
         # NEU (Speicherplatz-Alarm): frisch berechnet (nicht der ggf. bis zu
         # 30s alte periodische Wert) - ein bewusst angeforderter Diagnose-

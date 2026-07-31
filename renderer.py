@@ -678,8 +678,24 @@ class Renderer:
         photos = model.session.photos
         width, height = self.config.screen.width, self.config.screen.height
         if not photos:
-            self._draw_text("Noch keine Fotos vorhanden.", self.font_body, (200, 200, 200), (60, round(0.4 * height)))
-            return
+            # NEU (Feedback): solange noch keine echten Fotos existieren,
+            # die drei Beispielbilder als Fallback einfliegen lassen, statt
+            # nur den Hinweistext zu zeigen - macht den Attract-Modus schon
+            # vor dem ersten echten Foto lebendig. Die Beispielbilder sind
+            # bewusst NICHT Teil von session.photos (siehe
+            # config.gallery.excluded_filenames) - sie zaehlen nicht als
+            # "echte" Fotos und duerfen die GALLERY_EMPTY-Erkennung
+            # (state_machine.py) nicht verhindern; hier im Attract-Modus
+            # werden sie als reiner Anzeige-Fallback direkt herangezogen.
+            example_paths = tuple(
+                str(self.config.photo_dir / name)
+                for name in self.config.gallery.example_fly_in_filenames
+                if (self.config.photo_dir / name).exists()
+            )
+            if not example_paths:
+                self._draw_text("Noch keine Fotos vorhanden.", self.font_body, (200, 200, 200), (60, round(0.4 * height)))
+                return
+            photos = example_paths
 
         slot_seconds = 5.0
         fly_seconds = 0.6

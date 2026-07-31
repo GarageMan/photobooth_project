@@ -250,11 +250,25 @@ class GalleryConfig:
     grid_columns: int = 4
     max_fullscreen_cache_items: int = 12
     max_thumbnail_cache_items: int = 200
-    # Dateinamen, die weder in der Galerie (Grid/Vollbild) noch in der
-    # Fliegenden Galerie (Attract-Mode) angezeigt werden. Gedacht fuer
-    # Diagnose-Bilder, die per nginx unter /fotos/ erreichbar bleiben
-    # sollen. Vergleich case-insensitiv - daher klein schreiben.
-    excluded_filenames: frozenset[str] = frozenset({"testbild.png"})    
+    # Dateinamen, die NIE in der Galerie (Grid/Vollbild) angezeigt werden
+    # und NICHT als "echte" Fotos zaehlen (session.photos/GALLERY_EMPTY-
+    # Entscheidung unberuehrt). testbild.png: Diagnosebild, per nginx unter
+    # /fotos/ erreichbar, aber nirgends in der App sichtbar. example_01-03:
+    # Beispielbilder - erscheinen NICHT im Grid, aber siehe
+    # example_fly_in_filenames unten fuer ihren einzigen Auftritt (Attract-
+    # Modus, nur solange keine echten Fotos existieren). Vergleich
+    # case-insensitiv - daher klein schreiben.
+    excluded_filenames: frozenset[str] = frozenset({
+        "testbild.png", "example_01.jpg", "example_02.jpg", "example_03.jpg",
+    })
+    # NEU (Feedback): dieselben drei Beispielbilder wie oben in
+    # excluded_filenames - hier als eigene, geordnete Liste, damit
+    # renderer._draw_attract_gallery() weiss, WELCHE Dateien es als
+    # Fly-In-Fallback laden soll, wenn noch keine echten Fotos existieren.
+    # Bewusst eine SEPARATE Liste statt excluded_filenames wiederzu-
+    # verwenden: excluded_filenames ist nicht geordnet (frozenset) und
+    # enthaelt auch testbild.png, das NICHT im Fly-In auftauchen soll.
+    example_fly_in_filenames: tuple[str, ...] = ("example_01.jpg", "example_02.jpg", "example_03.jpg")
 
 
 @dataclass(frozen=True)
@@ -265,7 +279,6 @@ class StorageConfig:
     # Sperre + auffaelliges Blinken von Bildschirm und LED). Schwellwerte
     # sind INKLUSIV (siehe storage_service.assess_storage()) - im Zweifel
     # lieber eine Stufe zu frueh warnen als zu spaet.
-    # 10.0 / 05.0
     warn_threshold_percent: float = 10.0
     critical_threshold_percent: float = 5.0
     # Durchschnittliche JPEG-Groesse (Fine-Qualitaet) der Nikon D3300 - nur
@@ -343,6 +356,20 @@ class AppConfig:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     gallery: GalleryConfig = field(default_factory=GalleryConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    # NEU (Feedback): Loesch- UND Kopierschutz - unabhaengig von
+    # gallery.excluded_filenames (das nur die ANZEIGE betrifft), aber
+    # inhaltlich ueberschneidend (dieselben vier Dateien). Wird von
+    # app_with_hw.py sowohl an delete_all_photos() als auch an
+    # export_photos() als excluded_filenames uebergeben - beide Routinen
+    # unterstuetzen das Parameter bereits, keine Aenderung an
+    # admin_delete_service.py/admin_usb_export.py noetig. testbild.png
+    # liegt unter data/web/, die drei Beispielbilder unter data/photos/ -
+    # eine gemeinsame Liste schadet nicht, da die jeweils andere Datei in
+    # dem durchsuchten Verzeichnis ohnehin nicht existiert (kein Treffer,
+    # kein Effekt).
+    protected_filenames: frozenset[str] = frozenset({
+        "testbild.png", "example_01.jpg", "example_02.jpg", "example_03.jpg",
+    })
     shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
