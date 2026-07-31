@@ -258,6 +258,28 @@ class GalleryConfig:
 
 
 @dataclass(frozen=True)
+class StorageConfig:
+    # Speicherplatz-Alarm (Feedback nach Etappe 8/Netzwerk-Umstellung):
+    # bei wenig freiem Speicher warnt zuerst nur Stufe 1 (Text im
+    # Hauptmenue), ab critical_threshold_percent greift Stufe 2 (Aufnahme-
+    # Sperre + auffaelliges Blinken von Bildschirm und LED). Schwellwerte
+    # sind INKLUSIV (siehe storage_service.assess_storage()) - im Zweifel
+    # lieber eine Stufe zu frueh warnen als zu spaet.
+    # 10.0 / 05.0
+    warn_threshold_percent: float = 10.0
+    critical_threshold_percent: float = 5.0
+    # Durchschnittliche JPEG-Groesse (Fine-Qualitaet) der Nikon D3300 - nur
+    # Fallback, solange noch keine eigenen Fotos existieren, aus denen sich
+    # ein echter Durchschnitt bilden liesse (siehe assess_storage()).
+    # Erfahrungswert aus einer echten Veranstaltung: 775 MB / 63 Aufnahmen.
+    fallback_avg_photo_size_bytes: int = 13 * 1024 * 1024
+    # Wie oft der Speicherstand neu geprueft wird. shutil.disk_usage() ist
+    # zwar billig, aber es gibt keinen Grund, das bei jedem einzelnen Frame
+    # (30x/Sekunde) zu tun.
+    check_interval_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class ShutdownConfig:
     # Verstecktes Herunterfahren per Geheim-Geste im Hauptmenue + PIN.
     # PIN, Zone, Muster und Long-Press-Dauer kommen aus local_secrets.py
@@ -320,6 +342,7 @@ class AppConfig:
     gpio: GpioConfig = field(default_factory=GpioConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     gallery: GalleryConfig = field(default_factory=GalleryConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR

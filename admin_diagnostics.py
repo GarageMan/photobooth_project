@@ -18,6 +18,8 @@ import shutil
 import socket
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -71,6 +73,37 @@ def camera_status_line(timeout_seconds: float = 3.0) -> str:
     return "Kamera: NICHT verbunden"
 
 
+def download_path_line(photo_url_prefix: str, timeout_seconds: float = 3.0) -> str:
+    """Prueft, ob der Foto-Download-Pfad tatsaechlich erreichbar ist -
+    exakt der Pfad, ueber den Gaeste per QR-Code ihr Foto abrufen (siehe
+    config.network.photo_url_prefix). Bewusst NICHT ueber "localhost"
+    geprueft, sondern ueber dieselbe Adresse, die auch die Gaeste
+    benutzen wuerden - deckt damit z.B. auch ab, falls nginx aus
+    irgendeinem Grund nur auf einer bestimmten Netzwerkschnittstelle
+    lauscht statt auf allen.
+
+    Nutzt testbild.png, das bewusst dauerhaft im Fotoverzeichnis liegt und
+    nirgends in der App angezeigt wird (siehe gallery_service.
+    DEFAULT_EXCLUDED_FILENAMES) - ein fester, garantiert vorhandener
+    Testkoerper fuer genau diesen Zweck. HEAD-Anfrage statt GET, um nicht
+    unnoetig die Bilddaten selbst zu uebertragen."""
+    url = f"{photo_url_prefix}/testbild.png"
+    try:
+        request = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        return f"Foto-Download-Pfad: NICHT erreichbar (HTTP {exc.code})"
+    except urllib.error.URLError as exc:
+        return f"Foto-Download-Pfad: NICHT erreichbar ({exc.reason})"
+    except OSError as exc:
+        return f"Foto-Download-Pfad: NICHT erreichbar ({exc})"
+
+    if status == 200:
+        return "Foto-Download-Pfad: erreichbar (testbild.png)"
+    return f"Foto-Download-Pfad: unerwarteter Status {status}"
+
+
 def ip_address_line() -> str:
     """Best-effort lokale IP-Adresse (Fotobox-Netz, ueber Ethernet zum
     TP-Link). Nutzt einen UDP-'Verbindungsversuch' ohne tatsaechlichen
@@ -101,6 +134,7 @@ def collect_status_lines(
     photo_dir: Path,
     photo_count: int,
     app_start_monotonic: float,
+    photo_url_prefix: str,
 ) -> tuple[str, ...]:
     """Buendelt alle Diagnosezeilen fuer den Status-Screen. Jede Zeile wird
     unabhaengig ermittelt - ein Fehler bei einer Quelle (z.B. Kamera nicht
@@ -109,6 +143,7 @@ def collect_status_lines(
         disk_usage_line(photo_dir),
         photo_count_line(photo_count),
         camera_status_line(),
+        download_path_line(photo_url_prefix),
         ip_address_line(),
         uptime_line(app_start_monotonic, time.monotonic()),
     )

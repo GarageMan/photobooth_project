@@ -210,5 +210,79 @@ class StateMachineTestCase(unittest.TestCase):
         self.assertIsNotNone(result.model.timers.idle_deadline)
 
 
+class StorageAlarmLockTestCase(unittest.TestCase):
+    """Speicherplatz-Alarm Stufe 2: keine neue Aufnahme mehr moeglich, weder
+    ueber MAIN_MENU noch ueber GALLERY_EMPTY. storage_alarm_level wird in
+    der echten App periodisch von app_with_hw.py gesetzt (siehe
+    storage_service.assess_storage()) - hier direkt am Modell simuliert."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _set_alarm_level(self, level: int) -> None:
+        self.model = self.model.evolve(ui=replace(self.model.ui, storage_alarm_level=level))
+
+    def test_tap_photo_blocked_at_critical_level(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self._set_alarm_level(2)
+        result = self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_button_press_blocked_at_critical_level(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self._set_alarm_level(2)
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_tap_photo_still_works_at_warning_level(self) -> None:
+        # Stufe 1 (Warnung) sperrt NICHT - nur Stufe 2 (kritisch).
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self._set_alarm_level(1)
+        result = self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
+
+    def test_gallery_empty_photo_blocked_at_critical_level(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(self.model.state, AppState.GALLERY_EMPTY)
+        self._set_alarm_level(2)
+        result = self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.GALLERY_EMPTY)
+
+    def test_gallery_empty_button_press_blocked_at_critical_level(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self._set_alarm_level(2)
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.GALLERY_EMPTY)
+
+    def test_gallery_empty_back_still_works_at_critical_level(self) -> None:
+        # Die Sperre betrifft nur das STARTEN einer neuen Aufnahme - "Zurueck"
+        # muss trotzdem jederzeit funktionieren.
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self._set_alarm_level(2)
+        result = self.transition(EventType.TAP_BACK, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_gallery_tap_still_works_at_critical_level(self) -> None:
+        # Die Sperre betrifft nur NEUE Aufnahmen - vorhandene Fotos duerfen
+        # weiterhin angesehen werden (loeschen schafft ja sogar Platz).
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("a.jpg",)))
+        self._set_alarm_level(2)
+        result = self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.GALLERY_GRID)
+
+
 if __name__ == "__main__":
     unittest.main()

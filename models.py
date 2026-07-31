@@ -89,6 +89,12 @@ class UiState:
     # daraus ein neues Tupel, das Modell selbst bleibt dabei frozen. Leer,
     # solange kein Konflikt offen ist (Normalfall).
     admin_usb_conflicts: tuple[ExportConflict, ...] = ()
+    # NEU (Speicherplatz-Alarm): periodisch von app_with_hw.py aktualisiert
+    # (siehe storage_service.assess_storage()), unabhaengig vom aktuellen
+    # AppState - 0=unauffaellig, 1=Warnung, 2=kritisch (Aufnahmesperre).
+    storage_alarm_level: int = 0
+    storage_free_percent: float = 100.0
+    storage_estimated_remaining_photos: int = 0
 
 
 @dataclass(slots=True, frozen=True)

@@ -252,6 +252,11 @@ class Renderer:
         if model.ui.error_text and model.state not in text_screens:
             self._draw_text(model.ui.error_text, self.font_body, (255, 120, 120), (60, 320))
 
+        # NEU (Speicherplatz-Alarm): laufender Y-Offset, damit sich der
+        # Event-Konfig-Hinweis und die Speicherplatz-Warnung (koennen
+        # gleichzeitig zutreffen) nicht gegenseitig ueberdecken, sondern
+        # sauber untereinander stehen.
+        banner_y = 0
         if model.state == AppState.MAIN_MENU and self.config.needs_event_setup:
             # NEU (Etappe 8, Feedback): dezenter Hinweisstreifen ganz oben -
             # eigene halbtransparente Leiste statt einer weiteren Textzeile
@@ -266,11 +271,28 @@ class Renderer:
             banner_height = 34
             banner = pygame.Surface((self.config.screen.width, banner_height), pygame.SRCALPHA)
             banner.fill((0, 0, 0, 165))
-            self.screen.blit(banner, (0, 0))
+            self.screen.blit(banner, (0, banner_y))
             self._draw_text(
                 "Hinweis: Standardkonfiguration aktiv - data/event_config.json anpassen",
-                self.font_small, (255, 210, 120), (16, 6),
+                self.font_small, (255, 210, 120), (16, banner_y + 6),
             )
+            banner_y += banner_height
+
+        if model.state == AppState.MAIN_MENU and model.ui.storage_alarm_level == 1:
+            # NEU (Speicherplatz-Alarm) Stufe 1: farbiger Hinweistext, wie
+            # gewuenscht NUR im Hauptmenue (nicht in GALLERY_EMPTY - dort
+            # ist noch kein Foto gemacht worden, das Problem ist dort noch
+            # nicht dringend). Kein Blinken, keine Sperre - die greift erst
+            # ab Stufe 2 (siehe state_machine.py).
+            banner_height = 34
+            banner = pygame.Surface((self.config.screen.width, banner_height), pygame.SRCALPHA)
+            banner.fill((60, 30, 0, 180))
+            self.screen.blit(banner, (0, banner_y))
+            self._draw_text(
+                f"Speicherplatz wird knapp: noch {model.ui.storage_free_percent:.0f}% frei",
+                self.font_small, (255, 180, 80), (16, banner_y + 6),
+            )
+            banner_y += banner_height
 
         if model.state == AppState.GALLERY_GRID:
             self._draw_gallery_grid(model)
@@ -280,6 +302,17 @@ class Renderer:
 
         self._draw_buttons(model.state)
         self._draw_footer(model, fps)
+
+        if model.state in {AppState.MAIN_MENU, AppState.GALLERY_EMPTY} and model.ui.storage_alarm_level >= 2:
+            # NEU (Speicherplatz-Alarm) Stufe 2: sehr auffaellig, wie
+            # gewuenscht - blinkender roter Rahmen um den ganzen Bildschirm
+            # plus deutlicher Text. Bewusst NUR auf diesen beiden Screens
+            # (dort, wo die Aufnahme-Sperre in state_machine.py tatsaechlich
+            # greift), nicht global. Bewusst als LETZTES gezeichnet (nach
+            # Buttons/Footer), damit der Alarm garantiert ueber allem
+            # anderen liegt und nie versehentlich verdeckt werden kann.
+            self._draw_storage_critical_overlay()
+
         pygame.display.flip()
 
     def _draw_preview_frame(self, preview_frame: pygame.Surface) -> None:
@@ -348,6 +381,28 @@ class Renderer:
         self._blit_center(
             "Sei die/der Erste - mach jetzt ein Foto!", self.font_body, (190, 190, 195),
             round(0.42 * height) + 70,
+        )
+
+    def _draw_storage_critical_overlay(self) -> None:
+        """NEU (Speicherplatz-Alarm) Stufe 2: sehr auffaelliges Warnsignal -
+        dicker, blinkender roter Rahmen um den gesamten Bildschirm plus
+        deutlicher Text. Blinkt unabhaengig vom LED-Ring (eigener
+        Zeittakt hier), aber in aehnlicher Frequenz wie LedEffect.ERROR
+        (5 Hz) - Bildschirm und Ring wirken dadurch synchron, ohne dass
+        beide Systeme sich denselben Takt teilen muessten."""
+        width, height = self.config.screen.width, self.config.screen.height
+        on = int(time.time() * 5) % 2 == 0
+        if on:
+            border_width = 14
+            color = (220, 0, 0)
+            pygame.draw.rect(self.screen, color, pygame.Rect(0, 0, width, border_width))
+            pygame.draw.rect(self.screen, color, pygame.Rect(0, height - border_width, width, border_width))
+            pygame.draw.rect(self.screen, color, pygame.Rect(0, 0, border_width, height))
+            pygame.draw.rect(self.screen, color, pygame.Rect(width - border_width, 0, border_width, height))
+        text_color = (255, 60, 60) if on else (120, 20, 20)
+        self._blit_center(
+            "ACHTUNG: Bitte Techniker rufen!", self.font_status_main_menu, text_color,
+            round(0.70 * height),
         )
 
     def _get_thumbnail_surface(self, path: str, size: tuple[int, int]) -> pygame.Surface | None:
@@ -893,9 +948,9 @@ class Renderer:
             "",
             "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto nach der Aufnahme per QR-Code",
             f"herunterladen (Kennwort: {wifi}).",
-            "Da es sich um ein Veranstaltungsnetzwerk handelt, sind die Bilddateien während",
-            "der Übertragung theoretisch für andere angemeldete Nutzer einsehbar.",
-            "Lade keine Bilder herunter, wenn du damit nicht einverstanden bist.",
+            "Da es sich um ein Veranstaltungsnetzwerk handelt, sind die Bilddateien dabei",
+            "theoretisch für andere angemeldete Nutzer einsehbar. Lade keine Bilder herunter,",
+            "wenn du damit nicht einverstanden bist.",
             "",
             self._heading("Deine Rechte"),
             "",

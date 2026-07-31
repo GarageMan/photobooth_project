@@ -61,6 +61,7 @@ from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolution
     export_photos,
 )
 from storage_service import StorageService
+from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
 from layout import build_layout, button_rects_for_state
 from renderer import Renderer
 from shutdown_service import PinLockout, SecretGestureDetector  # NEU (3.4)
@@ -185,6 +186,10 @@ class PhotoboothApp:
         self.running = True
         # NEU (4.3): Startzeitpunkt fuer die Laufzeit-Anzeige im Status-Screen.
         self._app_start_monotonic = time.monotonic()
+        # NEU (Speicherplatz-Alarm): 0.0 sorgt dafuer, dass die allererste
+        # Pruefung sofort beim Start laeuft (nicht erst nach
+        # check_interval_seconds Wartezeit).
+        self._last_storage_check = 0.0
         # NEU (4.4): Hintergrund-Thread fuer das Loeschen aller Bilder.
         # _delete_result wird vom Thread genau einmal gesetzt und vom
         # Hauptloop in _emit_due_timers gepollt - eine einzelne Referenz-
@@ -246,6 +251,9 @@ class PhotoboothApp:
 
                 # 2. Timer-Events auslösen
                 self._emit_due_timers(now)
+
+                # 2.5 Speicherplatz periodisch pruefen (Speicherplatz-Alarm)
+                self._check_storage(now)
 
                 # 3. LED-Provider synchronisieren
                 self._sync_led()
@@ -1244,18 +1252,84 @@ class PhotoboothApp:
         self._delete_thread = threading.Thread(target=worker, name="delete-all", daemon=True)
         self._delete_thread.start()
 
+    def _check_storage(self, now: float) -> None:
+        """NEU (Speicherplatz-Alarm): periodische Pruefung (Standard alle 30s,
+        siehe config.storage.check_interval_seconds) - bewusst UNABHAENGIG
+        vom aktuellen AppState direkt im Hauptloop, nicht ueber ein
+        State-Machine-Event: die Sperre muss ja schon GREIFEN, bevor
+        ueberhaupt ein Tap auf "Fotografieren" verarbeitet wird, und
+        model.ui.storage_alarm_level muss auch dann aktuell bleiben, wenn
+        gerade niemand an der Box ist (fuer den Warnbanner/das Blinken im
+        Hauptmenue waehrend des Attract-Modus).
+
+        Fehler beim Zugriff auf die Partition (z.B. kurzzeitig nicht
+        gemountet) werden protokolliert, aber die App laeuft mit dem
+        zuletzt bekannten Stand weiter, statt abzustuerzen."""
+        if now - self._last_storage_check < self.config.storage.check_interval_seconds:
+            return
+        self._last_storage_check = now
+        try:
+            status = assess_storage(
+                photo_dir=self.config.photo_dir,
+                photo_paths=self.gallery_service.list_photos(),
+                warn_threshold_percent=self.config.storage.warn_threshold_percent,
+                critical_threshold_percent=self.config.storage.critical_threshold_percent,
+                fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+            )
+        except OSError as exc:
+            print(f"[App] Speicherplatz-Pruefung fehlgeschlagen: {exc}")
+            return
+
+        if status.alarm_level >= 2 and self.model.ui.storage_alarm_level < 2:
+            print(f"[App] KRITISCH: nur noch {status.free_percent:.1f}% Speicherplatz frei!")
+        elif status.alarm_level == 1 and self.model.ui.storage_alarm_level == 0:
+            print(f"[App] WARNUNG: nur noch {status.free_percent:.1f}% Speicherplatz frei.")
+
+        ui = replace(
+            self.model.ui,
+            storage_alarm_level=status.alarm_level,
+            storage_free_percent=status.free_percent,
+            storage_estimated_remaining_photos=status.estimated_remaining_photos,
+        )
+        self.model = self.model.evolve(ui=ui)
+
     def _collect_admin_status(self) -> None:
         # NEU (4.3): Diagnosezeilen synchron ermitteln (dauert i.d.R. < 1s,
         # hoechstens ein paar Sekunden bei der Kamera-Pruefung) - ausgeloest
         # durch einen bewussten Tap im Service-Menue, daher kein Hintergrund-
         # Thread noetig. Ergebnis kommt als eigenes Event zurueck, damit die
         # State Machine (die keine Hardware kennt) unveraendert bleibt.
-        photo_count = len(self.gallery_service.list_photos())
+        photo_paths = self.gallery_service.list_photos()
+        photo_count = len(photo_paths)
         lines = collect_status_lines(
             photo_dir=self.config.photo_dir,
             photo_count=photo_count,
             app_start_monotonic=self._app_start_monotonic,
+            photo_url_prefix=self.config.network.photo_url_prefix,  # NEU (Diagnose-Feedback)
         )
+        # NEU (Speicherplatz-Alarm): frisch berechnet (nicht der ggf. bis zu
+        # 30s alte periodische Wert) - ein bewusst angeforderter Diagnose-
+        # Screen soll den aktuellsten Stand zeigen.
+        try:
+            storage_status = assess_storage(
+                photo_dir=self.config.photo_dir,
+                photo_paths=photo_paths,
+                warn_threshold_percent=self.config.storage.warn_threshold_percent,
+                critical_threshold_percent=self.config.storage.critical_threshold_percent,
+                fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+            )
+            avg_mb = storage_status.average_photo_size_bytes / (1024 * 1024)
+            herkunft = "geschätzt, noch keine eigenen Fotos" if storage_status.average_is_fallback else "aus vorhandenen Fotos"
+            # NEU (Feedback): auf zwei Zeilen umgebrochen (nach dem zweiten
+            # Komma) - eine Zeile lief auf dem Diagnose-Screen ueber den
+            # rechten Bildschirmrand hinaus.
+            lines = lines + (
+                f"Geschätzte Rest-Kapazität: ca. {storage_status.estimated_remaining_photos} Fotos "
+                f"({storage_status.free_percent:.1f}% frei, im Schnitt {avg_mb:.1f} MB/Foto,",
+                f"   {herkunft})",
+            )
+        except OSError as exc:
+            lines = lines + (f"Speicherplatz-Schätzung fehlgeschlagen: {exc}",)
         # NEU (Etappe 8, Feedback): sichtbarer Hinweis in der Diagnose,
         # falls die Event-Konfiguration noch auf den Platzhaltern steht -
         # ergaenzt die Konsolen-Warnung aus config.py um eine Stelle, die
@@ -1296,7 +1370,15 @@ class PhotoboothApp:
         state = self.model.state
         now = time.monotonic()
 
-        if state == AppState.BOOT:
+        # NEU (Speicherplatz-Alarm): auf den beiden Einstiegs-Screens (dort,
+        # wo die Aufnahme-Sperre in state_machine.py auch tatsaechlich
+        # greift) ERZWINGT das schnelle Rotblinken den sonst dort gezeigten
+        # Effekt, unabhaengig vom Zustand selbst. Bewusst NUR hier und
+        # nicht global - ein laufender Countdown oder eine bereits
+        # begonnene Aufnahme soll dadurch nicht gestoert werden.
+        if state in {AppState.MAIN_MENU, AppState.GALLERY_EMPTY} and self.model.ui.storage_alarm_level >= 2:
+            effect = LedEffect.ERROR
+        elif state == AppState.BOOT:
             effect = LedEffect.BOOT
         elif state in {AppState.MAIN_MENU, AppState.ATTRACT_GALLERY, AppState.TERMS}:
             effect = LedEffect.MAIN_MENU

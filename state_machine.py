@@ -42,6 +42,12 @@ class StateMachine:
 
     def _handle_main_menu(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
+            # NEU (Speicherplatz-Alarm): bei kritisch wenig freiem Speicher
+            # (Stufe 2) keine neue Aufnahme mehr starten - der persistente
+            # Warnbanner (renderer.py) erklaert bereits durchgehend, warum
+            # nichts passiert; kein zusaetzlicher Text-/State-Wechsel noetig.
+            if model.ui.storage_alarm_level >= 2:
+                return TransitionResult(model=model)
             return self._go_photo_intro(model, now)
         if event.type == EventType.TAP_GALLERY:
             # NEU (Etappe 7): ohne Fotos zeigt GALLERY_GRID nur einen leeren
@@ -91,6 +97,10 @@ class StateMachine:
         # PHOTO_INTRO - gleiche Events wie auf GALLERY_GRID/MAIN_MENU
         # (TAP_PHOTO per Button, BUTTON_PRESS per Hardware-Taster).
         if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
+            # NEU (Speicherplatz-Alarm): gleiche Sperre wie in
+            # _handle_main_menu - siehe Kommentar dort.
+            if model.ui.storage_alarm_level >= 2:
+                return TransitionResult(model=model)
             return self._go_photo_intro(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
