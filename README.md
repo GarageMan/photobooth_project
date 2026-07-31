@@ -22,8 +22,7 @@ einfach der Reihe nach ausprobieren.
 
 **Gäste finden das WLAN `Fotobox_Gast` nicht (auch nicht manuell):**
 1. TP-Link-Admin-Oberfläche öffnen (`http://192.168.0.1`, im
-   `Fotobox_Admin`-WLAN, oder `http://192.168.178.182:8080` im
-   Heimnetz)
+   `Fotobox_Admin`-WLAN)
 2. Seite **Gast-WLAN** öffnen, unten bei "Gast-WLAN" auf
    **Deaktivieren** stellen, **Speichern**, dann sofort wieder auf
    **Aktivieren**, **Speichern** — frischt das Funkmodul auf,
@@ -35,11 +34,14 @@ einfach der Reihe nach ausprobieren.
 
 **Foto-Download funktioniert nicht (Handy im Gast-WLAN, aber kein Bild):**
 1. Prüfen, ob die Fotobox-App überhaupt läuft (Bildschirm reagiert?)
-2. Direkt im Handy-Browser testen: `http://192.168.0.100/fotos/`
+2. Direkt im Handy-Browser testen: `http://192.168.0.10/fotos/`
    (Adresse aus dem QR-Code notfalls manuell abtippen)
 3. Falls das schon fehlschlägt: `nginx`-Status auf dem Pi prüfen
    (`sudo systemctl status nginx`), im Zweifel
-   `sudo systemctl restart nginx`
+   `sudo systemctl restart nginx`. Im Servicemenü unter „Status /
+   Diagnose" zeigt die Zeile „Foto-Download-Pfad" automatisch, ob
+   dieser Weg gerade erreichbar ist — ohne manuellen Test von einem
+   zweiten Gerät aus.
 
 **App reagiert gar nicht mehr / hängt:**
 ```bash
@@ -54,6 +56,14 @@ automatisch neu (siehe [Autostart](#autostart)).
 3. `sudo pkill -f app_with_hw.py` (siehe oben) — startet auch die
    Kamera-Verbindung neu
 
+**Hauptmenü zeigt „ACHTUNG: Bitte Techniker rufen!" mit blinkendem
+rotem Rahmen (keine Aufnahmen mehr möglich):**
+Speicherplatz auf der SD-Karte ist kritisch knapp (≤ 5 % frei, siehe
+[Funktionsumfang](#funktionsumfang)). Fotos auf einen USB-Stick
+exportieren und danach über „Alle Bilder löschen" leeren (Servicemenü)
+— sobald wieder ausreichend Platz frei ist, verschwindet die Sperre
+automatisch, ohne App-Neustart.
+
 **Nichts davon hilft:** Als letzter Ausweg Pi einmal neu starten
 (`sudo reboot`) — dauert ~1–2 Minuten, App startet danach automatisch.
 
@@ -63,6 +73,8 @@ automatisch neu (siehe [Autostart](#autostart)).
 
 - [Troubleshooting im Notfall](#-troubleshooting-im-notfall-während-einer-veranstaltung)
 - [Funktionsumfang](#funktionsumfang)
+- [Service-Menü](#service-menü)
+- [Geschützte Dateien](#geschützte-dateien)
 - [Hardware](#hardware)
 - [Architektur](#architektur)
 - [Projektstruktur](#projektstruktur)
@@ -86,12 +98,67 @@ automatisch neu (siehe [Autostart](#autostart)).
   (Sternenhimmel-Idle-Animation, Kometen-Effekte, Countdown-Ring u. a.)
 - Beleuchteter Hardware-Auslöse-Taster (synchron zur LED-Ring-Choreografie)
 - Galerie mit Grid- und Vollbild-Ansicht, Lösch-Bestätigung mit Timeout
+- Eigener, einladender Bildschirm (`GALLERY_EMPTY`) statt eines leeren
+  Grids, solange noch kein Foto aufgenommen wurde — mit direktem Weg
+  zur ersten Aufnahme und eigenem LED-Effekt
 - "Fliegende Galerie" (Attract-Mode): zeigt zufällig bereits aufgenommene
-  Fotos an, mit gelegentlich eingestreutem Werbe-Wallpaper
+  Fotos an, mit gelegentlich eingestreutem Werbe-Wallpaper; solange noch
+  keine echten Fotos existieren, fliegen stattdessen drei feste
+  Beispielbilder ein (siehe [Geschützte Dateien](#geschützte-dateien))
 - QR-Code-Anzeige zum Download des eigenen Fotos über das lokale Netzwerk
 - DSGVO/GDPR-Hinweis als eigener, scrollbarer Bildschirm (`TERMS`)
 - Touch- und Hardware-Button-Bedienung, Swipe-Gesten in der Galerie
 - Automatischer Neustart bei Absturz (`start_fotobox.sh`)
+- **Service-/Admin-Menü** (PIN-geschützt, per Geheim-Geste erreichbar):
+  Status/Diagnose, USB-Export, Bilder löschen, App neu starten,
+  Herunterfahren — siehe [Service-Menü](#service-menü)
+- **USB-Export mit Konflikterkennung:** inhaltsbasierter Abgleich per
+  SHA256 (nicht nur Dateigröße) beim wiederholten Export auf denselben
+  Stick; bei abweichendem Inhalt gleichnamiger Dateien interaktive
+  Auswahl (überschreiben/umbenennen, einzeln oder als Sammelaktion),
+  scrollbare Liste mit Kontrollkästchen-Optik
+- **Speicherplatz-Alarm:** periodische Prüfung des freien Speichers;
+  ab 10 % frei erscheint ein Hinweistext im Hauptmenü, ab 5 % frei
+  werden neue Aufnahmen gesperrt und Bildschirm/LED-Ring blinken
+  auffällig rot, bis wieder Platz frei ist (`storage_alarm.py`)
+- **Konfigurierbare Event-Parameter:** Titel, Foto-Präfix und
+  Gäste-WLAN-Passwort kommen aus `event_config.json` (nicht versioniert)
+  statt fest im Code zu stehen — pro Veranstaltung ohne Code-Änderung
+  anpassbar (siehe [Konfiguration](#konfiguration))
+- **Geschützte Dateien:** drei feste Beispielbilder und ein
+  Diagnose-Testbild sind vor Löschen und USB-Export geschützt und
+  werden im Diagnose-Screen auf Vorhandensein geprüft (siehe
+  [Geschützte Dateien](#geschützte-dateien))
+
+## Service-Menü
+
+Über eine versteckte Tipp-Geste im Hauptmenü plus PIN erreichbar (siehe
+[Sicherheit / Härtung](#sicherheit--härtung)). Sechs Punkte im
+2×3-Raster (`admin_menu.py`):
+
+| Punkt | Zweck |
+|---|---|
+| Status / Diagnose | Speicherplatz, Fotoanzahl, Kamera-Verbindung, Foto-Download-Pfad, Vorhandensein der geschützten Dateien, IP-Adresse, Laufzeit, geschätzte Rest-Kapazität (`admin_diagnostics.py`) |
+| Bilder auf USB-Stick | Export mit SHA256-Verifikation und Konflikterkennung (`admin_usb_export.py`, `admin_usb_service.py`) |
+| App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
+| Herunterfahren | Bestätigter Poweroff mit Abschieds-Animation |
+| Zurück | Zurück ins Hauptmenü |
+| Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten |
+
+## Geschützte Dateien
+
+Vier Dateien sind dauerhaft vor Löschen und USB-Export geschützt
+(`config.protected_filenames`), unabhängig von `TAP_ADMIN_DELETE_ALL`
+und USB-Export:
+
+| Datei | Ort | Zweck |
+|---|---|---|
+| `example_01.jpg` – `example_03.jpg` | `data/photos/` | Fly-In-Fallback im Attract-Modus, solange noch keine echten Fotos existieren — nie in der normalen Galerie sichtbar, zählen nicht zu `session.photos` |
+| `testbild.png` | `data/web/` | Diagnosebild, per nginx unter `/fotos/testbild.png` erreichbar, nirgends in der App sichtbar |
+
+Der Diagnose-Screen (Status/Diagnose) prüft bei jedem Aufruf, ob alle
+vier Dateien noch an ihrem Platz liegen, und benennt fehlende Dateien
+namentlich.
 
 ## Hardware
 
@@ -179,10 +246,14 @@ Details — Hardware-Zugriffe stecken ausschließlich in den `hw_*`-Modulen.
 
 ### Zustände (`AppState`)
 
-`BOOT → MAIN_MENU → ATTRACT_GALLERY / GALLERY_GRID / GALLERY_FULLSCREEN /
-PHOTO_INTRO → PHOTO_PREVIEW → COUNTDOWN → CAPTURE_PENDING → REVIEW →
-DELETE_CONFIRM → QR_DISPLAY`, außerdem `INSTRUCTIONS`, `TERMS`,
-`ERROR_SCREEN`, `MAINTENANCE`.
+`BOOT → MAIN_MENU → ATTRACT_GALLERY / GALLERY_GRID / GALLERY_EMPTY /
+GALLERY_FULLSCREEN / PHOTO_INTRO → PHOTO_PREVIEW → COUNTDOWN →
+CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
+`INSTRUCTIONS`, `TERMS`, `ERROR_SCREEN`, `MAINTENANCE`, `PIN_ENTRY`,
+`SHUTDOWN_GOODBYE` sowie die Service-Menü-Zustände (`ADMIN_MENU`,
+`ADMIN_STATUS`, `ADMIN_USB_*`, `ADMIN_DELETE_*`,
+`ADMIN_RESTART_PENDING` — vollständige, autoritative Liste in
+`states.py`).
 
 ## Projektstruktur
 
@@ -204,8 +275,15 @@ DELETE_CONFIRM → QR_DISPLAY`, außerdem `INSTRUCTIONS`, `TERMS`,
 | `fake_capture_service.py` / `fake_preview_service.py` | Fixture-basierte Provider für Entwicklung ohne Hardware |
 | `gallery_service.py` | Foto-Listing, Thumbnail-/Vollbild-Cache, Löschen |
 | `storage_service.py` | Export ins Web-Verzeichnis, Datei-Operationen |
+| `storage_alarm.py` | Speicherplatz-Alarm: Alarmstufen aus freiem Speicher + Ø Fotogröße |
 | `qr_service.py` | QR-Code-Erzeugung für den Foto-Download |
 | `button_service.py` | Hilfslogik für Taster-Events |
+| `shutdown_service.py` | Geheim-Geste-Erkennung + PIN-Sperre fürs Herunterfahren |
+| `led_shutdown.py` | LED-Ring-Animation für den Abschieds-Screen |
+| `admin_menu.py` | Zentrale Definition des Service-/Admin-Menüs (Button-Raster) |
+| `admin_diagnostics.py` | Diagnosefunktionen für „Status / Diagnose" |
+| `admin_usb_export.py` / `admin_usb_service.py` | USB-Export-Logik + Stick-Erkennung/-Mount |
+| `admin_delete_service.py` | „Alle Bilder löschen" (Pi + Kamera) mit Protokoll |
 | `start_fotobox.sh` | Autostart-Skript mit Neustart-Schleife |
 | `test_*.py` | Unit-Tests (pytest) |
 
@@ -239,18 +317,52 @@ es 403-Fehler auf Dateien unter `/home/photobox/`.
 
 Zentrale Einstellungen in `config.py` (`AppConfig` und Unter-Configs
 `ScreenConfig`, `TimeoutConfig`, `FeatureFlags`, `GpioConfig`,
-`NetworkConfig`, `GalleryConfig`). Wichtige Felder:
+`NetworkConfig`, `GalleryConfig`, `StorageConfig`, `ShutdownConfig`).
+Wichtige Felder:
 
 - `photo_prefix` — Präfix für Dateinamen gespeicherter Fotos, Schema
   `{photo_prefix}{JJJJMMTTHHMMSS}.jpg`
 - `features.use_fake_capture` / `use_fake_preview` — auf `True` setzen,
   um ohne angeschlossene Kamera zu entwickeln (nutzt Fixtures aus
   `assets/`)
-- `timeouts.*` — sämtliche Timeout-/Countdown-Zeiten
+- `timeouts.*` — sämtliche Timeout-/Countdown-Zeiten (Service-Menü
+  standardmäßig 30 s, USB-Export-Screens bewusst länger, 120 s)
 - `gpio.*` — Pin-Belegung (siehe [GPIO-Tabelle](#gpio-pin-tabelle-autoritativ))
-- `network.*` — statische IP, Foto-URL-Präfix, WLAN-Zugangsdaten
-  (echtes Passwort kommt aus `local_secrets.py`, siehe
-  [Sicherheit / Härtung](#sicherheit--härtung) — nicht im Code)
+- `network.*` — statische IP (`192.168.0.10`), Foto-URL-Präfix,
+  WLAN-Zugangsdaten (siehe [Netzwerk-Setup](#netzwerk-setup))
+- `storage.*` — Schwellwerte für den Speicherplatz-Alarm (Standard:
+  10 %/5 %), Fallback-Fotogröße für die Rest-Kapazitäts-Schätzung
+- `protected_filenames` — vor Löschen/USB-Export geschützte Dateien
+  (siehe [Geschützte Dateien](#geschützte-dateien))
+
+### Event-Parameter (`event_config.json`)
+
+Titel, Foto-Präfix und Gäste-WLAN-Passwort ändern sich mit jeder
+Veranstaltung und liegen daher **nicht** im Code, sondern in
+`event_config.json` im Hauptverzeichnis (nicht versioniert, siehe
+`.gitignore`) — analog zu `local_secrets.py`. Einmalig aus der
+Beispieldatei anlegen:
+
+```bash
+cp event_config_example.json event_config.json
+nano event_config.json
+```
+
+```json
+{
+  "event_title": "Minas Geburtstags-Fotobox",
+  "photo_prefix": "mina_",
+  "guest_wifi_password": "..."
+}
+```
+
+Fehlt die Datei oder enthält sie noch die Platzhalterwerte, erscheint
+ein Hinweisstreifen im Hauptmenü sowie eine Zeile im Diagnose-Screen —
+gedacht für Entwickler bzw. neue GitHub-Nutzer, die das Projekt frisch
+aufsetzen. Das Gäste-WLAN-Passwort kam ursprünglich aus
+`local_secrets.py`; falls in `event_config.json` nicht gesetzt, greift
+übergangsweise noch der alte Wert aus `local_secrets.py`, bevor ein
+Platzhalter verwendet wird.
 
 ## Autostart
 
@@ -268,7 +380,7 @@ Zwei getrennte Netze:
 
 - **Heimnetz** (Fritz!Box, `192.168.178.0/24`)
 - **Fotobox-Netz** (TP-Link WR802N im WISP-Modus, `192.168.0.0/24`), Pi
-  darin statisch erreichbar unter `192.168.0.100`
+  darin statisch erreichbar unter `192.168.0.10`
 
 Eine statische Route auf der Fritz!Box leitet `192.168.0.0/24` über die
 TP-Link-WAN-IP.
@@ -277,8 +389,12 @@ Der TP-Link strahlt im Fotobox-Netz **zwei separate SSIDs** aus:
 
 | SSID | Zweck | DHCP-Bereich |
 |---|---|---|
-| `Fotobox_Gast` | Gäste-WLAN, nur für den Foto-Download (Port 80) | `.101`–`.199` |
+| `Fotobox_Gast` | Gäste-WLAN, nur für den Foto-Download (Port 80) | `.50`–`.254` |
 | `Fotobox_Admin` | Admin-Zugang für Wartung/Entwicklung (SSH) | eigener Bereich, siehe unten |
+
+`.2`–`.49` bleiben bewusst frei von der dynamischen Vergabe — dort
+liegen die festen Reservierungen (Pi `.10`, Admin-Laptop `.17`),
+getrennt vom Gäste-Pool.
 
 Beide SSIDs hängen am selben Subnetz `192.168.0.0/24` — die Trennung
 erfolgt **nicht** über getrennte VLANs, sondern ausschließlich über
@@ -322,7 +438,7 @@ Ein einzelner Admin-Laptop hat exklusiven SSH-Zugriff auf den Pi:
 
 VNC für den Admin-Laptop bewusst nicht als eigene `ufw`-Regel auf Port
 5900 freigegeben, sondern per SSH-Tunnel über den bereits offenen
-Port 22 gefahren (`ssh -L 5901:localhost:5900 photobox@192.168.0.100`,
+Port 22 gefahren (`ssh -L 5901:localhost:5900 photobox@192.168.0.10`,
 danach VNC-Viewer gegen `localhost:5901`) — ein offener Port weniger.
 
 ### Port-Weiterleitung am TP-Link (Virtueller Server) — notwendig, nicht optional
@@ -337,9 +453,9 @@ Server** drei 1:1-Portweiterleitungen erforderlich:
 
 | Dienstport | IP-Adresse | Interner Port | Protokoll |
 |---|---|---|---|
-| 22 | `192.168.0.100` | 22 | TCP |
-| 80 | `192.168.0.100` | 80 | TCP |
-| 5900 | `192.168.0.100` | 5900 | TCP |
+| 22 | `192.168.0.10` | 22 | TCP |
+| 80 | `192.168.0.10` | 80 | TCP |
+| 5900 | `192.168.0.10` | 5900 | TCP |
 
 **Bekannte Fallstricke dabei:**
 - Der HTTP-Port für "Fernwartung" (Systemtools → Administrator,
@@ -356,8 +472,8 @@ Server** drei 1:1-Portweiterleitungen erforderlich:
 
 ## Backup
 
-`raspiBackup` (v0.7.2) sichert den Pi regelmäßig auf eine
-CIFS-Freigabe eines externen Ubuntu-Servers (`192.168.178.75`).
+`raspiBackup` (v0.7.2) wird verwendet für eine manuelle Sicherung
+des Pi auf eine CIFS-Freigabe eines Ubuntu-Servers.
 
 - **Backup-Typ:** `tar` statt `rsync` — rsync-Backups schlagen auf
   CIFS-Mounts fehl (`RBK0263E`), tar funktioniert zuverlässig
@@ -400,9 +516,17 @@ größere System-Updates) empfehlenswert vorher einmal auszuführen.
 ## Tests
 
 ```bash
-python3 -m pytest test_state_machine.py test_gallery_service.py \
-    test_storage_service.py test_button_service.py
+python3 -m pytest test_state_machine.py test_state_machine_admin.py \
+    test_gallery_service.py test_storage_service.py test_storage_alarm.py \
+    test_button_service.py test_admin_usb_export.py test_config.py
 ```
+
+In dieser Sitzung verifiziert: `test_state_machine.py`,
+`test_state_machine_admin.py`, `test_admin_usb_export.py`,
+`test_config.py`, `test_storage_alarm.py` zusammen 176 Tests, alle
+grün. `test_gallery_service.py`/`test_button_service.py` wurden hier
+nicht angefasst — bei neu hinzugekommenen `test_*.py`-Dateien diese
+Liste ergänzen.
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -428,6 +552,26 @@ python3 -m py_compile <geänderte_dateien.py>
   udev-Regel (`/etc/udev/rules.d/99-touch-rotate.rules`,
   `LIBINPUT_CALIBRATION_MATRIX`). Der `labwc-rc.xml`-Ansatz über
   `<calibrationMatrix>` funktioniert **nicht**.
+- **Modulnamen vor dem Anlegen prüfen:** Ein neues Modul kann
+  bestehende Dateien versehentlich überschreiben, wenn der Name schon
+  vergeben ist (z. B. wäre ein neues `storage_service.py` mit der
+  bereits existierenden Export-/Datei-Verwaltung kollidiert) — vor dem
+  Anlegen kurz `grep -rn "import <name>"` über das Projekt laufen
+  lassen.
+- **Statische IP per NetworkManager:** Reicht nicht, nur
+  `ipv4.addresses` zu setzen, wenn die Verbindung vorher auf
+  `ipv4.method auto` (DHCP) lief — zusätzlich `ipv4.method manual`,
+  `ipv4.gateway` und `ipv4.dns` explizit setzen, sonst fehlt nach dem
+  Umschalten die Route nach draußen.
+- **DHCP-Reservierungen außerhalb des Pool-Bereichs:** Beim TP-Link
+  WR802N funktionieren feste Adressreservierungen (z. B. `.10`, `.17`)
+  auch dann zuverlässig, wenn sie außerhalb des konfigurierten
+  dynamischen Bereichs (z. B. `.50`–`.254`) liegen — nicht bei jeder
+  Router-Firmware garantiert, hier aber bestätigt getestet.
+- **VNC per SSH-Tunnel:** Die SSH-Sitzung selbst *ist* der Tunnel — sie
+  muss während der gesamten VNC-Verbindung geöffnet bleiben. Schließt
+  sie (auch versehentlich), bricht der Tunnel sofort ab
+  („Connection refused" im VNC-Client).
 - **`sudo`-Pakete:** Mit `sudo pip3 install ... --break-system-packages`
   installieren, da `sudo python3` keine user-lokalen (`~/.local`)-Pakete
   sieht.
@@ -488,10 +632,10 @@ im Fernhalten von Verbindungs-/Protokoll-Rauschen und im Abwehren
 gezielter Verbindungsfluten gegen `sshd`.
 
 ### Secrets / Zugangsdaten im Code
-Echte Zugangsdaten (Gast-WLAN-Passwort, SMTP-Zugangsdaten für die
-Update-Benachrichtigung) liegen **nicht** in `config.py`, sondern in
-`local_secrets.py` — einmalig aus `local_secrets_example.py` kopieren
-und ausfüllen:
+Echte Zugangsdaten (SMTP-Zugangsdaten für die Update-Benachrichtigung,
+Shutdown-PIN + Geheim-Geste) liegen **nicht** in `config.py`, sondern
+in `local_secrets.py` — einmalig aus `local_secrets_example.py`
+kopieren und ausfüllen:
 ```bash
 cp local_secrets_example.py local_secrets.py
 nano local_secrets.py
@@ -504,7 +648,13 @@ würden, auch nach späterem Entfernen. `config.py` fällt bei fehlender
 (`BITTE_local_secrets.py_ANLEGEN`) statt still falsche/leere Werte zu
 verwenden.
 
-### Update-Benachrichtigung (manuell + MOTD-Erinnerung)
+Das Gäste-WLAN-Passwort liegt seit der Einführung der
+[Event-Parameter](#event-parameter-event_configjson) nicht mehr hier,
+sondern in `event_config.json` (ebenfalls `.gitignore`, ebenfalls mit
+Platzhalter-Fallback) — es ändert sich mit jeder Veranstaltung, ist
+also kein Geräte-Geheimnis wie PIN/Geste, sondern ein Event-Parameter.
+
+### Update-Benachrichtigung (von mir nur als MOTD-Erinnerung gedacht)
 `check_updates.py` prüft drei Quellen und verschickt bei Funden eine
 E-Mail: `apt`-Paketupdates (Raspberry Pi OS),
 Raspberry-Pi-Bootloader/EEPROM-Firmware (`rpi-eeprom-update`) und
@@ -563,20 +713,10 @@ erfolgreich durchgeführt, aber mit mehreren Stolperfallen:
   nur einplanen, wenn Zeit für eine komplette Neukonfiguration da ist,
   nicht "mal eben zwischendurch".
 - **"Sichern & Wiederherstellen", "Firmware-Upgrade" und
-  "Werkseinstellungen" fehlten anfangs komplett im Menü** (auch nicht
-  per direktem URL-Aufruf erreichbar, 403). **Tatsächliche Ursache
-  (bestätigt, nicht nur vermutet):** Diese drei sicherheitskritischen
-  Funktionen sind bei diesem Router grundsätzlich **nur über die
-  lokale Verwaltung (LAN, `192.168.0.1`) erreichbar, nicht über die
-  Fernwartung (WAN-Seite)** — unabhängig von der Firmware-Version.
-  Der ursprüngliche Zugriff, bei dem sie fehlten, lief vermutlich
-  bereits über einen WAN-artigen Pfad. **Praktische Konsequenz:** Für
-  Firmware-Updates, Werksreset oder Konfigurations-Backup/-Restore
-  immer den **Admin-Laptop im `Fotobox_Admin`-WLAN** verwenden
-  (`http://192.168.0.1` bzw. `https://192.168.0.1`), niemals den
-  Fernwartungs-Zugang vom Windows-PC
-  (`192.168.178.182:8080`/`https://192.168.178.182`) — dort sind diese
-  Menüpunkte nicht vorhanden, ganz gleich wie aktuell die Firmware ist.
+  "Werkseinstellungen" fehlten in der alten FW-Version komplett im Menü** 
+  (auch nicht per direktem URL-Aufruf erreichbar, 403). 
+  **Tatsächliche Ursache (bestätigt, nicht nur vermutet):** Die alte FW
+  hatte diese Funktion bei remote-Zugriffen ausgeschlossen.
 - **Nach dem Neuaufbau fehlten zunächst:** die DHCP-Adressreservierung
   für den Admin-Laptop (→ bekam `.101` aus dem normalen Pool statt
   `.17` — Admin-Laptop-Client per `sudo dhclient -r wlp2s0 && sudo
