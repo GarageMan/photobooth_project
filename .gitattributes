@@ -1,0 +1,23 @@
+# Diese Datei sorgt dafuer, dass die genannten Dateien in Git normal
+# getrackt und in der Historie sichtbar bleiben, aber NICHT in den von
+# GitHub automatisch erzeugten Release-Archiven (ZIP/tar.gz) landen -
+# ueber "git archive" bzw. GitHub Releases.
+#
+# Betroffen: einmalige Patch-/Migrations-Skripte, die bereits auf dem Pi
+# angewendet wurden. Ihr Effekt steckt schon in den aktuellen .py-Dateien;
+# fuer den Betrieb der Fotobox durch andere Interessierte werden sie nicht
+# gebraucht.
+
+apply_admin_patch_4_1.py export-ignore
+apply_admin_patch_4_3.py export-ignore
+apply_admin_patch_4_4.py export-ignore
+apply_admin_patch_4_6.py export-ignore
+apply_admin_patch_4_7.py export-ignore
+apply_admin_patch_4_8.py export-ignore
+apply_admin_patch_4_9.py export-ignore
+apply_button_height_patch_5.py export-ignore
+remove_f9_hotkey.py export-ignore
+
+# Diese Datei selbst muss ebenfalls nicht im Release-Archiv stehen -
+# sie ist reine Repository-Verwaltung, kein Betriebsbestandteil.
+.gitattributes export-ignore
