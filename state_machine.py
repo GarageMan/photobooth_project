@@ -176,7 +176,11 @@ class StateMachine:
             # kurz schnell rot blinken und dann ausgehen, bevor überhaupt
             # etwas passiert (keine Reflexion in Brillen während der Aufnahme).
             # 0.6s muss zur Blink-Dauer in hw_led_provider.py passen.
-            new_ui = replace(model.ui, countdown_value=None, status_text="Foto wird von der Kamera heruntergeladen und verarbeitet...")
+            # NEU (Lesbarkeit): manueller Zeilenumbruch vor "und verarbeitet..."
+            # - bei der um 50% vergroesserten Schrift (font_body) lief der
+            # Text sonst ueber den rechten Bildschirmrand hinaus (_draw_text
+            # unterstuetzt "\n" fuer mehrzeilige Statustexte, siehe renderer.py).
+            new_ui = replace(model.ui, countdown_value=None, status_text="Foto wird von der Kamera heruntergeladen\nund verarbeitet...")
             timers = replace(model.timers, capture_trigger_deadline=now + 0.6)
             return TransitionResult(
                 model=model.evolve(state=AppState.CAPTURE_PENDING, timers=timers, ui=new_ui),
@@ -774,6 +778,7 @@ class StateMachine:
             model.ui,
             status_text=(
                 "Du willst dich fotografieren lassen?\n"
+                "\n"
                 "Bitte drücke dazu die Taste 'Countdown starten'\n"
                 "und stell dich dann auf die Markierung."
             ),
@@ -861,7 +866,7 @@ class StateMachine:
             model.ui,
             selected_gallery_index=None,
             countdown_value=None,
-            status_text="Willkommen an der Fotobox!",
+            status_text="Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
             error_text=None,
             pin_entry="",                       # GEAENDERT (3.2): getippte PIN nie liegen lassen
         )

@@ -23,24 +23,50 @@ class Renderer:
 
     def __post_init__(self) -> None:
         self.layout: LayoutRects = build_layout(self.config.screen.width, self.config.screen.height)
-        self.font_title = pygame.font.Font(None, 82)
-        self.font_body = pygame.font.Font(None, 42)
+        self.font_title = pygame.font.Font(None, 100)
+        # NEU (Lesbarkeit): um 50% vergroessert (vorher 42) - betrifft alle
+        # Meldungen/Hinweise fuer GAESTE, die ueber model.ui.status_text/
+        # error_text bzw. als Hinweistext gezeichnet werden ("Du willst dich
+        # fotografieren lassen?", "Bitte auf die Markierung stellen!",
+        # "Möchtest du dieses Foto speichern?" usw.), sowie die Anleitung/
+        # Nutzungsbedingungen und den QR-Hinweistext, die denselben Font
+        # teilen. Buttons, Titel und die Countdown-Ziffer bleiben bewusst
+        # unveraendert. NEU (Feedback): das PIN-geschuetzte Service-Menue
+        # (nur fuer Lutz, keine Gaeste) nutzt bewusst NICHT diesen Font,
+        # sondern die unveraenderten font_body_admin/font_status_admin
+        # weiter unten.
+        self.font_body = pygame.font.Font(None, 63)
         # Gleiche Groesse wie font_body, nur fett - fuer Ueberschriften
         # innerhalb laengerer Textblöcke (aktuell: _draw_terms). Bewusst
         # dieselbe Punktgroesse, damit die feste Zeilenhoehe (line_height in
         # _draw_terms/_draw_instructions, aus font_body.get_linesize()
         # berechnet) fuer alle Zeilen gueltig bleibt, unabhaengig davon, ob
         # eine einzelne Zeile fett oder normal gerendert wird.
-        self.font_body_bold = pygame.font.Font(None, 42)
+        self.font_body_bold = pygame.font.Font(None, 63)
         self.font_body_bold.set_bold(True)
         self.font_small = pygame.font.Font(None, 32)
         self.font_button = pygame.font.Font(None, 50)
-        # Etwa doppelt so gross wie font_body (42) - ausschliesslich fuer den
-        # Willkommenstext im Hauptmenue ("Willkommen an der Fotobox!"),
-        # damit dieser auf den ersten Blick auffaellt. Andere Statustexte
-        # (die denselben model.ui.status_text-Slot in anderen States nutzen)
-        # bleiben bei font_body.
-        self.font_status_main_menu = pygame.font.Font(None, 84)
+        # Etwa doppelt so gross wie font_body (frueher 42, jetzt 63) -
+        # ausschliesslich fuer den Willkommenstext im Hauptmenue
+        # ("Willkommen an der Fotobox!") und andere besonders prominente
+        # Statuszeilen fuer GAESTE (z.B. Speicheralarm), damit diese auf
+        # den ersten Blick auffallen. NEU (Lesbarkeit): ebenfalls um 50%
+        # vergroessert (vorher 84), damit das Groessenverhaeltnis zu
+        # font_body erhalten bleibt.
+        self.font_status_main_menu = pygame.font.Font(None, 126)
+        # NEU (Feedback): "Noch keine Fotos vorhanden!" (GALLERY_EMPTY) war
+        # bei font_status_main_menu (126) zu dominant - eigene, um 25%
+        # kleinere Schrift nur fuer diese Ueberschrift (126 * 0.75 ≈ 95),
+        # ohne die anderen font_status_main_menu-Texte zu beeinflussen.
+        self.font_gallery_empty_title = pygame.font.Font(None, 95)
+        # NEU (Feedback): das PIN-geschuetzte Service-/Admin-Menue (Status/
+        # Diagnose, USB-Export, Loeschen, ...) wird nur von Lutz selbst
+        # gelesen, nicht von Gaesten - bleibt daher bewusst bei den
+        # urspruenglichen (kleineren) Groessen statt der 50%-Vergroesserung
+        # von font_body/font_status_main_menu. Gleiche Werte wie vor dem
+        # Lesbarkeits-Update (42/84).
+        self.font_body_admin = pygame.font.Font(None, 42)
+        self.font_status_admin = pygame.font.Font(None, 84)
         # Grosse Ziffer fuer den Cinema-Countdown - bewusst proportional zur
         # Bildschirmhoehe (nicht fix), damit sie auf jeder Aufloesung den
         # Kreis dominant ausfuellt statt "verloren" zu wirken.
@@ -213,6 +239,7 @@ class Renderer:
         }
 
         if model.state not in text_screens and not hide_all_text:
+            self._draw_text(self.config.screen.title, self.font_title, (30, 30, 35), (63, 64))
             self._draw_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_MENU:
             # NEU (4.2): statt des Fotobox-Titels an gleicher Position/
@@ -242,11 +269,35 @@ class Renderer:
         if self.config.features.debug_overlay:
             self._draw_text(f"Zustand: {model.state.name}", self.font_body, (220, 220, 220), (60, 180))
 
-        if model.state not in text_screens and not hide_all_text:
+        # NEU (Feedback): PHOTO_PREVIEW ist nur ca. 1-2s sichtbar (danach
+        # startet automatisch der Cinema-Countdown, siehe state_machine.py/
+        # preview_auto_start_seconds) - der sonst kleine, linksbuendige
+        # Statustext ("Bitte auf die Markierung stellen!") war auf diesem
+        # fast leeren Zwischenbild schlecht lesbar. Eigener Sonderfall statt
+        # des generischen Blocks unten: doppelt so gross (font_body*2 =
+        # font_status_main_menu) und mittig auf dem Bildschirm statt oben
+        # links.
+        if model.state == AppState.PHOTO_PREVIEW and not hide_all_text:
+            self._blit_center(
+                model.ui.status_text, self.font_status_main_menu, (255, 220, 120),
+                self.config.screen.height // 2,
+            )
+        elif model.state not in text_screens and not hide_all_text:
             # Im Hauptmenue liegt der Text auf dem Hintergrundbild - Anthrazit statt
             # dem sonst ueblichen Amber, da Amber auf dem Bild schlecht lesbar war.
             status_color = (40, 40, 45) if model.state == AppState.MAIN_MENU else (255, 220, 120)
             status_font = self.font_status_main_menu if model.state == AppState.MAIN_MENU else self.font_body
+            if model.state == AppState.MAIN_MENU:
+                # NEU (Lesbarkeit): der Willkommenstext ("Willkommen an der
+                # Fotobox!") ist bei der um 50% vergroesserten Schrift nur
+                # noch knapp schmaler als der Bildschirm - eine automatische
+                # Verkleinerung (gleiche Technik wie bei Button-Labels in
+                # _draw_button()) verhindert ein Abschneiden am rechten Rand,
+                # falls die Systemschrift auf der eingesetzten Hardware
+                # geringfuegig breiter rendert als hier getestet.
+                status_font = self._fit_text_font(
+                    model.ui.status_text, status_font, self.config.screen.width - 60 - 40,
+                )
             self._draw_text(model.ui.status_text, status_font, status_color, (60, 240))
 
         if model.ui.error_text and model.state not in text_screens:
@@ -374,13 +425,23 @@ class Renderer:
         ("Keine Fotos gefunden in: /home/...") durch eine einladende,
         gastfreundliche Nachricht mit direktem Weg zum ersten Foto."""
         height = self.config.screen.height
+        first_cy = round(0.42 * height)
+        # NEU (Lesbarkeit): Abstand zur zweiten Zeile wird aus den
+        # tatsaechlichen Zeilenhoehen beider Schriftarten berechnet statt
+        # eines festen Pixelwerts - ein fixer Abstand ginge von einer
+        # bestimmten Schriftgroesse aus und wuerde bei Aenderungen daran
+        # (siehe font_gallery_empty_title) leicht wieder zur Ueberlappung
+        # der beiden Zeilen fuehren.
+        # NEU (Feedback): Abstand von 20 auf 60px vergroessert - wirkte zu
+        # gedrungen/eng an der Ueberschrift dran.
+        second_cy = first_cy + self.font_gallery_empty_title.get_linesize() // 2 + self.font_body.get_linesize() // 2 + 60
         self._blit_center(
-            "Noch keine Fotos vorhanden!", self.font_status_main_menu, (210, 235, 225),
-            round(0.42 * height),
+            "Noch keine Fotos vorhanden!", self.font_gallery_empty_title, (210, 235, 225),
+            first_cy,
         )
         self._blit_center(
             "Sei die/der Erste - mach jetzt ein Foto!", self.font_body, (190, 190, 195),
-            round(0.42 * height) + 70,
+            second_cy,
         )
 
     def _draw_storage_critical_overlay(self) -> None:
@@ -461,7 +522,11 @@ class Renderer:
         hellen Liveview-Hintergrund gut lesbar.
         """
         width, height = self.config.screen.width, self.config.screen.height
-        cx, cy = width // 2, round(height * 0.44)
+        # NEU (Feedback): von 0.44 auf 0.40 angehoben - schafft mehr Abstand
+        # zwischen Kreis-Unterkante und dem "Abbrechen"-Button (layout.right,
+        # y=0.80*height) fuer den Hinweistext darunter, der sonst mit dem
+        # Button kollidierte.
+        cx, cy = width // 2, round(height * 0.40)
         radius = round(min(width, height) * 0.30)
 
         pad = 12
@@ -497,10 +562,18 @@ class Renderer:
 
         self.screen.blit(overlay, (cx - ocx, cy - ocy))
 
+        # NEU (Feedback): Auf dem laufenden Kamera-Liveview (wechselnder,
+        # teils heller Hintergrund) war reines Weiss schlecht lesbar und
+        # kollidierte ausserdem mit dem "Abbrechen"-Button darunter
+        # (layout.right). Jetzt mit schwarzer Kontur (wie Untertitel -
+        # bleibt unabhaengig von der Liveview-Helligkeit lesbar) und mittig
+        # im tatsaechlich verfuegbaren Abstand zwischen Kreis-Unterkante und
+        # Button platziert statt eines festen Pixel-Versatzes.
         hint = "Bitte auf die Markierung stellen."
-        hint_surf = self.font_body.render(hint, True, (255, 255, 255))
-        hint_rect = hint_surf.get_rect(center=(width // 2, cy + radius + 50))
-        self.screen.blit(hint_surf, hint_rect)
+        gap_top = cy + radius
+        button_top = self.layout.right.y
+        hint_cy = (gap_top + button_top) // 2
+        self._draw_text_outlined(hint, self.font_body, (255, 255, 255), (10, 10, 10), (width // 2, hint_cy))
 
     def _draw_countdown_image(self) -> None:
         if self._current_countdown_image is not None:
@@ -746,6 +819,18 @@ class Renderer:
         self.screen.blit(image, (x, y))
 
     def _draw_qr_code(self, qr_surface: pygame.Surface | None) -> None:
+        """NEU (Layout-Ueberarbeitung): QR-Code in der rechten Bildschirm-
+        haelfte, Hinweistext + WLAN-Zugangsdaten linksbuendig in der linken
+        Haelfte daneben - vorher lag der QR-Code zentriert mit dem Hinweis
+        darueber. Beide Bloecke sind vertikal auf derselben Hoehe zentriert,
+        damit sie bei jeder Aufloesung sauber nebeneinander stehen.
+
+        Die verfuegbare Hoehe wird bewusst NICHT aus der vollen Bildschirm-
+        hoehe abgeleitet, sondern endet oberhalb von layout.right (dem
+        "Zurueck"-Button unten rechts) - sonst wuerde die groesser gewordene
+        QR-Karte (Lesbarkeits-Update, siehe __post_init__) den Button
+        ueberlappen.
+        """
         width, height = self.config.screen.width, self.config.screen.height
         if qr_surface is None:
             self._draw_text(
@@ -754,28 +839,105 @@ class Renderer:
             )
             return
 
-        # Weiße Karte mit Rand hinter dem Code - deutlich bessere Scanbarkeit
-        # auf dunklem Hintergrund und robuster gegen schräge Blickwinkel.
-        target_size = round(min(width, height) * 0.55)
+        right_x0 = round(width * 0.5)
+        right_w = width - right_x0
+        # Verfuegbarer Hoehenbereich zwischen Titel (oben) und dem
+        # "Zurueck"-Button (unten, layout.right) - analog zur Ableitung von
+        # "bottom" aus der tatsaechlichen Button-Position in
+        # _draw_instructions/_draw_terms.
+        area_top = round(0.16 * height)
+        area_bottom = self.layout.right.y - 24
+        area_cy = (area_top + area_bottom) // 2
+
+        # Rechte Haelfte: weiße Karte mit Rand hinter dem Code - deutlich
+        # bessere Scanbarkeit auf dunklem Hintergrund und robuster gegen
+        # schräge Blickwinkel. Groesse an den kleineren der beiden
+        # verfuegbaren Masse (Hoehenbereich vs. rechte Haelfte, jeweils mit
+        # Rand) angepasst, damit die Karte weder den Button unten noch den
+        # Textbereich links beruehrt.
+        card_padding = 24
+        available_h = area_bottom - area_top
+        available_w = right_w - 80
+        card_total = max(80, min(available_h, available_w))
+        target_size = card_total - 2 * card_padding
         scaled = pygame.transform.smoothscale(qr_surface, (target_size, target_size))
-        padding = 24
-        card = pygame.Surface((target_size + 2 * padding, target_size + 2 * padding))
+        card = pygame.Surface((target_size + 2 * card_padding, target_size + 2 * card_padding))
         card.fill((255, 255, 255))
-        card.blit(scaled, (padding, padding))
-        card_rect = card.get_rect(center=(width // 2, round(height * 0.55)))
+        card.blit(scaled, (card_padding, card_padding))
+        card_rect = card.get_rect(center=(right_x0 + right_w // 2, area_cy))
         self.screen.blit(card, card_rect)
 
-        hint = "QR-Code scannen, um dein Foto herunterzuladen"
-        hint_surf = self.font_body.render(hint, True, (230, 230, 230))
-        hint_rect = hint_surf.get_rect(center=(width // 2, card_rect.top - 40))
-        self.screen.blit(hint_surf, hint_rect)
+        # Linke Haelfte: Hinweistext plus WLAN-Name/Passwort, damit Gäste
+        # nicht extra in die Anleitung wechseln muessen, um sich zu
+        # verbinden. Als kurze Einzelzeilen statt eines langen Fließtexts,
+        # da der verfuegbare Platz links neben dem QR-Code schmaler ist als
+        # die volle Bildschirmbreite. Jede Zeile wird bei Bedarf gekuerzt
+        # (wie bei Dateinamen in _draw_admin_usb_conflicts), damit ein
+        # langes Event-WLAN-Passwort nicht in den QR-Code-Bereich rechts
+        # hineinlaeuft.
+        wifi_name = "Fotobox_Gast"
+        wifi_password = self.config.network.guest_wifi_password
+        lines = [
+            "QR-Code scannen,",
+            "um dein Foto",
+            "herunterzuladen.",
+            "",
+            f"WLAN: {wifi_name}",
+            f"Passwort: {wifi_password}",
+        ]
+        left = 60
+        max_text_w = right_x0 - left - 40
+        line_height = self.font_body.get_linesize()
+        total_height = len(lines) * line_height
+        top = area_cy - total_height // 2
+        y = top
+        for line in lines:
+            label = self._truncate_text(line, self.font_body, max_text_w) if line else line
+            self._draw_text(label, self.font_body, (230, 230, 230), (left, y))
+            y += line_height
 
     def _blit_center(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], cy: int) -> None:
-        # Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
-        # (das uebliche _draw_text ist linksbuendig ab (x, y)).
-        surf = font.render(text, True, color)
+        """Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
+        (das uebliche _draw_text ist linksbuendig ab (x, y)).
+
+        NEU (Lesbarkeit): faengt automatisch ab, falls text bei der
+        uebergebenen Fontgroesse breiter waere als der Bildschirm (abzueglich
+        Rand) - mit den um 50% vergroesserten Schriften (font_body/
+        font_status_main_menu) reichen manche der bisher unkritisch kurzen
+        Statuszeilen sonst ueber den Bildschirmrand hinaus (z.B. laengere
+        Zeilen der Loesch-Sicherheitsabfrage oder Warnmeldungen). Gleiche
+        Verkleinerungs-Technik wie bei Button-Labels, siehe _fit_text_font().
+        """
+        max_width = self.config.screen.width - 80
+        fitted_font = self._fit_text_font(text, font, max_width)
+        surf = fitted_font.render(text, True, color)
         rect = surf.get_rect(center=(self.config.screen.width // 2, cy))
         self.screen.blit(surf, rect)
+
+    def _draw_text_outlined(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        outline_color: tuple[int, int, int],
+        center: tuple[int, int],
+    ) -> None:
+        """Einzeiligen Text mittig auf `center` zeichnen, mit einer festen
+        Kontur in `outline_color` (Untertitel-Optik) - bleibt dadurch lesbar
+        unabhaengig davon, wie hell/dunkel der Hintergrund gerade ist (z.B.
+        das laufende Kamera-Liveview beim Cinema-Countdown, siehe
+        _draw_cinema_countdown()). Rendert die Kontur mehrfach leicht
+        versetzt UNTER dem eigentlichen Text - deutlich guenstiger als ein
+        echtes Outline-Rendering, aber fuer kurze Hinweistexte ausreichend."""
+        x, y = center
+        offsets = ((-2, -2), (-2, 2), (2, -2), (2, 2), (-2, 0), (2, 0), (0, -2), (0, 2))
+        outline_surf = font.render(text, True, outline_color)
+        for dx, dy in offsets:
+            rect = outline_surf.get_rect(center=(x + dx, y + dy))
+            self.screen.blit(outline_surf, rect)
+        main_surf = font.render(text, True, color)
+        rect = main_surf.get_rect(center=(x, y))
+        self.screen.blit(main_surf, rect)
 
     def _draw_pin_entry(self, model: AppModel) -> None:
         """Verstecktes Ziffernfeld fuer die Wartungs-PIN (AppState.PIN_ENTRY).
@@ -801,9 +963,11 @@ class Renderer:
             for i in range(n):
                 pygame.draw.circle(self.screen, (240, 240, 240), (cx0 + i * spacing, cy), radius)
 
-        # Fehlermeldung mittig unter der PIN-Anzeige.
+        # Fehlermeldung mittig unter der PIN-Anzeige. NEU (Feedback): PIN-
+        # Eingabe ist Teil des Service-Menues (nur Lutz) - font_body_admin
+        # statt der fuer Gaeste vergroesserten font_body.
         if model.ui.error_text:
-            self._blit_center(model.ui.error_text, self.font_body, (255, 120, 120), round(0.235 * height))
+            self._blit_center(model.ui.error_text, self.font_body_admin, (255, 120, 120), round(0.235 * height))
 
         # Ziffernfeld aus layout.pin_keys. Ziffern-Schluessel sind bereits
         # "0".."9"; Sondertasten bekommen sprechende Beschriftungen/Farben.
@@ -870,24 +1034,30 @@ class Renderer:
         """
         width, height = self.config.screen.width, self.config.screen.height
         lines = [
-            "Bitte nutze die Fotobox nur, wenn du den Nutzungsbedingungen zustimmst.",
+            "Bitte nutze die Fotobox nur, wenn du den",
+            "Nutzungsbedingungen zustimmst.",
             "",
             "1. \"Fotografieren\" drücken oder die Foto-Taste betätigen",
             "",
-            "2. \"Countdown starten\" drücken, wenn du bereit für die Aufnahme bist (oder \"Abrechen\")",
-            "   Der Countdown bis zur Auslösung der Aufnahme beträgt 5 Sekunden.",
+            "2. \"Countdown starten\" drücken, wenn du bereit für die",
+            "    Aufnahme bist (oder \"Abrechen\").",
+            "    Der Countdown bis zur Auslösung der Aufnahme",
+            "    beträgt 5 Sekunden.",
             "",
             "3. Auf die Markierung stellen und lächeln!",
             "",
             "4. Nach der Aufnahme: Foto speichern oder löschen.",
             "",
-            "5. Wurde das Foto gespeichert, so kannst du den QR-Code scannen,",
-            "   um das Foto auf dein Mobiltelefon zu laden.",
-            f"   Verbinde dich dazu mit dem Gäste-WLAN (Kennwort: {self.config.network.guest_wifi_password})",
+            "5. Wurde das Foto gespeichert, so kannst du den",
+            "    QR-Code mit deinem Mobiltelefon scannen,",
+            "    um das Foto auf dein Mobiltelefon zu laden.",
+            "    Verbinde dich dazu mit dem Gäste-WLAN.",
             "",
-            "In der \"Galerie\" siehst du alle bisherigen Fotos:",
-            "Hoch/runter Wischen zum Blättern durch die Galerie,",
-            "ein Foto antippen für die Vollansicht, dort links/rechts Wischen.",
+            "6. In der \"Galerie\" siehst du alle bisherigen Fotos.",
+            "",
+            "    Hoch/runter Wischen zum Blättern durch die Galerie,",
+            "    ein Foto antippen für die Vollansicht, dort links/rechts",
+            "    Wischen.",
             "",
             "Viel Spaß! Bei Fragen bitte an Lutz wenden."
         ]
@@ -946,43 +1116,57 @@ class Renderer:
         lines = [
             self._heading("Nutzungsbedingungen zur Fotobox"),
             "",
-            "Mit der Nutzung dieser Fotobox (z. B. durch Betätigen des Auslösers) erklärst du",
-            "dich damit einverstanden, dass Fotografien von dir angefertigt werden.",
+            "Mit der Nutzung dieser Fotobox (z. B. durch Betätigen",
+            "des Auslösers) erklärst du dich damit einverstanden,",
+            "dass Fotografien von dir angefertigt werden.",
             "Die Nutzung ist freiwillig.",
             "",
             self._heading("Verwendungszweck & Speicherung"),
             "",
-            "Die Fotos dienen als Erinnerung für Familie, Freunde und Verwandte sowie den",
-            "Gastgeber.",
-            "Sie werden zunächst lokal auf der Fotobox gespeichert und anschließend vom Gastgeber",
-            "in einem privaten Kreis weiterverarbeitet.",
-            "Während der Veranstaltung sind deine Fotos auf dem Display von anderen Nutzern der",
-            "Fotobox einsehbar. Eine Weitergabe an unbeteiligte Dritte, eine Veröffentlichung",
-            "im Internet oder eine kommerzielle Nutzung findet nicht statt.",
+            "Die Fotos dienen als Erinnerung für Familie, Freunde",
+            "und Verwandte sowie den Gastgeber.",
+            "Sie werden zunächst lokal auf der Fotobox gespeichert",
+            "und anschließend vom Gastgeber in einem privaten Kreis",
+            "weiterverarbeitet.",
+            "Während der Veranstaltung sind deine Fotos auf dem",
+            "Display von anderen Nutzern der Fotobox einsehbar.",
+            "Eine Weitergabe an unbeteiligte Dritte, eine",
+            "Veröffentlichung bspw. im Internet oder eine",
+            "kommerzielle Nutzung findet nicht statt.",
             "",
             self._heading("Lokaler Download (WLAN)"),
             "",
-            "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto nach der Aufnahme per QR-Code",
-            f"herunterladen (Kennwort: {wifi}).",
-            "Da es sich um ein Veranstaltungsnetzwerk handelt, sind die Bilddateien dabei",
-            "theoretisch für andere angemeldete Nutzer einsehbar. Lade keine Bilder herunter,",
-            "wenn du damit nicht einverstanden bist.",
+            "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto",
+            "nach der Aufnahme per QR-Code herunterladen.",
+            "Da es sich um ein Veranstaltungsnetzwerk handelt",
+            "sind die Bilddateien dabei theoretisch für andere",
+            "angemeldete Nutzer einsehbar.",
+            "Lade keine Bilder herunter, wenn du damit nicht",
+            "einverstanden bist.",
             "",
             self._heading("Deine Rechte"),
             "",
-            "Du kannst der Speicherung deines Bildes direkt nach der Aufnahme über die \"Löschen\"",
-            "-Taste widersprechen. Außerdem hast du jederzeit das Recht auf Auskunft, Berichtigung,",
-            "Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit und Widerspruch.",
-            "Wende dich dazu einfach an den unten genannten Verantwortlichen.",
-            "Eine erteilte Einwilligung kannst du jederzeit mit Wirkung für die Zukunft widerrufen.",
+            "Du kannst der Speicherung deines Bildes direkt nach",
+            "der Aufnahme über die \"Löschen\"-Taste widersprechen.",
+            "Außerdem hast du jederzeit das Recht auf Auskunft,",
+            "Berichtigung, Löschung, Einschränkung der Verarbeitung,",
+            "Datenübertragbarkeit und Widerspruch.",
+            "Wende dich dazu einfach an den unten genannten",
+            "Verantwortlichen bzw. an die unten genannte Ver-",
+            "Verantwortliche.",
+            "Eine erteilte Einwilligung kannst du jederzeit mit",
+            "Wirkung für die Zukunft widerrufen.",
             "",
-            "Alle gespeicherten Fotos werden unwiderruflich innerhalb von zwei (2) Tagen nach der",
-            "Veranstaltung von der Fotobox gelöscht.",
+            "Alle gespeicherten Fotos werden unwiderruflich innerhalb",
+            "von zwei (2) Tagen nach der Veranstaltung von der",
+            "Fotobox gelöscht.",
             "",
-            "Kinder & Jugendliche nutzen die Fotobox bitte nur in Begleitung bzw. mit Zustimmun",
-            "eines Erziehungsberechtigten.",
+            "Kinder & Jugendliche nutzen die Fotobox bitte nur",
+            "in Begleitung bzw. mit Zustimmung einer",
+            "erziehungsberechtigten Person.",
             "",
             self._heading("Verantwortlich für den Betrieb"),
+            "",
             "Lutz Buchholz",
             "Dechant-Fein-Str. 24",
             "51375 Leverkusen",
@@ -1120,14 +1304,17 @@ class Renderer:
     def _draw_admin_status(self, model: AppModel) -> None:
         # NEU (4.3): einfache Zeilenliste, kein Scrollen noetig - fuenf
         # kurze Zeilen passen bequem zwischen Titel und "Zurueck"-Button.
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
+        # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
+        # font_body.
         width, height = self.config.screen.width, self.config.screen.height
         y = round(0.22 * height)
-        line_height = self.font_body.get_linesize() + 14
+        line_height = self.font_body_admin.get_linesize() + 14
         if not model.ui.admin_status_lines:
-            self._draw_text("Ermittle Status ...", self.font_body, (200, 200, 200), (60, y))
+            self._draw_text("Ermittle Status ...", self.font_body_admin, (200, 200, 200), (60, y))
             return
         for line in model.ui.admin_status_lines:
-            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
 
     # NEU (4.6): merkt sich fuer _draw_buttons, ob "Weiter" aktiv sein
@@ -1143,9 +1330,12 @@ class Renderer:
         # Dateinamen. Die Namen wechselten zu schnell zum Mitlesen; ein
         # Balken beantwortet die eigentliche Frage ("wie lange noch?")
         # deutlich besser.
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_status_admin
+        # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
+        # font_status_main_menu.
         height = self.config.screen.height
         text = model.ui.admin_usb_export_progress or "Export wird vorbereitet ..."
-        self._blit_center(text, self.font_status_main_menu, (200, 235, 225), round(0.32 * height))
+        self._blit_center(text, self.font_status_admin, (200, 235, 225), round(0.32 * height))
         self._draw_progress_bar(model.ui.admin_usb_progress_fraction, round(0.48 * height))
 
     def _draw_progress_bar(
@@ -1182,26 +1372,35 @@ class Renderer:
         # Rahmen
         pygame.draw.rect(self.screen, border, outer, width=3, border_radius=radius)
 
+        # NEU (Feedback): wird nur von _draw_admin_usb_copy/
+        # _draw_admin_delete_running aufgerufen (beide Service-Menue, nur
+        # Lutz) - font_body_admin statt der fuer Gaeste vergroesserten
+        # font_body.
         self._blit_center(
-            f"{round(fraction * 100)} %", self.font_body, (220, 240, 235), y + bar_h + 20,
+            f"{round(fraction * 100)} %", self.font_body_admin, (220, 240, 235), y + bar_h + 20,
         )
 
     def _draw_admin_usb_lines(self, model: AppModel) -> None:
         # NEU (4.6): Zeilenliste wie bei Diagnose und Loesch-Ergebnis.
         self._usb_continue_enabled = model.ui.admin_usb_device_ready
         self._usb_not_enough_free = model.ui.admin_usb_not_enough_free
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
+        # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
+        # font_body.
         height = self.config.screen.height
         y = round(0.22 * height)
-        line_height = self.font_body.get_linesize() + 14
+        line_height = self.font_body_admin.get_linesize() + 14
         for line in model.ui.admin_usb_lines:
-            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
 
     def _draw_admin_usb_busy(self, model: AppModel) -> None:
         # NEU (4.6): laufender Vorgang - zentrierter Hinweis, kein Button.
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_status_admin
+        # statt der fuer Gaeste vergroesserten font_status_main_menu.
         self._blit_center(
             model.ui.status_text or "Bitte warten ...",
-            self.font_status_main_menu, (200, 235, 225),
+            self.font_status_admin, (200, 235, 225),
             round(0.45 * self.config.screen.height),
         )
 
@@ -1216,6 +1415,31 @@ class Renderer:
         while truncated and font.size(truncated + ellipsis)[0] > max_width:
             truncated = truncated[:-1]
         return (truncated + ellipsis) if truncated else ellipsis
+
+    @staticmethod
+    def _fit_text_font(text: str, font: pygame.font.Font, max_width: int, floor: int = 32) -> pygame.font.Font:
+        """Verkleinert die Schrift schrittweise, falls text breiter waere
+        als max_width - gleiche Technik wie das automatische Verkleinern
+        langer Button-Labels in _draw_button(). Anders als _truncate_text()
+        wird hier nichts abgeschnitten (der Text bleibt vollstaendig
+        lesbar), sondern die ganze Zeile etwas kleiner dargestellt.
+
+        Die pygame-Standardschrift (Font(None, size)) hat kein direktes
+        "gib mir die Punktgroesse zurueck" - als Startpunkt fuer die
+        Verkleinerungsschleife wird die Groesse daher aus der Zeilenhoehe
+        zurueckgerechnet (linesize entspricht bei dieser Schrift ueber alle
+        getesteten Groessen hinweg konstant ca. 75% der Punktgroesse).
+        Bricht bei `floor` ab, damit der Text im Zweifel lieber knapp zu
+        breit als unleserlich klein wird.
+        """
+        if font.size(text)[0] <= max_width:
+            return font
+        size = max(floor, round(font.get_linesize() / 0.75))
+        fitted = font
+        while fitted.size(text)[0] > max_width and size > floor:
+            size -= 4
+            fitted = pygame.font.Font(None, size)
+        return fitted
 
     def _draw_conflict_checkbox(self, hitbox: pygame.Rect, checked: bool) -> None:
         """NEU (6c, ueberarbeitet nach Nutzer-Feedback): echte Kontrollkasten-
@@ -1286,9 +1510,12 @@ class Renderer:
         # weil eine einzelne Zeile danach wieder umgestellt wurde) bleiben
         # beide leer - das ist korrekt und entspricht dem Verhalten einer
         # echten Checkbox-Gruppe (kein State-Machine-Feld noetig).
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
+        # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
+        # font_body (gilt fuer den gesamten restlichen USB-Konflikt-Screen).
         all_row = self.layout.usb_conflicts_overwrite_all
-        label_y = all_row.y + (all_row.height - self.font_body.get_linesize()) // 2
-        self._draw_text("Alle auswählen", self.font_body, (210, 210, 215), (60, label_y))
+        label_y = all_row.y + (all_row.height - self.font_body_admin.get_linesize()) // 2
+        self._draw_text("Alle auswählen", self.font_body_admin, (210, 210, 215), (60, label_y))
         all_overwrite = bool(conflicts) and all(c.decision == "overwrite" for c in conflicts)
         all_rename = bool(conflicts) and all(c.decision == "rename" for c in conflicts)
         self._draw_conflict_checkbox(self.layout.usb_conflicts_overwrite_all, all_overwrite)
@@ -1304,7 +1531,7 @@ class Renderer:
             # Sollte praktisch nie sichtbar werden (der Screen wird nur bei
             # mindestens einem Konflikt betreten), ist aber kein Fehlerfall.
             self._blit_center(
-                "Keine offenen Konflikte mehr.", self.font_body, (200, 200, 200), (top + bottom) // 2,
+                "Keine offenen Konflikte mehr.", self.font_body_admin, (200, 200, 200), (top + bottom) // 2,
             )
             return
 
@@ -1322,9 +1549,9 @@ class Renderer:
 
         for conflict in conflicts:
             if y + row_h >= top and y <= bottom:
-                name_y = y + (row_h - self.font_body.get_linesize()) // 2
-                label = self._truncate_text(conflict.name, self.font_body, name_max_w)
-                self._draw_text(label, self.font_body, (230, 230, 230), (60, name_y))
+                name_y = y + (row_h - self.font_body_admin.get_linesize()) // 2
+                label = self._truncate_text(conflict.name, self.font_body_admin, name_max_w)
+                self._draw_text(label, self.font_body_admin, (230, 230, 230), (60, name_y))
 
                 overwrite_rect = pygame.Rect(0, 0, checkbox_hitbox_w, row_h)
                 overwrite_rect.center = (overwrite_x, y + row_h // 2)
@@ -1347,27 +1574,34 @@ class Renderer:
         # NEU (4.4): Warntext gross und zentriert. status_text enthaelt
         # bereits Zeilenumbrueche (siehe state_machine._go_admin_delete_confirm),
         # daher zeilenweise zentriert setzen statt in einem Rutsch.
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_status_admin/
+        # font_body_admin (urspruengliche Groesse) statt der fuer Gaeste
+        # vergroesserten font_status_main_menu/font_body. Ausserdem etwas
+        # weiter oben begonnen (0.30 -> 0.22, wie die anderen Admin-
+        # Listenscreens), damit zu den Buttons darunter mehr Luft bleibt.
         height = self.config.screen.height
         lines = (model.ui.status_text or "").split("\n")
-        y = round(0.30 * height)
-        line_height = self.font_status_main_menu.get_linesize() + 10
+        y = round(0.22 * height)
+        line_height = self.font_status_admin.get_linesize() + 10
         for line in lines:
-            self._blit_center(line, self.font_status_main_menu, (255, 210, 210), y)
+            self._blit_center(line, self.font_status_admin, (255, 210, 210), y)
             y += line_height
         # Zusaetzlicher Hinweis, was "alles" konkret umfasst - beugt der
         # Fehlannahme vor, es gehe nur um die Bilder auf dem Bildschirm.
         self._blit_center(
             "Betrifft Fotobox, QR-Download und Kamera-Speicherkarte.",
-            self.font_body, (230, 170, 170), y + 16,
+            self.font_body_admin, (230, 170, 170), y + 16,
         )
 
     def _draw_admin_delete_running(self, model: AppModel) -> None:
         # GEAENDERT (4.9): Fortschrittsbalken wie beim Export, aber in Rot.
         # Kein Button - die Loeschung ist nicht abbrechbar.
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_status_admin
+        # statt der fuer Gaeste vergroesserten font_status_main_menu.
         height = self.config.screen.height
         self._blit_center(
             model.ui.admin_delete_progress or "Bilder werden gelöscht ...",
-            self.font_status_main_menu, (255, 210, 210), round(0.32 * height),
+            self.font_status_admin, (255, 210, 210), round(0.32 * height),
         )
         self._draw_progress_bar(
             model.ui.admin_delete_fraction, round(0.48 * height),
@@ -1377,19 +1611,23 @@ class Renderer:
     def _draw_admin_delete_done(self, model: AppModel) -> None:
         # NEU (4.4): Zusammenfassung als Zeilenliste, gleiche Optik wie
         # die Diagnoseseite (_draw_admin_status).
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
+        # statt der fuer Gaeste vergroesserten font_body.
         height = self.config.screen.height
         y = round(0.22 * height)
-        line_height = self.font_body.get_linesize() + 14
+        line_height = self.font_body_admin.get_linesize() + 14
         for line in model.ui.admin_delete_lines:
-            self._draw_text(line, self.font_body, (230, 230, 230), (60, y))
+            self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
 
     def _draw_admin_restart_pending(self, model: AppModel) -> None:
         # NEU (4.3): grosse, zentrierte Statuszeile - bewusst kein Titel,
         # kein Button (nicht abbrechbar, siehe state_machine.py).
+        # NEU (Feedback): Service-Menue, nur fuer Lutz - font_status_admin
+        # statt der fuer Gaeste vergroesserten font_status_main_menu.
         self._blit_center(
             model.ui.status_text or "App wird neu gestartet ...",
-            self.font_status_main_menu,
+            self.font_status_admin,
             (255, 220, 120),
             round(0.45 * self.config.screen.height),
         )
