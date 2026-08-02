@@ -11,9 +11,8 @@ Bestätigung/Löschung an, exportiert gespeicherte Fotos für den QR-Code-
 Download und zeigt zwischendurch eine "Fliegende Galerie" bereits
 aufgenommener Fotos als Blickfang.
 
-> Aktuell im Einsatz für private Veranstaltungen (u. a. eine 150-Jahre-
-> Feier und eine Familienfeier). Alle UI-Texte und Code-Kommentare sind
-> auf Deutsch.
+> Aktuell im Einsatz für private Veranstaltungen.
+> Alle UI-Texte und Code-Kommentare sind auf Deutsch.
 
 ## 🆘 Troubleshooting im Notfall (während einer Veranstaltung)
 
@@ -289,6 +288,32 @@ CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
 
 ## Installation auf dem Raspberry Pi
 
+### Repository herunterladen
+
+Auf einem frisch aufgesetzten Raspberry Pi (Raspberry Pi OS / Debian,
+siehe [Hardware](#hardware)):
+
+```bash
+cd ~
+git clone https://github.com/GarageMan/photobooth_project.git photobooth
+cd photobooth
+```
+
+Für einen stabilen, getesteten Stand statt des aktuellen `main`-Branchs
+empfiehlt sich, den jeweils neuesten
+[Release](https://github.com/GarageMan/photobooth_project/releases)
+auszuchecken:
+
+```bash
+git fetch --tags
+git tag --sort=-creatordate | head -1   # zeigt den neuesten Tag, z.B. v1.0.2
+git checkout <neuester-tag>
+```
+
+`main` kann bereits Arbeit an der nächsten Version enthalten — für den
+Nachbau ist ein Release-Tag der verlässlichere Ausgangspunkt.
+### Systempakete und Python-Abhängigkeiten
+
 ```bash
 # Systempakete
 sudo apt update
@@ -304,6 +329,24 @@ Bekannter Konflikt: `gvfs-gphoto2-volume-monitor` blockiert den
 automatisch beendet (`kill_gvfs()`); alternativ per systemd-Unit dauerhaft
 deaktivieren.
 
+### Erstkonfiguration (vor dem ersten Start nötig)
+
+Ein frischer Klon enthält keine Zugangsdaten und keine Event-Parameter
+(beides bewusst nicht versioniert, siehe `.gitignore`) — ohne diese
+beiden Schritte startet die App zwar (mit auffälligen Platzhalterwerten,
+siehe [Sicherheit / Härtung](#sicherheit--härtung)), ist aber noch nicht
+einsatzbereit:
+
+```bash
+cp local_secrets_example.py local_secrets.py
+nano local_secrets.py
+cp event_config_example.json event_config.json
+nano event_config.json
+```
+
+Details zu den jeweiligen Feldern siehe
+[Sicherheit / Härtung](#sicherheit--härtung) bzw.
+[Event-Parameter](#event-parameter-event_configjson).
 ### Berechtigungen
 
 Nur `app_with_hw.py`, `hw_led_provider.py`, `hw_button_provider.py` und
@@ -713,8 +756,8 @@ erfolgreich durchgeführt, aber mit mehreren Stolperfallen:
   nur einplanen, wenn Zeit für eine komplette Neukonfiguration da ist,
   nicht "mal eben zwischendurch".
 - **"Sichern & Wiederherstellen", "Firmware-Upgrade" und
-  "Werkseinstellungen" fehlten in der alten FW-Version komplett im Menü** 
-  (auch nicht per direktem URL-Aufruf erreichbar, 403). 
+  "Werkseinstellungen" fehlten in der alten FW-Version komplett im Menü**
+  (auch nicht per direktem URL-Aufruf erreichbar, 403).
   **Tatsächliche Ursache (bestätigt, nicht nur vermutet):** Die alte FW
   hatte diese Funktion bei remote-Zugriffen ausgeschlossen.
 - **Nach dem Neuaufbau fehlten zunächst:** die DHCP-Adressreservierung
