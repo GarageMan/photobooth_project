@@ -88,6 +88,20 @@ _SYNC_FLASH_PERIOD = 0.15
 _COMET_CHANCE = 0.01
 _COMET_TAIL = 6
 
+# NEU (Sprint 11, Feature 1): Uhrzeiger-Kalibrierung fuer den wandernden
+# Punkt in _render_capture_transfer() (9 -> 12 -> 3 Uhr waehrend der
+# Bilduebertragung). Anders als alle bisherigen Effekte (rotationssymmetrisch,
+# Orientierung war nie relevant) braucht dieser Effekt eine echte Zuordnung
+# von LED-Index zu Uhrzeit-Position - die haengt von der realen Verkabelung/
+# Einbaulage des Rings ab und ist aus dem Code allein nicht ableitbar.
+# MUSS vor Ort am echten Ring geprueft/kalibriert werden:
+#   sudo python3 hw_led_provider.py capture_transfer
+# _LED_INDEX_AT_12_OCLOCK: welcher LED-Index physisch oben (12 Uhr) sitzt.
+# _LED_CLOCKWISE: True, wenn steigender LED-Index im Uhrzeigersinn (aus
+# Gaeste-Blickrichtung auf die aufgebaute Box) laeuft.
+_LED_INDEX_AT_12_OCLOCK = 0
+_LED_CLOCKWISE = True
+
 
 def _sync_flash_active(now: float) -> bool:
     cycle = now % _SYNC_CYCLE_SEC
@@ -114,6 +128,9 @@ class HwLedProvider:
     _thread: threading.Thread = field(init=False, repr=False)
     _current_effect: LedEffect = field(default=LedEffect.OFF, init=False)
     _effect_since: float = field(default=0.0, init=False)  # NEU (3.5): Startzeit des aktuellen Effekts
+    # NEU (Sprint 11, Feature 1): Sollzeit fuer zeitgesteuerte Effekte
+    # (aktuell nur CAPTURE_TRANSFER) - siehe set_effect()/_render_capture_transfer().
+    _effect_duration: float = field(default=4.0, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _running: bool = field(default=False, init=False)
 
@@ -151,12 +168,23 @@ class HwLedProvider:
         if _HW_AVAILABLE:
             self._all_off()
 
-    def set_effect(self, effect: LedEffect) -> None:
-        """Thread-sicher den gewünschten Effekt setzen."""
+    def set_effect(self, effect: LedEffect, duration: float | None = None) -> None:
+        """Thread-sicher den gewünschten Effekt setzen.
+
+        NEU (Sprint 11, Feature 1): optionales `duration` (Sekunden) - wird
+        aktuell nur von LedEffect.CAPTURE_TRANSFER ausgewertet
+        (_render_capture_transfer): der wandernde LED-Punkt erreicht 3 Uhr
+        exakt nach `duration` Sekunden, unabhängig davon, wie lange die
+        tatsächliche Übertragung am Ende dauert (siehe app_with_hw.py -
+        `duration` kommt aus der per Stoppuhr gemessenen, in
+        capture_timing.py persistierten Schätzung).
+        """
         with self._lock:
             if effect != self._current_effect:  # NEU (3.5): Startzeit merken
                 self._effect_since = time.monotonic()
             self._current_effect = effect
+            if duration is not None:
+                self._effect_duration = duration
 
     def get_effect(self) -> LedEffect:
         with self._lock:
@@ -179,6 +207,7 @@ class HwLedProvider:
             with self._lock:
                 effect = self._current_effect
                 effect_since = self._effect_since  # NEU (3.5)
+                effect_duration = self._effect_duration  # NEU (Sprint 11, Feature 1)
 
             now = time.monotonic()
 
@@ -258,6 +287,14 @@ class HwLedProvider:
                 # Voller, satter gruener Kreis waehrend des gphoto2-Downloads
                 self._fill((0, 200, 0))
                 time.sleep(0.1)
+
+            elif effect == LedEffect.CAPTURE_TRANSFER:
+                # NEU (Sprint 11, Feature 1): wandernder gruener Punkt statt
+                # statischem Vollkreis - laeuft synchron zur Datei-Symbol-
+                # Animation im Renderer (app_with_hw.py uebergibt dieselbe
+                # Sollzeit an beide).
+                self._render_capture_transfer(now - effect_since, effect_duration)
+                time.sleep(0.02)
 
             elif effect == LedEffect.REVIEW_BREATHE:
                 # Gelbes Atmen, solange das Foto zur Begutachtung angezeigt wird
@@ -564,6 +601,43 @@ class HwLedProvider:
                 self._pixels[i] = (0, 4, 3)  # sehr dunkles Grundtuerkis
         self._pixels.show()
 
+    def _render_capture_transfer(self, elapsed: float, duration: float) -> None:
+        """
+        NEU (Sprint 11, Feature 1): waehrend der Bilduebertragung (Ausloesen
+        + gphoto2-Download, laeuft in app_with_hw.py in einem Hintergrund-
+        Thread) wandert ein einzelner, weich auslaufender gruener Punkt von
+        9 Uhr ueber 12 Uhr nach 3 Uhr (180-Grad-Bogen) - synchron zur
+        Datei-Symbol-Animation im Renderer. `duration` ist die per
+        Stoppuhr gemessene/geschaetzte Uebertragungsdauer (siehe
+        capture_timing.py); dauert die echte Uebertragung laenger, bleibt
+        der Punkt einfach bei 3 Uhr stehen (kein Ueberschiessen/Zittern),
+        bis der State wechselt.
+
+        ACHTUNG (muss vor Ort am echten Ring geprueft werden - hier ohne
+        Hardware nicht verifizierbar): welcher physische LED-Index welcher
+        Uhrzeit entspricht, haengt von der realen Verkabelung/Einbaulage
+        ab. Zum Testen/Kalibrieren: `sudo python3 hw_led_provider.py
+        capture_transfer` - bei Bedarf _LED_INDEX_AT_12_OCLOCK/
+        _LED_CLOCKWISE unten anpassen.
+        """
+        num = len(self._pixels)
+        quarter = num / 4.0
+        frac = 0.0 if duration <= 0 else max(0.0, min(1.0, elapsed / duration))
+        direction = 1.0 if _LED_CLOCKWISE else -1.0
+        # -quarter (9 Uhr) .. 0 (12 Uhr) .. +quarter (3 Uhr)
+        offset = -quarter + frac * (2.0 * quarter)
+        head = (_LED_INDEX_AT_12_OCLOCK + direction * offset) % num
+
+        tail = 7.0
+        for i in range(num):
+            dist = ((head - i) * direction) % num
+            if dist < tail:
+                level = (1.0 - dist / tail) ** 1.5
+                self._pixels[i] = (0, int(210 * level), int(60 * level))
+            else:
+                self._pixels[i] = (0, 3, 1)  # sehr dunkles Grundgruen
+        self._pixels.show()
+
 
 # ------------------------------------------------------------------------------
 # Manuelle Schnell-Tests (direkt auf dem Pi ausführen)
@@ -596,16 +670,39 @@ if __name__ == "__main__":
         "usb_copy":         LedEffect.ADMIN_USB_COPY,      # NEU (4.7)
         "pin_error":        LedEffect.PIN_ERROR,         # NEU (3.5)
         "shutdown_seq":     LedEffect.SHUTDOWN_SEQUENCE,  # NEU (3.5)
+        # NEU (Sprint 11, Feature 1): zum Kalibrieren von
+        # _LED_INDEX_AT_12_OCLOCK/_LED_CLOCKWISE am echten Ring - siehe
+        # Docstring von _render_capture_transfer(). Optionales zweites
+        # Argument = Sollzeit in Sekunden (Default 4.0), z.B.:
+        # sudo python3 hw_led_provider.py capture_transfer 3
+        "capture_transfer": LedEffect.CAPTURE_TRANSFER,
         "off":              LedEffect.OFF,
     }
 
     if len(sys.argv) < 2 or sys.argv[1] not in EFFECTS:
-        print("Verwendung: sudo python3 hw_led_provider.py <effekt>")
+        print("Verwendung: sudo python3 hw_led_provider.py <effekt> [dauer_sekunden]")
         print("Verfügbare Effekte:", ", ".join(EFFECTS))
         sys.exit(1)
 
     provider = HwLedProvider()
     provider.start()
+
+    if sys.argv[1] == "capture_transfer":
+        # NEU (Sprint 11, Feature 1): laeuft in einer Schleife (Effekt wird
+        # nach jedem Durchlauf neu gesetzt, damit effect_since zurueckgesetzt
+        # wird) - so laesst sich die 9->12->3-Uhr-Bewegung wiederholt
+        # beobachten, ohne den Befehl jedes Mal neu zu starten.
+        test_duration = float(sys.argv[2]) if len(sys.argv) > 2 else 4.0
+        print(f"Effekt 'capture_transfer' läuft (Sollzeit {test_duration}s je Durchlauf) - STRG+C zum Beenden")
+        try:
+            while True:
+                provider.set_effect(LedEffect.CAPTURE_TRANSFER, duration=test_duration)
+                time.sleep(test_duration + 1.5)
+        except KeyboardInterrupt:
+            provider.stop()
+            print("LEDs aus. Tschüss!")
+        sys.exit(0)
+
     provider.set_effect(EFFECTS[sys.argv[1]])
 
     if sys.argv[1] == "off":

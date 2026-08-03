@@ -91,12 +91,25 @@ automatisch, ohne App-Neustart.
 ## Funktionsumfang
 
 - Geführter Aufnahme-Ablauf: Hauptmenü → Countdown → Aufnahme → Vorschau
-  (Speichern/Verwerfen) → QR-Code zum Download
+  (Speichern/Verwerfen) → Speicher-Bestätigung mit Hinweis auf die Galerie
 - Live-Vorschau der Kamera vor der Aufnahme (gphoto2 `capture_preview`)
+- **Sichtbares Feedback während der Bildübertragung** (Sprint 11): die
+  Kamera-Auslösung läuft im Hintergrund-Thread, damit die Bildschirm-
+  Animation flüssig weiterläuft, während das Bild von der Kamera
+  herunterlädt — deutlich größerer Statustext, ein wanderndes Datei-Symbol
+  zwischen Kamera- und Speicher-Symbol sowie ein von 9 über 12 bis 3 Uhr
+  wandernder Punkt auf dem LED-Ring, alle drei ungefähr synchron zur
+  tatsächlichen Übertragungsdauer (laufend kalibriert, siehe
+  `capture_timing.py`) — Grund: Gäste hielten beim 150-Jahre-Event das
+  grüne "Verarbeitung läuft"-Leuchten fälschlich für den Auslösemoment
+  statt den kurzen weißen LED-Blitz
 - Farbige LED-Choreografie über einen `LedEffect`-Enum pro `AppState`
   (Sternenhimmel-Idle-Animation, Kometen-Effekte, Countdown-Ring u. a.)
 - Beleuchteter Hardware-Auslöse-Taster (synchron zur LED-Ring-Choreografie)
 - Galerie mit Grid- und Vollbild-Ansicht, Lösch-Bestätigung mit Timeout
+- Bestätigtes Verwerfen eines gerade aufgenommenen Fotos (`REVIEW` →
+  `DELETE_CONFIRM`) führt direkt zurück in einen neuen Countdown statt ins
+  Hauptmenü — der Gast wollte i. d. R. gleich ein neues Foto aufnehmen
 - Eigener, einladender Bildschirm (`GALLERY_EMPTY`) statt eines leeren
   Grids, solange noch kein Foto aufgenommen wurde — mit direktem Weg
   zur ersten Aufnahme und eigenem LED-Effekt
@@ -104,7 +117,12 @@ automatisch, ohne App-Neustart.
   Fotos an, mit gelegentlich eingestreutem Werbe-Wallpaper; solange noch
   keine echten Fotos existieren, fliegen stattdessen drei feste
   Beispielbilder ein (siehe [Geschützte Dateien](#geschützte-dateien))
-- QR-Code-Anzeige zum Download des eigenen Fotos über das lokale Netzwerk
+- **QR-Code je Einzelfoto, on-demand aus der Galerie** (Sprint 11): direkt
+  nach dem Speichern erscheint bewusst KEIN QR-Code mehr (siehe unten,
+  Gründe im Refinement-Backlog) — stattdessen liefert ein Doppeltap auf
+  ein Foto in der Galerie-Vollansicht (oder das Icon "QR-Code anfordern"
+  unten rechts) den Download-QR-Code für genau dieses Foto, schließt sich
+  nach 30 s automatisch oder per "Zurück"
 - DSGVO/GDPR-Hinweis als eigener, scrollbarer Bildschirm (`TERMS`)
 - Touch- und Hardware-Button-Bedienung, Swipe-Gesten in der Galerie
 - Automatischer Neustart bei Absturz (`start_fotobox.sh`)
@@ -128,12 +146,23 @@ automatisch, ohne App-Neustart.
   Diagnose-Testbild sind vor Löschen und USB-Export geschützt und
   werden im Diagnose-Screen auf Vorhandensein geprüft (siehe
   [Geschützte Dateien](#geschützte-dateien))
+- **Kamera-Einstellungen im Service-Menü** (Sprint 11): ISO und Blende
+  lassen sich direkt über die bestehende USB-Verbindung anpassen
+  (`hw_camera_settings_provider.py`, `AppState.ADMIN_CAMERA_SETTINGS`) —
+  ohne die Kamera aus dem Gehäuse zu nehmen, Kabel zu lösen und danach
+  neu auszurichten. Gültige Werte werden live von der Kamera gelesen
+  (abhängig vom montierten Objektiv); die Kamera sollte im Modus A
+  (Zeitautomatik — Blende wird vorgegeben, die Belichtungszeit berechnet
+  die Kamera selbst) oder M stehen
 
 ## Service-Menü
 
 Über eine versteckte Tipp-Geste im Hauptmenü plus PIN erreichbar (siehe
-[Sicherheit / Härtung](#sicherheit--härtung)). Sechs Punkte im
-2×3-Raster (`admin_menu.py`):
+[Sicherheit / Härtung](#sicherheit--härtung)). Sieben Punkte im
+2×4-Raster (`admin_menu.py`, seit Sprint 11 — vorher 2×3, siehe
+"Kamera-Einstellungen" unten; die neue Zeile wurde bewusst OBERHALB von
+"Zurück"/"Alle Bilder löschen" eingefügt, damit deren Eck-Platzierung
+unverändert bleibt):
 
 | Punkt | Zweck |
 |---|---|
@@ -141,8 +170,9 @@ automatisch, ohne App-Neustart.
 | Bilder auf USB-Stick | Export mit SHA256-Verifikation und Konflikterkennung (`admin_usb_export.py`, `admin_usb_service.py`) |
 | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
 | Herunterfahren | Bestätigter Poweroff mit Abschieds-Animation |
+| Kamera-Einstellungen | ISO/Blende direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
 | Zurück | Zurück ins Hauptmenü |
-| Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten |
+| Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
 
 ## Geschützte Dateien
 
@@ -204,7 +234,11 @@ namentlich.
   <img src="docs/images/nikon_stecker.jpg" alt="Nikon-spezifischer Stecker (MC-DC2-Buchse) für die Optokoppler-Auslösung" width="45%">
 </p>
 
-- Modus: M (Manuell)
+- Modus: A (Zeitautomatik/Blendenautomatik — Blende wird vorgegeben, die
+  Kamera berechnet die Belichtungszeit selbst; geändert in der
+  Sprint-11-Nachbesserung, vorher M/Manuell — ISO und Blende lassen sich
+  seit Sprint 11 zusätzlich direkt über das Service-Menü anpassen, siehe
+  [Service-Menü](#service-menü))
 - Fokus: MF (manuell, einmalig eingestellt)
 - LiveView: EIN
 - Auto-Off/Energiesparen: AUS
@@ -249,10 +283,11 @@ Details — Hardware-Zugriffe stecken ausschließlich in den `hw_*`-Modulen.
 GALLERY_FULLSCREEN / PHOTO_INTRO → PHOTO_PREVIEW → COUNTDOWN →
 CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
 `INSTRUCTIONS`, `TERMS`, `ERROR_SCREEN`, `MAINTENANCE`, `PIN_ENTRY`,
-`SHUTDOWN_GOODBYE` sowie die Service-Menü-Zustände (`ADMIN_MENU`,
-`ADMIN_STATUS`, `ADMIN_USB_*`, `ADMIN_DELETE_*`,
-`ADMIN_RESTART_PENDING` — vollständige, autoritative Liste in
-`states.py`).
+`SHUTDOWN_GOODBYE`, `GALLERY_PHOTO_QR` (NEU, Sprint 11 — Foto-QR
+on-demand aus `GALLERY_FULLSCREEN`) sowie die Service-Menü-Zustände
+(`ADMIN_MENU`, `ADMIN_STATUS`, `ADMIN_CAMERA_SETTINGS` (NEU, Sprint 11),
+`ADMIN_USB_*`, `ADMIN_DELETE_*`, `ADMIN_RESTART_PENDING` — vollständige,
+autoritative Liste in `states.py`).
 
 ## Projektstruktur
 
@@ -267,8 +302,10 @@ CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
 | `config.py` | Zentrale Konfiguration (`AppConfig` und Unter-Configs) |
 | `led_service.py` / `hw_led_provider.py` | LED-Choreografie (Enum-Pipeline) und SPI-Ansteuerung |
 | `hw_button_provider.py` | GPIO-Taster inkl. Taster-LED-Sync |
-| `hw_capture_provider.py` | Kameraauslösung (GPIO/Optokoppler) + gphoto2-Download |
+| `hw_capture_provider.py` | Kameraauslösung (GPIO/Optokoppler) + gphoto2-Download, läuft im Hintergrund-Thread (siehe `CaptureProgress`, Sprint 11) |
 | `hw_gphoto2_preview_provider.py` | Live-Vorschau per gphoto2 |
+| `hw_camera_settings_provider.py` | NEU (Sprint 11): ISO/Blende direkt über USB lesen/setzen (`camera_lock`-geteilt mit den beiden obigen Providern) |
+| `capture_timing.py` | NEU (Sprint 11): gleitender Mittelwert (EMA) der tatsächlichen Bildübertragungsdauer, persistiert in `data/capture_timing.json` — kalibriert die Übertragungs-Animation/LED-Choreografie |
 | `hw_grabber_provider.py` | (nicht mehr verwendet — HDMI-Grabber-Ansatz wurde verworfen) |
 | `camera_capture.py` / `camera_preview.py` | Provider-Protokolle/Wrapper |
 | `fake_capture_service.py` / `fake_preview_service.py` | Fixture-basierte Provider für Entwicklung ohne Hardware |
@@ -369,7 +406,16 @@ Wichtige Felder:
   um ohne angeschlossene Kamera zu entwickeln (nutzt Fixtures aus
   `assets/`)
 - `timeouts.*` — sämtliche Timeout-/Countdown-Zeiten (Service-Menü
-  standardmäßig 30 s, USB-Export-Screens bewusst länger, 120 s)
+  standardmäßig 30 s, USB-Export-Screens bewusst länger, 120 s).
+  Ergänzt in Sprint 11: `gallery_qr_seconds` (30 s, Foto-QR in der
+  Galerie schließt sich automatisch), `capture_transfer_estimate_seconds`
+  (4 s Kaltstart-Schätzung für die Übertragungs-Animation, bevor die
+  erste echte Messung vorliegt — siehe `capture_timing.py`);
+  `qr_display_seconds` wurde von 60 s auf 20 s verkürzt (reicht zum
+  Lesen des neuen, kürzeren Hinweistexts nach dem Speichern)
+- `capture_timing_file` — Pfad zur Laufzeitdatei mit der EMA-Schätzung
+  der Bildübertragungsdauer (`data/capture_timing.json`, nicht
+  versioniert)
 - `gpio.*` — Pin-Belegung (siehe [GPIO-Tabelle](#gpio-pin-tabelle-autoritativ))
 - `network.*` — statische IP (`192.168.0.10`), Foto-URL-Präfix,
   WLAN-Zugangsdaten (siehe [Netzwerk-Setup](#netzwerk-setup))
@@ -564,12 +610,46 @@ python3 -m pytest test_state_machine.py test_state_machine_admin.py \
     test_button_service.py test_admin_usb_export.py test_config.py
 ```
 
-In dieser Sitzung verifiziert: `test_state_machine.py`,
-`test_state_machine_admin.py`, `test_admin_usb_export.py`,
-`test_config.py`, `test_storage_alarm.py` zusammen 176 Tests, alle
-grün. `test_gallery_service.py`/`test_button_service.py` wurden hier
-nicht angefasst — bei neu hinzugekommenen `test_*.py`-Dateien diese
-Liste ergänzen.
+Stand Sprint 11: `test_state_machine.py` und `test_state_machine_admin.py`
+decken zusätzlich die Übertragungs-Animation (Hintergrund-Thread,
+Sprint-11-Feature 1), den Wegfall des Sofort-QR-Codes (Feature 3), den
+neuen Foto-QR-Flow in der Galerie (Feature 4: Eintritt/Timeout/Zurück,
+Auswahlindex bleibt erhalten) sowie die neue Admin-Kamera-Einstellungen-
+Seite (Feature 2: Lesen, +/- durch die Auswahllisten, Grenzen an den
+Enden, Fehlerfall) ab.
+
+Sprint-11-Nachbesserung (Feedback-Runde nach dem ersten Rollout):
+`test_delete_confirm_returns_to_countdown` prüft den geänderten
+Rücksprung nach "Wirklich löschen" (jetzt `COUNTDOWN` statt `MAIN_MENU`,
+inkl. neu gestarteter Live-Vorschau). Die übrigen Korrekturen dieser
+Runde (Schriftgrößen-Angleichung, Layout-/Overlap-Fixes im Service-Menü
+und in der Foto-QR-Ansicht, die "f/f/…"-Anzeige, die Shredder-Animation)
+sind reine Darstellungs-Änderungen ohne eigene State-Machine-Logik und
+wurden stattdessen per Screenshot-Rendering in dieser Sitzung
+gegengeprüft (siehe Renderer-Smoke-Test unten).
+
+**Update (erster echter Testlauf auf dem Pi nach Sprint 11):** die vier
+zuvor als "vorbestehend, unabhängig von Sprint 11" eingestuften
+Fehlschläge in `test_admin_diagnostics.py` und
+`test_state_machine_shutdown.py` waren tatsächlich reine Test-Altlasten
+(keine Produktivbugs) und wurden jetzt behoben:
+
+- `test_admin_diagnostics.py::test_returns_five_lines` rief
+  `collect_status_lines()` noch mit der alten, um vier Parameter kürzeren
+  Signatur auf (`TypeError`) — `app_with_hw.py` rief die Funktion bereits
+  korrekt auf, betroffen war ausschließlich der Test. Umbenannt in
+  `test_returns_seven_lines` und an die aktuelle Signatur angepasst.
+- Die drei Fehlschläge in `test_state_machine_shutdown.py` gingen davon
+  aus, dass eine akzeptierte PIN direkt zu `SHUTDOWN_GOODBYE` führt. Das
+  wurde bereits in einem früheren Sprint bewusst geändert (`NEU 4.1`,
+  siehe `state_machine._handle_pin_submit`): die PIN führt seither ins
+  Service-Menü (`ADMIN_MENU`), damit sie ALLE Wartungsfunktionen schützt,
+  nicht nur das Herunterfahren — `SHUTDOWN_GOODBYE` wird jetzt erst über
+  `ADMIN_MENU` → „Herunterfahren" (`TAP_ADMIN_SHUTDOWN`) erreicht. Die
+  Tests wurden entsprechend umgebaut (`test_accepted_goes_to_admin_menu`,
+  neu: `test_admin_shutdown_leads_to_goodbye`, `_reach_goodbye()`-Hilfsmittel).
+
+Gesamter Lauf (alle `test_*.py`) zuletzt: **319 Tests, alle grün.**
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -582,6 +662,43 @@ python3 -m py_compile <geänderte_dateien.py>
 
 - **Kamera/USB:** siehe [Hardware](#hardware) — LiveView nur per USB/
   gphoto2 möglich, kein HDMI parallel zu USB.
+- **LED-Uhrzeigen-Kalibrierung (Sprint 11, ungetestet in dieser Sitzung):**
+  Die Übertragungs-Animation lässt einen Punkt von 9 über 12 bis 3 Uhr
+  über den Ring wandern (`hw_led_provider._render_capture_transfer`).
+  Welcher physische LED-Index welcher Uhrzeit entspricht, ist aus dem
+  Code nicht ableitbar (bisherige Effekte waren alle rotationssymmetrisch,
+  Orientierung war nie relevant) — die Konstanten
+  `_LED_INDEX_AT_12_OCLOCK`/`_LED_CLOCKWISE` sind ein Platzhalter und
+  müssen am echten Ring geprüft/korrigiert werden:
+  `sudo python3 hw_led_provider.py capture_transfer`.
+- **gphoto2-ISO/Blende noch nicht an echter Hardware getestet
+  (Sprint 11):** `hw_camera_settings_provider.py` basiert auf der
+  offiziellen libgphoto2-Fähigkeitsliste der D3300 (`iso`/`f-number` als
+  read-write deklariert) und wurde gegen eine simulierte gphoto2-API
+  durchgetestet — ein echter Test am Gerät (inkl. der tatsächlichen
+  Konfig-Widget-Namen, Antwortzeiten und des Verhaltens bei aktivem
+  Live-View, siehe gphoto/gphoto2#491) steht noch aus.
+- **Timing-Gefühl der Übertragungs-Animation:** `capture_timing.py`
+  startet mit einem Kaltstart-Schätzwert (4 s,
+  `capture_transfer_estimate_seconds`) und lernt danach aus echten
+  Messungen (EMA, α=0,3) — die ersten Aufnahmen nach einem Neustart
+  können daher spürbar von der tatsächlichen Dauer abweichen, bis sich
+  der Wert eingependelt hat.
+- **Zeitautomatik (Modus A) statt Modus M (Sprint-11-Nachbesserung,
+  ungetestet):** Lutz nutzt für die Blendensteuerung eine Zeitautomatik
+  (er gibt die Blende vor, die Kamera berechnet die Belichtungszeit selbst)
+  statt des manuellen Modus M — die Hinweistexte in
+  `hw_camera_settings_provider.py`/`renderer.py` wurden entsprechend
+  angepasst, ob die D3300 externe Blendenänderungen im Modus A tatsächlich
+  genauso zuverlässig annimmt wie im Modus M ist noch nicht am echten Gerät
+  geprüft.
+- **Shredder-Animation beim "Alle Bilder löschen" (Sprint-11-
+  Nachbesserung, nur optisch geprüft, nicht am echten Touchscreen):**
+  `renderer._draw_admin_delete_shredder_animation` läuft rein zeitbasiert
+  und endlos, unabhängig vom tatsächlichen Löschfortschritt (den zeigt
+  weiterhin ausschließlich der Fortschrittsbalken/die Prozentzahl an) —
+  Timing-Gefühl und Platzbedarf wurden nur per Screenshot-Rendering in
+  dieser Sitzung kontrolliert, keine Sichtprüfung auf echter Hardware.
 - **Enum-getriebene Pipelines konsequent pflegen:** Beim Erweitern eines
   Enums (z. B. `AppState`, `LedEffect`) alle Dateien mit hartcodierten
   Wert-Tupeln prüfen (`grep -n "value in ("` über alle `.py`-Dateien).

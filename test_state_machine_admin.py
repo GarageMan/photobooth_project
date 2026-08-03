@@ -192,6 +192,127 @@ class AdminStatusTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
 
+class AdminCameraSettingsTestCase(unittest.TestCase):
+    """Tests fuer 'Kamera-Einstellungen' (Sprint 11, Feature 2): Betreten
+    fordert synchron ISO/Blende an, ADMIN_CAMERA_SETTINGS_READY befuellt sie,
+    +/- wandert in den von der Kamera gelieferten Auswahllisten (kein
+    Umlaufen an den Enden), Zurueck/Idle fuehrt zum Menue zurueck."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_camera_settings(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_SETTINGS, now_offset=now_offset + 2.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertIn("read_admin_camera_settings", result.actions)
+
+    def _fill_ready(self, now_offset: float = 10.0):
+        return self.transition(
+            EventType.ADMIN_CAMERA_SETTINGS_READY,
+            now_offset=now_offset,
+            payload={
+                "available": True,
+                "error": None,
+                "iso": "400",
+                "iso_choices": ("100", "200", "400", "800", "1600"),
+                "aperture": "5.6",
+                "aperture_choices": ("2.8", "4", "5.6", "8", "11"),
+            },
+        )
+
+    def test_tap_camera_settings_enters_state_and_requests_read(self) -> None:
+        self._go_to_admin_camera_settings()
+        self.assertEqual(self.model.ui.admin_camera_iso_choices, ())
+
+    def test_ready_fills_values_and_choices(self) -> None:
+        self._go_to_admin_camera_settings()
+        result = self._fill_ready()
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertTrue(result.model.ui.admin_camera_available)
+        self.assertEqual(result.model.ui.admin_camera_iso, "400")
+        self.assertEqual(result.model.ui.admin_camera_aperture, "5.6")
+
+    def test_ready_with_unavailable_camera_sets_error(self) -> None:
+        self._go_to_admin_camera_settings()
+        result = self.transition(
+            EventType.ADMIN_CAMERA_SETTINGS_READY,
+            now_offset=10.0,
+            payload={"available": False, "error": "Kamera nicht erreichbar: Timeout"},
+        )
+        self.assertFalse(result.model.ui.admin_camera_available)
+        self.assertEqual(result.model.ui.admin_camera_error, "Kamera nicht erreichbar: Timeout")
+
+    def test_iso_up_steps_to_next_choice_and_triggers_set_action(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_iso, "800")
+        self.assertIn("set_admin_camera_iso", result.actions)
+
+    def test_iso_down_steps_to_previous_choice(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_DOWN, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_iso, "200")
+
+    def test_iso_up_stops_at_highest_choice(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        for offset in range(11, 20):
+            self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=float(offset))
+        self.assertEqual(self.model.ui.admin_camera_iso, "1600")
+
+    def test_aperture_up_steps_to_next_choice_and_triggers_set_action(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_APERTURE_UP, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_aperture, "8")
+        self.assertIn("set_admin_camera_aperture", result.actions)
+
+    def test_aperture_down_stops_at_lowest_choice(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        for offset in range(11, 20):
+            self.transition(EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN, now_offset=float(offset))
+        self.assertEqual(self.model.ui.admin_camera_aperture, "2.8")
+
+    def test_iso_up_without_choices_is_ignored(self) -> None:
+        # Kamera nicht erreichbar / noch nicht gelesen - kein Absturz, keine
+        # Aktion, State bleibt unveraendert.
+        self._go_to_admin_camera_settings()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertNotIn("set_admin_camera_iso", result.actions)
+
+    def test_back_returns_to_admin_menu_not_main_menu(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    def test_idle_timeout_returns_to_admin_menu(self) -> None:
+        self._go_to_admin_camera_settings()
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=40.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+
 class AdminRestartPendingTestCase(unittest.TestCase):
     """Tests fuer 'App neu starten' (Etappe 4.3): nicht abbrechbarer
     Zwischenscreen, Timeout loest 'restart_app' aus, keine andere

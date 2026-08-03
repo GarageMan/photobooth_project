@@ -106,17 +106,37 @@ class ShutdownFlowTestCase(unittest.TestCase):
 
     # -- PIN_SUBMIT: Auswertung des PinResult ------------------------------
 
-    def test_accepted_goes_to_goodbye(self) -> None:
+    # GEFIXT (Test-Altlast, aufgefallen beim ersten echten Pi-Testlauf nach
+    # Sprint 11): seit "NEU (4.1)" (siehe state_machine._handle_pin_submit)
+    # fuehrt eine akzeptierte PIN nicht mehr direkt zu SHUTDOWN_GOODBYE,
+    # sondern ins Service-Menue (ADMIN_MENU) - eine PIN-Huerde schuetzt so
+    # ALLE Wartungsfunktionen, nicht nur das Herunterfahren. Dieser Test
+    # wurde dabei nie nachgezogen und erwartete weiterhin den alten,
+    # direkten Sprung. Der eigentliche Weg zu SHUTDOWN_GOODBYE fuehrt jetzt
+    # ueber ADMIN_MENU -> TAP_ADMIN_SHUTDOWN, siehe
+    # test_admin_shutdown_leads_to_goodbye unten und _reach_goodbye().
+    def test_accepted_goes_to_admin_menu(self) -> None:
         self._enter_pin_entry()
         self._type("1234", base_offset=5.3)
         result = self.transition(
             EventType.PIN_SUBMIT, now_offset=6.0,
             payload={"pin_result": PinResult.ACCEPTED},
         )
-        self.assertEqual(result.model.state, AppState.SHUTDOWN_GOODBYE)
-        expected = self.now + 6.0 + self.config.shutdown.goodbye_seconds
-        self.assertAlmostEqual(result.model.timers.shutdown_goodbye_deadline, expected)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
         self.assertEqual(result.model.ui.pin_entry, "")
+
+    def test_admin_shutdown_leads_to_goodbye(self) -> None:
+        self._enter_pin_entry()
+        self._type("1234", base_offset=5.3)
+        self.transition(
+            EventType.PIN_SUBMIT, now_offset=6.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        result = self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=6.5)
+        self.assertEqual(result.model.state, AppState.SHUTDOWN_GOODBYE)
+        expected = self.now + 6.5 + self.config.shutdown.goodbye_seconds
+        self.assertAlmostEqual(result.model.timers.shutdown_goodbye_deadline, expected)
 
     def test_rejected_stays_clears_buffer_and_arms_error_flash(self) -> None:
         self._enter_pin_entry()
@@ -193,11 +213,15 @@ class ShutdownFlowTestCase(unittest.TestCase):
     # -- SHUTDOWN_GOODBYE ---------------------------------------------------
 
     def _reach_goodbye(self) -> None:
+        # GEAENDERT: fuehrt seit "NEU (4.1)" ueber ADMIN_MENU statt direkt
+        # dorthin, siehe Kommentar bei test_accepted_goes_to_admin_menu.
         self._enter_pin_entry()
         self.transition(
             EventType.PIN_SUBMIT, now_offset=6.0,
             payload={"pin_result": PinResult.ACCEPTED},
         )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=6.5)
         self.assertEqual(self.model.state, AppState.SHUTDOWN_GOODBYE)
 
     def test_goodbye_timeout_emits_power_off(self) -> None:

@@ -38,6 +38,17 @@ class LayoutRects:
     # Hauptaktion.
     usb_conflicts_overwrite_all: pygame.Rect
     usb_conflicts_rename_all: pygame.Rect
+    # NEU (Sprint 11, Feature 4): kompaktes Icon "QR-Code anfordern" unten
+    # rechts auf dem Foto in GALLERY_FULLSCREEN - Alternative zum Doppeltap.
+    gallery_qr_icon: pygame.Rect
+    # NEU (Sprint 11, Feature 2): je ein "-"/"+"-Buttonpaar fuer ISO (obere
+    # Zeile) und Blende (untere Zeile) auf AppState.ADMIN_CAMERA_SETTINGS -
+    # der jeweils aktuelle Wert wird vom Renderer MITTIG zwischen beiden
+    # Buttons gezeichnet (kein eigenes Rect noetig, reiner Text).
+    admin_camera_iso_minus: pygame.Rect
+    admin_camera_iso_plus: pygame.Rect
+    admin_camera_aperture_minus: pygame.Rect
+    admin_camera_aperture_plus: pygame.Rect
 
 
 def build_layout(width: int, height: int) -> LayoutRects:
@@ -142,6 +153,38 @@ def build_layout(width: int, height: int) -> LayoutRects:
     usb_conflicts_overwrite_all = rect(0.55, 0.245, 0.10, 0.075)
     usb_conflicts_rename_all = rect(0.77, 0.245, 0.10, 0.075)
 
+    # GEAENDERT (Sprint-11-Nachbesserung): frueher ein kleines eigenes Icon
+    # unten rechts - auf Wunsch jetzt exakt so gross wie der "Zurueck"-
+    # Button (unten links, rects.back/rects.left), nur horizontal gespiegelt
+    # positioniert. Nutzt bewusst dieselben Masse wie "right" statt eines
+    # eigenen kleineren Rects.
+    gallery_qr_icon = rect(1 - margin_x - button_w, lower_y, button_w, button_h)
+
+    # NEU (Sprint 11, Feature 2): ISO-Zeile oben, Blenden-Zeile darunter -
+    # "-" aussen links, "+" aussen rechts, der Wert dazwischen (Renderer
+    # zeichnet ihn zentriert in die Luecke, siehe
+    # renderer._draw_admin_camera_settings).
+    #
+    # GEAENDERT (Sprint-11-Nachbesserung): Buttons sollen (a) quadratisch
+    # sein und (b) weiter vom Bildschirmrand abgerueckt werden. Die
+    # Seitenlaenge wird deshalb NICHT wie sonst ueblich getrennt in Breiten-/
+    # Hoehenprozentsatz ausgedrueckt (die haben bei einem nicht quadratischen
+    # Bildschirm - hier 1280x720 - unterschiedliche Basis und ergaeben ein
+    # verzerrtes Rechteck), sondern einmalig in Pixeln aus der Bildschirm-
+    # hoehe abgeleitet und fuer x/y gleichermassen verwendet.
+    camera_btn_side = round(0.12 * height)
+    camera_margin_x = round(0.15 * width)
+    camera_iso_y = round(0.40 * height)
+    camera_aperture_y = round(0.60 * height)
+    admin_camera_iso_minus = pygame.Rect(camera_margin_x, camera_iso_y, camera_btn_side, camera_btn_side)
+    admin_camera_iso_plus = pygame.Rect(
+        width - camera_margin_x - camera_btn_side, camera_iso_y, camera_btn_side, camera_btn_side,
+    )
+    admin_camera_aperture_minus = pygame.Rect(camera_margin_x, camera_aperture_y, camera_btn_side, camera_btn_side)
+    admin_camera_aperture_plus = pygame.Rect(
+        width - camera_margin_x - camera_btn_side, camera_aperture_y, camera_btn_side, camera_btn_side,
+    )
+
     return LayoutRects(
         main_photo=main_photo,
         main_gallery=main_gallery,
@@ -154,6 +197,11 @@ def build_layout(width: int, height: int) -> LayoutRects:
         pin_keys=pin_keys,
         usb_conflicts_overwrite_all=usb_conflicts_overwrite_all,
         usb_conflicts_rename_all=usb_conflicts_rename_all,
+        gallery_qr_icon=gallery_qr_icon,
+        admin_camera_iso_minus=admin_camera_iso_minus,
+        admin_camera_iso_plus=admin_camera_iso_plus,
+        admin_camera_aperture_minus=admin_camera_aperture_minus,
+        admin_camera_aperture_plus=admin_camera_aperture_plus,
     )
 
 
@@ -194,6 +242,15 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         # fuehrt zurueck ins Hauptmenue (siehe app_with_hw.py).
         return {}
     if state == AppState.GALLERY_FULLSCREEN:
+        # NEU (Sprint 11, Feature 4): "gallery_qr" - Icon "QR-Code
+        # anfordern" unten rechts, gleichwertige Alternative zum Doppeltap
+        # (siehe app_with_hw._handle_pygame_event).
+        return {"back": rects.back, "gallery_qr": rects.gallery_qr_icon}
+    # NEU (Sprint 11, Feature 4): eigener Zustand fuer den Foto-QR-Code -
+    # nur "Zurueck" (gleiche Position wie bei GALLERY_FULLSCREEN), kein
+    # Doppeltap/Icon hier noetig (Anzeige schliesst sich sonst automatisch
+    # nach config.timeouts.gallery_qr_seconds).
+    if state == AppState.GALLERY_PHOTO_QR:
         return {"back": rects.back}
     if state == AppState.REVIEW:
         return {"save": rects.left, "delete": rects.right}
@@ -207,6 +264,14 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return rects.pin_keys
     if state == AppState.ADMIN_STATUS:       # NEU (4.3)
         return {"back": rects.back}
+    if state == AppState.ADMIN_CAMERA_SETTINGS:   # NEU (Sprint 11, Feature 2)
+        return {
+            "back": rects.back,
+            "admin_camera_iso_minus": rects.admin_camera_iso_minus,
+            "admin_camera_iso_plus": rects.admin_camera_iso_plus,
+            "admin_camera_aperture_minus": rects.admin_camera_aperture_minus,
+            "admin_camera_aperture_plus": rects.admin_camera_aperture_plus,
+        }
     if state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
         # "Nein" bewusst LINKS (die harmlose Wahl an der Stelle, an der
         # sonst die Standardaktion liegt), "Ja, loeschen" rechts.

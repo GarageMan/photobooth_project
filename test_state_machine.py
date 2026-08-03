@@ -101,6 +101,20 @@ class StateMachineTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.QR_DISPLAY)
         self.assertEqual(result.model.session.qr_filename, "test.jpg")
 
+    def test_review_save_no_longer_generates_qr(self) -> None:
+        """NEU (Sprint 11, Feature 3): TAP_SAVE zeigt keinen QR-Code mehr
+        direkt an - "generate_qr" darf nicht mehr unter den ausgeloesten
+        Actions sein, "export_photo" bleibt (Feature 4 braucht die
+        exportierte Datei spaeter fuer den Galerie-QR-Code)."""
+        self.boot_and_go_to_countdown_menu()
+        self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        self.transition(EventType.COUNTDOWN_FINISHED, now_offset=self.config.timeouts.boot_seconds + 4.5)
+        self.transition(EventType.CAPTURE_OK, now_offset=self.config.timeouts.boot_seconds + 4.6, payload={"photo_path": "/tmp/test.jpg"})
+        result = self.transition(EventType.TAP_SAVE, now_offset=self.config.timeouts.boot_seconds + 4.7, payload={"filename": "test.jpg"})
+        self.assertNotIn("generate_qr", result.actions)
+        self.assertIn("export_photo", result.actions)
+        self.assertIn("Galerie", result.model.ui.status_text)
+
     def test_qr_display_back_goes_to_photo_intro(self) -> None:
         self.boot_and_go_to_countdown_menu()
         self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
@@ -118,14 +132,23 @@ class StateMachineTestCase(unittest.TestCase):
         result = self.transition(EventType.TAP_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.7)
         self.assertEqual(result.model.state, AppState.DELETE_CONFIRM)
 
-    def test_delete_confirm_returns_to_main_menu(self) -> None:
+    def test_delete_confirm_returns_to_countdown(self) -> None:
+        # GEAENDERT (Sprint-11-Nachbesserung): frueher ging es zurueck ins
+        # Hauptmenue, jetzt direkt in einen neuen Countdown, damit der Gast
+        # ohne Umweg ueber PHOTO_INTRO/PHOTO_PREVIEW ein neues Foto aufnehmen
+        # kann. Live-Vorschau muss dabei explizit neu gestartet werden, da
+        # sie seit COUNTDOWN->CAPTURE_PENDING nicht mehr lief.
         self.boot_and_go_to_countdown_menu()
         self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
         self.transition(EventType.COUNTDOWN_FINISHED, now_offset=self.config.timeouts.boot_seconds + 4.5)
         self.transition(EventType.CAPTURE_OK, now_offset=self.config.timeouts.boot_seconds + 4.6, payload={"photo_path": "/tmp/test.jpg"})
         self.transition(EventType.TAP_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.7)
         result = self.transition(EventType.TAP_CONFIRM_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.8)
-        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+        self.assertEqual(result.model.state, AppState.COUNTDOWN)
+        self.assertIsNone(result.model.session.current_photo_path)
+        self.assertIn("delete_photo", result.actions)
+        self.assertIn("start_preview", result.actions)
+        self.assertIn("set_led_countdown", result.actions)
 
     def test_main_menu_idle_timeout_goes_to_attract_gallery(self) -> None:
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
@@ -157,6 +180,54 @@ class StateMachineTestCase(unittest.TestCase):
         self.transition(EventType.TAP_FULLSCREEN_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3, payload={"index": 0})
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=self.config.timeouts.gallery_fullscreen_idle_seconds + 1)
         self.assertEqual(result.model.state, AppState.GALLERY_GRID)
+
+    # -- Foto-QR in der Galerie-Vollansicht (Sprint 11, Feature 4) -----------
+
+    def _go_to_gallery_fullscreen(self, index: int = 0) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("a.jpg", "b.jpg")))
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.transition(
+            EventType.TAP_FULLSCREEN_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3,
+            payload={"index": index},
+        )
+
+    def test_gallery_qr_tap_leads_to_photo_qr_state(self) -> None:
+        self._go_to_gallery_fullscreen(index=1)
+        result = self.transition(EventType.TAP_GALLERY_QR, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        self.assertEqual(result.model.state, AppState.GALLERY_PHOTO_QR)
+        self.assertEqual(result.model.ui.selected_gallery_index, 1)
+        self.assertIn("generate_gallery_qr", result.actions)
+        self.assertIsNotNone(result.model.timers.gallery_qr_deadline)
+
+    def test_gallery_qr_without_photos_is_ignored(self) -> None:
+        # NEU (Sprint 11, Feature 4): TAP_GALLERY_QR ohne Fotos darf nicht
+        # nach GALLERY_PHOTO_QR fuehren (keine Datei, fuer die ein QR-Code
+        # erzeugt werden koennte) - regressionssicher analog zum bereits
+        # bestehenden Swipe-Schutz in _handle_gallery_fullscreen.
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.model = self.model.evolve(state=AppState.GALLERY_FULLSCREEN)
+        result = self.transition(EventType.TAP_GALLERY_QR, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.GALLERY_FULLSCREEN)
+
+    def test_gallery_photo_qr_back_returns_to_fullscreen_with_index(self) -> None:
+        self._go_to_gallery_fullscreen(index=1)
+        self.transition(EventType.TAP_GALLERY_QR, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        result = self.transition(EventType.TAP_BACK, now_offset=self.config.timeouts.boot_seconds + 0.5)
+        self.assertEqual(result.model.state, AppState.GALLERY_FULLSCREEN)
+        self.assertEqual(result.model.ui.selected_gallery_index, 1)
+        self.assertIsNone(result.model.timers.gallery_qr_deadline)
+        self.assertIsNotNone(result.model.timers.idle_deadline)
+
+    def test_gallery_photo_qr_auto_closes_after_timeout(self) -> None:
+        self._go_to_gallery_fullscreen(index=0)
+        self.transition(EventType.TAP_GALLERY_QR, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        result = self.transition(
+            EventType.GALLERY_QR_TIMEOUT,
+            now_offset=self.config.timeouts.boot_seconds + 0.4 + self.config.timeouts.gallery_qr_seconds + 1,
+        )
+        self.assertEqual(result.model.state, AppState.GALLERY_FULLSCREEN)
+        self.assertEqual(result.model.ui.selected_gallery_index, 0)
 
     # -- Leere Galerie (Etappe 7) --------------------------------------------
     # GALLERY_GRID ohne Fotos zeigte frueher einen technischen Pfad-Hinweis

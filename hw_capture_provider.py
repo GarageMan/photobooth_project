@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from camera_capture import CaptureResult
 from config import AppConfig
 
 try:
@@ -74,6 +75,29 @@ _SHUTTER_PULSE_SEC    = 0.25  # Sekunden; Auslösepuls (250 ms reicht der D3300)
 _GPHOTO2_WAIT_SEC     = 2.5   # Sekunden; Wartezeit nach Auslösung (JPG-Puffer)
 _GPHOTO2_RETRY_COUNT  = 3     # Anzahl Versuche bei transienten Fehlern
 _GPHOTO2_RETRY_WAIT   = 1.0   # Sekunden zwischen Versuchen
+
+
+@dataclass
+class CaptureProgress:
+    """NEU (Sprint 11, Feature 1): wird von app_with_hw.py verwendet, um den
+    kompletten Aufnahme-Ablauf (Ausloesen inkl. GPIO-Puls + gphoto2-Download,
+    bisher blockierend im Hauptthread) in einen Hintergrund-Thread zu
+    verlagern - gleiches Muster wie ExportProgress/DeleteProgress
+    (admin_usb_export.py/admin_delete_service.py): der Worker-Thread setzt
+    hier am Ende genau eine Referenz, der Hauptloop pollt sie jeden Frame
+    (_emit_due_timers). Eine einzelne Attribut-Zuweisung ist unter dem GIL
+    unteilbar, daher kein Lock noetig.
+
+    `started_at`/`expected_duration` treiben pro Frame die Uebertragungs-
+    Animation (Datei-Symbol im Renderer + LED-Punkt) - lebt bewusst hier und
+    nicht im eingefrorenen AppModel (reine Anzeigesache, wie
+    gallery_thumbnail_hitboxes)."""
+
+    started_at: float
+    expected_duration: float
+    done: bool = False
+    result: CaptureResult | None = None
+    measured_seconds: float = 0.0
 
 
 @dataclass

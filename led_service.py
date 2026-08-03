@@ -35,6 +35,16 @@ class LedEffect(Enum):
     # Waehrend des blockierenden gphoto2-Downloads (in _do_capture direkt
     # gesetzt, siehe app_with_hw.py) bis das Foto in REVIEW angezeigt wird.
     CAPTURE_PROCESSING = auto()
+    # NEU (Sprint 11, Feature 1): ersetzt CAPTURE_PROCESSING waehrend der
+    # eigentlichen Bilduebertragung (Ausloesen + gphoto2-Download laeuft
+    # jetzt in einem Hintergrund-Thread, siehe app_with_hw.py). Ein
+    # einzelner, weich auslaufender Punkt wandert - synchron zur
+    # Datei-Symbol-Animation im Renderer - einen Halbkreis von 9 Uhr ueber
+    # 12 Uhr nach 3 Uhr, Grundton gruen (Kontinuitaet zur bisherigen
+    # "gruen = Verarbeitung laeuft"-Bedeutung). Tempo richtet sich nach der
+    # per Stoppuhr gemessenen, in capture_timing.py persistierten
+    # Uebertragungsdauer.
+    CAPTURE_TRANSFER = auto()
     # REVIEW: gelb atmend.
     REVIEW_BREATHE = auto()
     DELETE_CONFIRM = auto()
@@ -80,9 +90,15 @@ class LedEffect(Enum):
 @dataclass
 class LedService:
     current_effect: LedEffect = field(default=LedEffect.OFF)
+    # NEU (Sprint 11, Feature 1): optionale Sollzeit fuer zeitgesteuerte
+    # Effekte (aktuell nur CAPTURE_TRANSFER) - rein informativ auf dieser
+    # Software-Seite (Diagnose/Tests), die eigentliche Animation berechnet
+    # ausschliesslich HwLedProvider selbst.
+    current_effect_duration: float | None = field(default=None)
 
-    def set_effect(self, effect: LedEffect) -> None:
+    def set_effect(self, effect: LedEffect, duration: float | None = None) -> None:
         self.current_effect = effect
+        self.current_effect_duration = duration
 
     def get_effect(self) -> LedEffect:
         return self.current_effect

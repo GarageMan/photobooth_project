@@ -77,12 +77,27 @@ class DiskUsageLineTestCase(unittest.TestCase):
 
 
 class CollectStatusLinesTestCase(unittest.TestCase):
-    def test_returns_five_lines(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+    # GEFIXT (Test-Altlast, aufgefallen beim ersten echten Pi-Testlauf nach
+    # Sprint 11): collect_status_lines() wurde in einem frueheren Sprint um
+    # vier Parameter (web_dir, photo_url_prefix, protected_photo_filenames,
+    # protected_web_filenames, siehe admin_diagnostics.py) sowie zwei
+    # weitere Zeilen (Foto-Download-Pfad, geschuetzte Dateien) erweitert -
+    # dieser Test wurde dabei nie nachgezogen und rief die Funktion seither
+    # mit der alten, unvollstaendigen Signatur auf (TypeError). Die
+    # Produktivnutzung in app_with_hw.py war davon nicht betroffen (ruft
+    # bereits korrekt mit allen sieben Parametern auf).
+    def test_returns_seven_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as photo_tmp, tempfile.TemporaryDirectory() as web_tmp:
             lines = collect_status_lines(
-                photo_dir=Path(tmp), photo_count=7, app_start_monotonic=0.0,
+                photo_dir=Path(photo_tmp),
+                web_dir=Path(web_tmp),
+                photo_count=7,
+                app_start_monotonic=0.0,
+                photo_url_prefix="http://192.168.0.10",
+                protected_photo_filenames=("beispiel_1.jpg",),
+                protected_web_filenames=("testbild.png",),
             )
-        self.assertEqual(len(lines), 5)
+        self.assertEqual(len(lines), 7)
         self.assertTrue(all(isinstance(line, str) and line for line in lines))
 
 

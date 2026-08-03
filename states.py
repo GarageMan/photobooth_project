@@ -14,6 +14,13 @@ class AppState(Enum):
     # Thumbnails) und ein eigener LED-Effekt gelten (siehe led_service.py).
     GALLERY_EMPTY = auto()
     GALLERY_FULLSCREEN = auto()
+    # NEU (Sprint 11, Feature 4): aus GALLERY_FULLSCREEN per Doppeltap auf
+    # das Foto ODER per Icon "QR-Code anfordern" erreichbar - zeigt den
+    # QR-Code des Downloadlinks fuer GENAU dieses eine Foto (nicht mehr
+    # nur fuer das zuletzt aufgenommene, siehe qr_service.py). Schliesst
+    # sich nach gallery_qr_seconds automatisch oder per "Zurueck" wieder,
+    # zurueck zu GALLERY_FULLSCREEN (Foto bleibt dabei ausgewaehlt).
+    GALLERY_PHOTO_QR = auto()
     PHOTO_INTRO = auto()
     PHOTO_PREVIEW = auto()
     COUNTDOWN = auto()
@@ -40,6 +47,13 @@ class AppState(Enum):
     ADMIN_MENU = auto()
     # NEU (4.3): Diagnose-Unterseite des Service-Menues.
     ADMIN_STATUS = auto()
+    # NEU (Sprint 11, Feature 2): ISO/Blende direkt ueber die USB-Verbindung
+    # anpassen, ohne die Kamera aus dem Gehaeuse zu nehmen (siehe
+    # hw_camera_settings_provider.py). Werte/Auswahllisten werden synchron
+    # beim Betreten gelesen (kein Hintergrund-Thread noetig - einzelne
+    # gphoto2-Config-Calls sind ueblicherweise deutlich unter einer
+    # Sekunde), +/- wandert in der von der Kamera gelieferten choices-Liste.
+    ADMIN_CAMERA_SETTINGS = auto()
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen nach "App neu
     # starten" - gibt sichtbares Feedback, bevor die App sich beendet
     # (die Auto-Restart-Schleife in start_fotobox.sh startet sie danach
@@ -80,3 +94,4 @@ class AppState(Enum):
     ADMIN_USB_RESOLVE = auto()
     # NEU (4.7): Ergebnis-Screen nach dem Export.
     ADMIN_USB_EXPORT_DONE = auto()
+

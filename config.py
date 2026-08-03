@@ -174,7 +174,14 @@ class TimeoutConfig:
     gallery_idle_seconds: float = 180.0
     gallery_fullscreen_idle_seconds: float = 30.0
     review_idle_seconds: float = 180.0
-    qr_display_seconds: float = 60.0
+    # GEAENDERT (Sprint 11, Feature 3): dieser Screen zeigt seit diesem Umbau
+    # keinen QR-Code mehr, nur noch einen kurzen Hinweistext (siehe
+    # state_machine._SAVE_CONFIRMATION_TEXT) - der Name bleibt bewusst
+    # unveraendert (kein Enum-Rename, siehe dortiger Kommentar). Von 60s auf
+    # 20s verkuerzt: zum Lesen eines kurzen Absatzes reicht das, ohne den
+    # Ablauf unnoetig zu verlangsamen (anders als vorher, wo Gaeste Zeit zum
+    # Scannen eines QR-Codes brauchten).
+    qr_display_seconds: float = 20.0
     delete_confirm_seconds: float = 30.0
     attract_frame_seconds: float = 5.0
     countdown_seconds: tuple[int, ...] = (5, 4, 3, 2, 1)
@@ -202,6 +209,18 @@ class TimeoutConfig:
     # Dateien einzeln durchgegangen werden - reissen 30s zu leicht mitten
     # in der Bedienung ab.
     admin_usb_idle_seconds: float = 120.0
+    # NEU (Sprint 11, Feature 4): so lange bleibt der QR-Code eines einzelnen
+    # Galerie-Fotos eingeblendet (Doppeltap/Icon in GALLERY_FULLSCREEN),
+    # bevor automatisch zurueck zur Fotoansicht gewechselt wird - wie vom
+    # Nutzer vorgegeben.
+    gallery_qr_seconds: float = 30.0
+    # NEU (Sprint 11, Feature 1): Cold-Start-Schaetzwert fuer die Dauer der
+    # Bilduebertragung (Ausloesen + gphoto2-Download), bevor die erste echte
+    # Messung vorliegt. Wird danach laufend durch echte Stoppuhr-Messungen
+    # ersetzt/verfeinert (siehe capture_timing.py) - steuert Tempo der
+    # Uebertragungs-Animation (Datei-Symbol + LED-Punkt), damit beide
+    # halbwegs synchron zur tatsaechlichen Uebertragung laufen.
+    capture_transfer_estimate_seconds: float = 4.0
 
 
 @dataclass(frozen=True)
@@ -376,6 +395,9 @@ class AppConfig:
     cache_dir: Path = CACHE_DIR
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
+    # NEU (Sprint 11, Feature 1): persistierte Schaetzung der
+    # Bilduebertragungsdauer, siehe capture_timing.py.
+    capture_timing_file: Path = DATA_DIR / "capture_timing.json"
     # Praefix fuer die Dateinamen der gespeicherten Fotos (siehe
     # hw_capture_provider.py _fetch_image). Ergebnis-Schema:
     # {photo_prefix}{JJJJMMTTHHMMSS}.jpg, z.B. "mina_20260711153045.jpg".

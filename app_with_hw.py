@@ -40,8 +40,11 @@ from pathlib import Path
 
 import pygame
 
-from camera_capture import CameraCaptureService
+from camera_capture import CameraCaptureService, CaptureResult
 from camera_preview import CameraPreviewService
+import capture_timing  # NEU (Sprint 11, Feature 1)
+from hw_capture_provider import CaptureProgress  # NEU (Sprint 11, Feature 1)
+import hw_camera_settings_provider  # NEU (Sprint 11, Feature 2)
 from config import DEFAULT_CONFIG, AppConfig
 from events import AppEvent, EventType
 from gallery_service import GalleryService
@@ -182,10 +185,27 @@ class PhotoboothApp:
         # Interne Zustandsvariablen
         self.touch_start_x: int | None = None
         self.touch_start_y: int | None = None
+        # NEU (Sprint 11, Feature 4): Doppeltap-Erkennung in
+        # GALLERY_FULLSCREEN (siehe _handle_pygame_event).
+        self._last_fullscreen_tap_time: float | None = None
+        self._last_fullscreen_tap_pos: tuple[int, int] | None = None
         self._qr_surface: pygame.Surface | None = None
         self.running = True
         # NEU (4.3): Startzeitpunkt fuer die Laufzeit-Anzeige im Status-Screen.
         self._app_start_monotonic = time.monotonic()
+        # NEU (Sprint 11, Feature 1): Ausloesen + gphoto2-Download laufen
+        # jetzt in einem Hintergrund-Thread (vorher blockierend im Haupt-
+        # thread - siehe _capture_start_transfer/_do_capture), damit
+        # Renderer und LED-Ring waehrend der Uebertragung weiter animieren
+        # koennen. Gleiches Poll-Muster wie beim Loesch-/USB-Export-Thread.
+        self._capture_thread: threading.Thread | None = None
+        self._capture_progress: CaptureProgress | None = None
+        # Aktuelle Sollzeit-Schaetzung fuer die Uebertragungs-Animation -
+        # startet mit dem zuletzt persistierten Wert (siehe
+        # capture_timing.py), wird nach jeder echten Aufnahme aktualisiert.
+        self._capture_expected_duration = capture_timing.load_expected_duration(
+            config.capture_timing_file, config.timeouts.capture_transfer_estimate_seconds,
+        )
         # NEU (Speicherplatz-Alarm): 0.0 sorgt dafuer, dass die allererste
         # Pruefung sofort beim Start laeuft (nicht erst nach
         # check_interval_seconds Wartezeit).
@@ -264,7 +284,14 @@ class PhotoboothApp:
                 # 5. Frame rendern
                 fps = self.clock.get_fps()
                 preview_frame = self._get_preview_frame()
-                self.renderer.render(self.model, fps, preview_frame=preview_frame, qr_surface=self._qr_surface)
+                # NEU (Sprint 11, Feature 1): Fortschritt der laufenden
+                # Bilduebertragung (0..1, None wenn gerade keine Uebertragung
+                # laeuft) - treibt die Datei-Symbol-Animation im Renderer.
+                capture_progress = self._capture_progress_fraction(now)
+                self.renderer.render(
+                    self.model, fps, preview_frame=preview_frame, qr_surface=self._qr_surface,
+                    capture_progress=capture_progress,
+                )
 
                 self.clock.tick(self.config.screen.target_fps)
 
@@ -320,6 +347,29 @@ class PhotoboothApp:
                 if dx > 100:
                     self.dispatch(AppEvent(EventType.SWIPE_RIGHT, source="touch"))
                     return
+                # NEU (Sprint 11, Feature 4): Doppeltap auf das Foto blendet
+                # (gleichwertig zum Icon "QR-Code anfordern", siehe
+                # _map_click_to_event) den QR-Code fuer dieses eine Foto
+                # ein. Nur bei einem "stillen" Tap relevant (kein Swipe,
+                # s.o.) - ein Einzeltap in der Bildmitte loeste bisher schon
+                # nichts aus (siehe _map_click_to_event), daher hier ohne
+                # Regressionsrisiko fuer bestehendes Verhalten.
+                if abs(dx) < 30 and abs(dy) < 30:
+                    tap_time = time.monotonic()
+                    is_double_tap = (
+                        self._last_fullscreen_tap_time is not None
+                        and tap_time - self._last_fullscreen_tap_time < 0.4
+                        and self._last_fullscreen_tap_pos is not None
+                        and abs(start_pos[0] - self._last_fullscreen_tap_pos[0]) < 40
+                        and abs(start_pos[1] - self._last_fullscreen_tap_pos[1]) < 40
+                    )
+                    if is_double_tap:
+                        self._last_fullscreen_tap_time = None
+                        self._last_fullscreen_tap_pos = None
+                        self.dispatch(AppEvent(EventType.TAP_GALLERY_QR, source="touch"))
+                        return
+                    self._last_fullscreen_tap_time = tap_time
+                    self._last_fullscreen_tap_pos = start_pos
             elif self.model.state == AppState.GALLERY_GRID:
                 if dy < -80:
                     self.dispatch(AppEvent(EventType.SWIPE_UP, source="touch"))
@@ -444,6 +494,15 @@ class PhotoboothApp:
             "usb_conflicts_overwrite_all": AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_OVERWRITE_ALL, source="touch"),
             "usb_conflicts_rename_all":    AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_RENAME_ALL, source="touch"),
             "usb_conflicts_apply":         AppEvent(EventType.TAP_ADMIN_USB_CONFLICTS_APPLY, source="touch"),
+            # NEU (Sprint 11, Feature 4): Icon "QR-Code anfordern" unten
+            # rechts in GALLERY_FULLSCREEN - gleichwertige Alternative zum
+            # Doppeltap (siehe _handle_pygame_event).
+            "gallery_qr": AppEvent(EventType.TAP_GALLERY_QR, source="touch"),
+            # NEU (Sprint 11, Feature 2): +/- fuer ISO/Blende im Service-Menue.
+            "admin_camera_iso_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_ISO_DOWN, source="touch"),
+            "admin_camera_iso_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_ISO_UP, source="touch"),
+            "admin_camera_aperture_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN, source="touch"),
+            "admin_camera_aperture_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_APERTURE_UP, source="touch"),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -696,6 +755,11 @@ class PhotoboothApp:
             # OHNE ADMIN_RESTART_PENDING - der hat einen eigenen, nicht
             # abbrechbaren Timer, siehe oben.)
             AppState.ADMIN_STATUS,
+            # NEU (Sprint 11, Feature 2): Kamera-Einstellungen - gleiches
+            # Idle-Verhalten wie ADMIN_STATUS (schliesst sich nach
+            # admin_menu_idle_seconds automatisch, siehe
+            # state_machine._go_admin_camera_settings).
+            AppState.ADMIN_CAMERA_SETTINGS,
             # NEU (4.4): Sicherheitsabfrage vor dem Loeschen - bleibt sie
             # unbeantwortet stehen, ist "nicht loeschen" die richtige
             # Annahme. (Bewusst OHNE ADMIN_DELETE_RUNNING/_DONE: dort ist
@@ -734,11 +798,23 @@ class PhotoboothApp:
             self.model = self.model.evolve(
                 timers=replace(self.model.timers, capture_trigger_deadline=None)
             )
-            self._do_capture(now)
+            self._capture_start_transfer(now)
+        # NEU (Sprint 11, Feature 1): pollt den Hintergrund-Thread aus
+        # _capture_start_transfer - gleiches Poll-Prinzip wie beim Loesch-/
+        # USB-Export-Thread (_delete_result/_usb_job_result).
+        elif (
+            state == AppState.CAPTURE_PENDING
+            and self._capture_progress is not None
+            and self._capture_progress.done
+        ):
+            self._finish_capture_transfer(now)
         elif state == AppState.DELETE_CONFIRM and self._due(timers.delete_deadline, now):
             self.dispatch(AppEvent(EventType.DELETE_TIMEOUT, source="timer"), now)
         elif state == AppState.QR_DISPLAY and self._due(timers.qr_deadline, now):
             self.dispatch(AppEvent(EventType.QR_TIMEOUT, source="timer"), now)
+        # NEU (Sprint 11, Feature 4): analog zu QR_DISPLAY/qr_deadline oben.
+        elif state == AppState.GALLERY_PHOTO_QR and self._due(timers.gallery_qr_deadline, now):
+            self.dispatch(AppEvent(EventType.GALLERY_QR_TIMEOUT, source="timer"), now)
 
     def _advance_countdown(self, now: float) -> None:
         current = self.model.ui.countdown_value or 0
@@ -752,22 +828,60 @@ class PhotoboothApp:
 
     # -- Kamera-Aufnahme -------------------------------------------------------
 
-    def _do_capture(self, now: float) -> None:
-        """Foto auslösen und Ergebnis als Event einliefern."""
-        # LED-Ring VOR dem blockierenden gphoto2-Aufruf explizit auf "gruen,
-        # Verarbeitung laeuft" setzen: _sync_led() laeuft im Hauptloop erst
-        # NACH _emit_due_timers() (das diese Methode hier aufruft). Waehrend
-        # capture_photo() blockiert (mehrere Sekunden gphoto2-Download),
-        # kaeme _sync_led() nicht mehr rechtzeitig zum Zug, weil der State
-        # bis zum naechsten Durchlauf schon auf REVIEW steht. Der LED-
-        # Hintergrund-Thread liest den Effekt aber unabhaengig vom Haupt-
-        # Thread, daher wirkt das direkte Setzen hier sofort.
-        if self._led_provider is not None:
-            self.led_service.set_effect(LedEffect.CAPTURE_PROCESSING)
-            self._led_provider.set_effect(LedEffect.CAPTURE_PROCESSING)
+    def _capture_start_transfer(self, now: float) -> None:
+        """NEU (Sprint 11, Feature 1): startet den kompletten Aufnahme-
+        Ablauf (Ausloesen inkl. GPIO-Puls + gphoto2-Download,
+        capture_service.capture_photo()) in einem Hintergrund-Thread -
+        vorher blockierte das den Hauptthread komplett (mehrere Sekunden),
+        wodurch weder ein neuer Frame gezeichnet noch der LED-Ring pro
+        Frame aktualisiert werden konnte. Gleiches Poll-Muster wie beim
+        Loesch-/USB-Export-Thread (_start_delete_all/_usb_start_check):
+        der Worker setzt hier am Ende genau eine Referenz
+        (`progress.done = True`), _emit_due_timers pollt sie jeden Frame.
 
-        result = self.capture_service.capture_photo()
-        if result.ok and result.photo_path:
+        `expected_duration` treibt sowohl die Datei-Symbol-Animation im
+        Renderer (_capture_progress_fraction) als auch den wandernden
+        LED-Punkt (_sync_led/LedEffect.CAPTURE_TRANSFER) - beide nutzen
+        denselben, aus fruaheren echten Messungen abgeleiteten Schaetzwert
+        (siehe capture_timing.py), damit sie synchron zueinander laufen.
+        """
+        progress = CaptureProgress(started_at=now, expected_duration=self._capture_expected_duration)
+        self._capture_progress = progress
+
+        def worker() -> None:
+            start = time.monotonic()
+            try:
+                result = self.capture_service.capture_photo()
+            except Exception as exc:  # Sicherheitsnetz - darf den Thread nie stumm sterben lassen
+                result = CaptureResult(ok=False, error_message=str(exc))
+            progress.measured_seconds = time.monotonic() - start
+            progress.result = result
+            progress.done = True  # zuletzt setzen - das ist das Fertigsignal fuer den Hauptloop
+
+        self._capture_thread = threading.Thread(target=worker, name="capture-transfer", daemon=True)
+        self._capture_thread.start()
+
+    def _finish_capture_transfer(self, now: float) -> None:
+        """Wird von _emit_due_timers aufgerufen, sobald der Hintergrund-
+        Thread aus _capture_start_transfer fertig ist. Aktualisiert die
+        persistierte Zeitschaetzung (capture_timing.py - "einfach mal die
+        Uebertragungszeit stoppen") und dispatcht wie vorher CAPTURE_OK/
+        CAPTURE_FAILED."""
+        progress = self._capture_progress
+        self._capture_progress = None
+        result = progress.result if progress is not None else None
+
+        # Nur nach einer ERFOLGREICHEN Uebertragung in die Schaetzung
+        # einfliessen lassen - ein schnell fehlgeschlagener Versuch (z.B.
+        # Kamera nicht erreichbar) wuerde die Zeitschaetzung sonst
+        # faelschlich nach unten ziehen, obwohl gar keine echte Uebertragung
+        # stattgefunden hat.
+        if progress is not None and result is not None and result.ok:
+            self._capture_expected_duration = capture_timing.record_duration(
+                self.config.capture_timing_file, progress.measured_seconds, self._capture_expected_duration,
+            )
+
+        if result is not None and result.ok and result.photo_path:
             self.dispatch(
                 AppEvent(
                     EventType.CAPTURE_OK,
@@ -777,14 +891,22 @@ class PhotoboothApp:
                 now,
             )
         else:
+            message = result.error_message if result is not None and result.error_message else "Aufnahme fehlgeschlagen."
             self.dispatch(
-                AppEvent(
-                    EventType.CAPTURE_FAILED,
-                    payload={"message": result.error_message or "Aufnahme fehlgeschlagen."},
-                    source="capture",
-                ),
+                AppEvent(EventType.CAPTURE_FAILED, payload={"message": message}, source="capture"),
                 now,
             )
+
+    def _capture_progress_fraction(self, now: float) -> float | None:
+        """NEU (Sprint 11, Feature 1): 0..1 waehrend eine Uebertragung
+        laeuft (fuer die Datei-Symbol-Animation im Renderer), sonst None.
+        Bleibt bei 1.0 stehen, falls die echte Uebertragung laenger dauert
+        als geschaetzt (kein Ueberschiessen/Zittern der Animation)."""
+        progress = self._capture_progress
+        if progress is None or progress.expected_duration <= 0:
+            return None
+        elapsed = now - progress.started_at
+        return max(0.0, min(1.0, elapsed / progress.expected_duration))
 
     # -- Actions ---------------------------------------------------------------
 
@@ -851,6 +973,14 @@ class PhotoboothApp:
                 self._usb_start_clear_and_check()
             elif action == "usb_apply_resolutions":            # NEU (6b)
                 self._usb_start_resolve()
+            elif action == "generate_gallery_qr":              # NEU (Sprint 11, Feature 4)
+                self._generate_gallery_qr()
+            elif action == "read_admin_camera_settings":       # NEU (Sprint 11, Feature 2)
+                self._read_admin_camera_settings()
+            elif action == "set_admin_camera_iso":             # NEU (Sprint 11, Feature 2)
+                self._set_admin_camera_setting(iso=self.model.ui.admin_camera_iso)
+            elif action == "set_admin_camera_aperture":        # NEU (Sprint 11, Feature 2)
+                self._set_admin_camera_setting(aperture=self.model.ui.admin_camera_aperture)
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -865,8 +995,13 @@ class PhotoboothApp:
         except Exception as exc:
             print(f"[App] Export fehlgeschlagen: {exc}")
 
-    def _generate_qr_surface(self) -> None:
-        filename = self.model.session.qr_filename
+    def _generate_qr_surface(self, filename: str | None = None) -> None:
+        """GEAENDERT (Sprint 11, Feature 4): `filename` ist jetzt optional
+        parametrisierbar (vorher immer `session.qr_filename`) - wird von
+        `_generate_gallery_qr()` fuer den QR-Code eines BELIEBIGEN, bereits
+        gespeicherten Galerie-Fotos wiederverwendet, nicht nur fuer das
+        zuletzt aufgenommene."""
+        filename = filename or self.model.session.qr_filename
         if not filename:
             self._qr_surface = None
             return
@@ -878,6 +1013,28 @@ class PhotoboothApp:
         except Exception as exc:
             print(f"[App] QR-Code konnte nicht erzeugt werden: {exc}")
             self._qr_surface = None
+
+    def _generate_gallery_qr(self) -> None:
+        """NEU (Sprint 11, Feature 4): QR-Code fuer das aktuell in
+        GALLERY_FULLSCREEN ausgewaehlte Foto (nicht notwendigerweise das
+        zuletzt aufgenommene). Da jedes gespeicherte Foto bereits beim
+        Speichern (TAP_SAVE -> "export_photo") unter demselben Dateinamen
+        ins Web-Verzeichnis kopiert wurde, reicht im Normalfall der reine
+        Dateiname - der defensive Re-Export deckt den Randfall ab, dass ein
+        Foto aus irgendeinem Grund (z.B. aelterer Bestand vor dieser
+        Funktion) noch nicht im Web-Verzeichnis liegt."""
+        index = self.model.ui.selected_gallery_index
+        photos = self.model.session.photos
+        if index is None or not (0 <= index < len(photos)):
+            self._qr_surface = None
+            return
+        path = photos[index]
+        name = Path(path).name
+        try:
+            self.storage_service.export_to_web(path, target_name=name)
+        except Exception as exc:
+            print(f"[App] Galerie-Foto konnte nicht (erneut) exportiert werden: {exc}")
+        self._generate_qr_surface(filename=name)
 
     def _delete_photo(self, previous_model: AppModel) -> None:
         # Bewusst previous_model (Stand VOR der Transition) statt
@@ -1347,6 +1504,44 @@ class PhotoboothApp:
             )
         self.dispatch(AppEvent(EventType.ADMIN_STATUS_READY, payload={"lines": lines}, source="diagnostics"))
 
+    def _read_admin_camera_settings(self) -> None:
+        # NEU (Sprint 11, Feature 2): synchron ermittelt (ein gphoto2-
+        # get_config()-Aufruf, ueblicherweise deutlich unter einer Sekunde,
+        # siehe hw_camera_settings_provider.py) - ausgeloest durch einen
+        # bewussten Tap im Service-Menue, gleiches Prinzip wie
+        # _collect_admin_status.
+        snapshot = hw_camera_settings_provider.read_current(self._camera_lock)
+        self.dispatch(AppEvent(
+            EventType.ADMIN_CAMERA_SETTINGS_READY,
+            payload={
+                "available": snapshot.available,
+                "error": snapshot.error,
+                "iso": snapshot.iso,
+                "iso_choices": snapshot.iso_choices,
+                "aperture": snapshot.aperture,
+                "aperture_choices": snapshot.aperture_choices,
+            },
+            source="camera_settings",
+        ))
+
+    def _set_admin_camera_setting(self, iso: str | None = None, aperture: str | None = None) -> None:
+        # NEU (Sprint 11, Feature 2): der neue Wert steht bereits optimistisch
+        # in model.ui (state_machine._step_admin_camera_iso/_aperture hat ihn
+        # vor dem Dispatch dieser Aktion gesetzt) - hier wird er nur noch an
+        # die Kamera durchgereicht. Schlaegt das Setzen fehl, wird bewusst
+        # NICHT einfach eine Fehlermeldung angezeigt und der (evtl. falsche)
+        # optimistische Wert stehen gelassen - stattdessen wird sofort neu
+        # von der Kamera gelesen, damit der Screen garantiert den TATSAECHLICH
+        # aktiven Wert zeigt, nicht nur den zuletzt angeforderten.
+        if iso is not None:
+            ok, error = hw_camera_settings_provider.set_iso(self._camera_lock, iso)
+        elif aperture is not None:
+            ok, error = hw_camera_settings_provider.set_aperture(self._camera_lock, aperture)
+        else:
+            return
+        if not ok:
+            print(f"[App] Kamera-Einstellung konnte nicht gesetzt werden: {error}")
+            self._read_admin_camera_settings()
 
     # -- LED & Button-LED synchronisieren --------------------------------------
 
@@ -1376,6 +1571,9 @@ class PhotoboothApp:
 
         state = self.model.state
         now = time.monotonic()
+        # NEU (Sprint 11, Feature 1): Sollzeit fuer zeitgesteuerte Effekte
+        # (aktuell nur CAPTURE_TRANSFER, siehe CAPTURE_PENDING-Zweig unten).
+        duration: float | None = None
 
         # NEU (Speicherplatz-Alarm): auf den beiden Einstiegs-Screens (dort,
         # wo die Aufnahme-Sperre in state_machine.py auch tatsaechlich
@@ -1409,23 +1607,35 @@ class PhotoboothApp:
                 # Ziffer 1 (oder Uebergang) - weiss blitzen, siehe Doku
                 effect = LedEffect.COUNTDOWN_1_FLASH
         elif state == AppState.CAPTURE_PENDING:
-            # Das Weiss-Blitzen aus Ziffer "1" laeuft in CAPTURE_PENDING noch
-            # kurz weiter, geht aber rechtzeitig vor dem eigentlichen GPIO-
-            # Ausloeseimpuls (capture_trigger_deadline) wieder aus - keine
-            # Reflexionen in Brillen im Moment der Aufnahme. CAPTURE_PROCESSING
-            # (gruen) wird NICHT hier gesetzt, sondern direkt in _do_capture(),
-            # da diese Methode waehrend des blockierenden gphoto2-Aufrufs
-            # nicht mehr rechtzeitig zum Zug kaeme.
-            deadline = self.model.timers.capture_trigger_deadline
-            if deadline is not None and (deadline - now) > 0.25:
-                effect = LedEffect.COUNTDOWN_1_FLASH
+            if self._capture_progress is not None:
+                # NEU (Sprint 11, Feature 1): Uebertragung laeuft bereits im
+                # Hintergrund-Thread (siehe _capture_start_transfer) - der
+                # wandernde gruene Punkt ersetzt das vorherige statische
+                # CAPTURE_PROCESSING. Anders als vorher kann _sync_led()
+                # hier jeden Frame normal durchlaufen, weil der Hauptthread
+                # waehrend der Uebertragung nicht mehr blockiert.
+                effect = LedEffect.CAPTURE_TRANSFER
+                duration = self._capture_progress.expected_duration
             else:
-                effect = LedEffect.PRE_TRIGGER_DARK
+                # Das Weiss-Blitzen aus Ziffer "1" laeuft in CAPTURE_PENDING
+                # noch kurz weiter, geht aber rechtzeitig vor dem eigentlichen
+                # GPIO-Ausloeseimpuls (capture_trigger_deadline) wieder aus -
+                # keine Reflexionen in Brillen im Moment der Aufnahme.
+                deadline = self.model.timers.capture_trigger_deadline
+                if deadline is not None and (deadline - now) > 0.25:
+                    effect = LedEffect.COUNTDOWN_1_FLASH
+                else:
+                    effect = LedEffect.PRE_TRIGGER_DARK
         elif state == AppState.REVIEW:
             effect = LedEffect.REVIEW_BREATHE
         elif state == AppState.DELETE_CONFIRM:
             effect = LedEffect.DELETE_CONFIRM
         elif state == AppState.QR_DISPLAY:
+            effect = LedEffect.QR
+        elif state == AppState.GALLERY_PHOTO_QR:
+            # NEU (Sprint 11, Feature 4): gleicher Effekt/gleiche Bedeutung
+            # wie QR_DISPLAY ("ein QR-Code ist gerade auf dem Schirm") -
+            # kein neuer LedEffect noetig.
             effect = LedEffect.QR
         elif state == AppState.GALLERY_GRID:
             effect = LedEffect.GALLERY_GRID_BREATHE
@@ -1444,6 +1654,10 @@ class PhotoboothApp:
             effect = LedEffect.INSTRUCTIONS_WAVE
         elif state == AppState.ADMIN_STATUS:
             # NEU (4.3): gleiche ruhige Welle wie das Menue selbst.
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_CAMERA_SETTINGS:
+            # NEU (Sprint 11, Feature 2): gleiche ruhige Welle wie die
+            # uebrigen Service-Menue-Unterseiten (ADMIN_STATUS).
             effect = LedEffect.INSTRUCTIONS_WAVE
         elif state == AppState.ADMIN_RESTART_PENDING:
             # NEU (4.3): gruen wie waehrend der Kamera-Verarbeitung -
@@ -1497,8 +1711,8 @@ class PhotoboothApp:
         else:
             effect = LedEffect.OFF
 
-        self.led_service.set_effect(effect)
-        self._led_provider.set_effect(effect)
+        self.led_service.set_effect(effect, duration=duration)
+        self._led_provider.set_effect(effect, duration=duration)
 
     def _sync_button_led(self) -> None:
         """
@@ -1547,6 +1761,15 @@ class PhotoboothApp:
             # NEU (4.3): Diagnoseseite und Neustart-Zwischenscreen - gleiche
             # Begruendung wie ADMIN_MENU.
             AppState.ADMIN_STATUS, AppState.ADMIN_RESTART_PENDING,
+            # NEU (Sprint 11, Feature 2): gleiche Begruendung - der Taster
+            # loest hier keine ISO-/Blendenaenderung aus.
+            AppState.ADMIN_CAMERA_SETTINGS,
+            # NEU (Sprint 11, Feature 4): waehrend die QR-Karte fuer EIN
+            # Foto angezeigt wird, soll ein Tasterdruck (anders als sonst in
+            # der Galerie) KEINE neue Aufnahme starten - state_machine.
+            # _handle_gallery_photo_qr behandelt BUTTON_PRESS bewusst nicht,
+            # das "Bereitschafts"-Blinken waere hier also irrefuehrend.
+            AppState.GALLERY_PHOTO_QR,
             # NEU (4.4): waehrend Abfrage, Loeschlauf und Ergebnis darf der
             # Taster nichts ausloesen.
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,

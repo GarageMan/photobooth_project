@@ -19,6 +19,9 @@ class TimerState:
     preview_auto_countdown_deadline: float | None = None
     delete_deadline: float | None = None
     qr_deadline: float | None = None
+    # NEU (Sprint 11, Feature 4): AppState.GALLERY_PHOTO_QR schliesst sich
+    # nach dieser Zeit automatisch wieder (siehe config.timeouts.gallery_qr_seconds).
+    gallery_qr_deadline: float | None = None
     attract_switch_deadline: float | None = None
     countdown_deadline: float | None = None
     capture_trigger_deadline: float | None = None
@@ -95,6 +98,17 @@ class UiState:
     storage_alarm_level: int = 0
     storage_free_percent: float = 100.0
     storage_estimated_remaining_photos: int = 0
+    # --- Kamera-Einstellungen (Sprint 11, Feature 2) --------------------
+    # NEU: ISO/Blende direkt ueber USB, siehe hw_camera_settings_provider.py.
+    # available=False deckt sowohl "gphoto2 fehlt" als auch "Kamera nicht
+    # erreichbar" ab - admin_camera_error traegt dann einen fuer Lutz
+    # verstaendlichen Grund (siehe renderer._draw_admin_camera_settings).
+    admin_camera_available: bool = True
+    admin_camera_error: str | None = None
+    admin_camera_iso: str = ""
+    admin_camera_iso_choices: tuple[str, ...] = ()
+    admin_camera_aperture: str = ""
+    admin_camera_aperture_choices: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

@@ -13,9 +13,12 @@ Aufteilung (Rechtecke in layout.py, Beschriftungen im Renderer,
 Event-Zuordnung in app_with_hw.py) muessten drei Dateien synchron
 gehalten werden.
 
-Raster: 2 Spalten x 3 Zeilen. Der destruktivste Punkt ("Alle Bilder
-loeschen") liegt bewusst unten rechts, in der Ecke und rot eingefaerbt,
-raeumlich weit weg von "Zurueck" unten links.
+Raster: 2 Spalten x 4 Zeilen (GEAENDERT, Sprint 11 Feature 2: vorher
+2x3 - "Kamera-Einstellungen" kam als neue Zeile OBERHALB von "Zurueck"/
+"Alle Bilder loeschen" hinzu, damit deren bewusste Eck-Platzierung ganz
+unten erhalten bleibt, siehe naechster Absatz). Der destruktivste Punkt
+("Alle Bilder loeschen") liegt bewusst unten rechts, in der Ecke und rot
+eingefaerbt, raeumlich weit weg von "Zurueck" unten links.
 
 Etappen: Punkte, deren Funktion noch nicht implementiert ist, stehen auf
 enabled=False - sie werden ausgegraut gezeichnet und reagieren nicht auf
@@ -80,13 +83,27 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         row=1,
         enabled=True,           # Etappe 1 - bereits funktionsfaehig
     ),
+    # NEU (Sprint 11, Feature 2): eigene Zeile OBERHALB von "Zurück"/"Alle
+    # Bilder löschen" (row=2 statt deren row=2 von frueher - diese beiden
+    # ruecken auf row=3), damit die bewusste Platzierung "Loeschen unten
+    # rechts, weit weg von Zurueck" unveraendert bleibt. Spalte 1/row 2
+    # bleibt bewusst frei (kein zweiter neuer Menuepunkt in diesem Sprint).
+    AdminMenuItem(
+        key="camera_settings",
+        label="Kamera-Einstellungen",
+        event_type=EventType.TAP_ADMIN_CAMERA_SETTINGS,
+        color=(0, 90, 130),
+        column=0,
+        row=2,
+        enabled=True,
+    ),
     AdminMenuItem(
         key="back",
         label="Zurück",
         event_type=EventType.TAP_BACK,
         color=(100, 100, 100),
         column=0,
-        row=2,
+        row=3,
         enabled=True,           # Etappe 1
     ),
     AdminMenuItem(
@@ -95,7 +112,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         event_type=EventType.TAP_ADMIN_DELETE_ALL,
         color=(150, 0, 0),
         column=1,
-        row=2,
+        row=3,
         enabled=True,           # Etappe 3 - implementiert
     ),
 )
@@ -107,11 +124,18 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
 # Oberkante 0.40: darueber zeichnet render() bereits den Fenstertitel
 # (y=60) und den status_text (y=240, Unterkante ca. 272px bei 720px
 # Hoehe) - 0.40*720 = 288px laesst dazu etwas Luft.
+#
+# GEAENDERT (Sprint 11, Feature 2): _ROW_H/_GAP_Y verkleinert (vorher
+# 0.155/0.025), damit die neue vierte Zeile noch bis ca. y=0.96 passt -
+# gleiches Verhaeltnis Zeilenhoehe:Abstand wie zuvor, nur proportional
+# kleiner. Sichtpruefung auf echter Hardware empfohlen (siehe Abschluss-
+# bericht) - hier im Sandkasten nur pygame-Rechteck-Geometrie pruefbar,
+# kein echtes Display.
 _MARGIN_X = 0.06
 _COLUMN_W = 0.42
 _TOP = 0.40
-_ROW_H = 0.155
-_GAP_Y = 0.025
+_ROW_H = 0.125
+_GAP_Y = 0.02
 
 
 def build_admin_rects(width: int, height: int) -> dict[str, pygame.Rect]:

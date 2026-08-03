@@ -14,6 +14,23 @@ from shutdown_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, kein
 # des Puffers). Keine Geheimhaltung noetig, daher Modulkonstante statt config.
 _MAX_PIN_LENGTH = 12
 
+# NEU (Sprint 11, Feature 3): Ersetzt die bisherige sofortige QR-Code-Anzeige
+# nach dem Speichern (AppState.QR_DISPLAY zeigt seit diesem Umbau KEIN Bild
+# mehr, nur noch diesen Hinweistext - siehe renderer.py). Gruende: Gaeste
+# haben beim 150-Jahre-Event durchgaengig nicht verstanden, dass (a) dieser
+# QR-Code nur fuer das eine gerade aufgenommene Bild gilt, (b) man sich davor
+# ins Gaeste-WLAN einloggen muss, und (c) viele waren zu langsam zum Scannen,
+# bevor der Screen weiterschaltete. Der QR-Code je Einzelbild ist jetzt
+# stattdessen jederzeit aus der Galerie heraus abrufbar (siehe Feature 4,
+# AppState.GALLERY_PHOTO_QR).
+_SAVE_CONFIRMATION_TEXT = (
+    "Das Bild kann in der Galerie betrachtet werden. Dort hast du die "
+    "Möglichkeit, einen QR-Code für jedes Bild aufzurufen und darüber "
+    "einzelne Bilder von der Fotobox auf dein Mobiltelefon herunter zu "
+    "laden. Die Bilder liegen NICHT auf einem Web-Server, sondern "
+    "ausschließlich hier auf der Fotobox!"
+)
+
 
 class StateMachine:
     def __init__(self, config: AppConfig) -> None:
@@ -149,7 +166,37 @@ class StateMachine:
             return TransitionResult(model=model.evolve(ui=new_ui))
         if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
             return self._go_photo_intro(model, now)
+        # NEU (Sprint 11, Feature 4): Doppeltap auf das Foto oder das Icon
+        # "QR-Code anfordern" (beide loesen dasselbe Event aus, siehe
+        # app_with_hw.py) - QR-Code fuer GENAU dieses Foto einblenden.
+        if event.type == EventType.TAP_GALLERY_QR and photo_count:
+            return self._go_gallery_photo_qr(model, now)
         return TransitionResult(model=model)
+
+    # NEU (Sprint 11, Feature 4): eigener Zustand statt eines Ueberlagerns
+    # von GALLERY_FULLSCREEN, damit Ein-/Austritt (Timer, Actions) wie bei
+    # den uebrigen Zustaenden ueber die State Machine laufen, nicht als
+    # renderer-interner UI-Flag.
+    def _handle_gallery_photo_qr(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_BACK, EventType.GALLERY_QR_TIMEOUT}:
+            timers = replace(
+                model.timers,
+                gallery_qr_deadline=None,
+                idle_deadline=now + self.config.timeouts.gallery_fullscreen_idle_seconds,
+            )
+            return TransitionResult(model=model.evolve(state=AppState.GALLERY_FULLSCREEN, timers=timers))
+        return TransitionResult(model=model)
+
+    def _go_gallery_photo_qr(self, model: AppModel, now: float) -> TransitionResult:
+        timers = replace(
+            model.timers,
+            gallery_qr_deadline=now + self.config.timeouts.gallery_qr_seconds,
+            idle_deadline=None,
+        )
+        return TransitionResult(
+            model=model.evolve(state=AppState.GALLERY_PHOTO_QR, timers=timers),
+            actions=("generate_gallery_qr", "set_led_qr"),
+        )
 
     def _handle_photo_preview(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.TAP_CANCEL:
@@ -209,10 +256,16 @@ class StateMachine:
                 last_saved_photo_path=model.session.current_photo_path,
             )
             timers = replace(model.timers, qr_deadline=now + self.config.timeouts.qr_display_seconds)
-            ui = replace(model.ui, status_text="")
+            # GEAENDERT (Sprint 11, Feature 3): kein sofortiger QR-Code mehr,
+            # siehe _SAVE_CONFIRMATION_TEXT oben. "export_photo" bleibt
+            # bestehen - kopiert das Foto weiterhin unter demselben Dateinamen
+            # ins Web-Verzeichnis, das braucht der spaetere Foto-QR aus der
+            # Galerie (Feature 4, AppState.GALLERY_PHOTO_QR). "generate_qr"
+            # entfaellt, da auf diesem Screen kein QR-Bild mehr gezeichnet wird.
+            ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT)
             return TransitionResult(
                 model=model.evolve(state=AppState.QR_DISPLAY, session=session, timers=timers, ui=ui),
-                actions=("export_photo", "generate_qr", "set_led_qr", "stop_preview"),
+                actions=("export_photo", "set_led_qr", "stop_preview"),
             )
         if event.type == EventType.TAP_DELETE:
             timers = replace(model.timers, delete_deadline=now + self.config.timeouts.delete_confirm_seconds)
@@ -231,13 +284,31 @@ class StateMachine:
         if event.type == EventType.TAP_ABORT_DELETE:
             return TransitionResult(model=model.evolve(state=AppState.REVIEW), actions=("set_led_review",))
         if event.type in {EventType.TAP_CONFIRM_DELETE, EventType.DELETE_TIMEOUT}:
+            # GEAENDERT (Sprint-11-Nachbesserung): nicht mehr zurueck ins
+            # Hauptmenue, sondern direkt in den Countdown - der Gast war
+            # mit der Aufnahme unzufrieden und will in aller Regel sofort
+            # ein neues Foto aufnehmen, ohne erneut ueber PHOTO_INTRO/
+            # PHOTO_PREVIEW gehen zu muessen. Die Live-Vorschau lief seit
+            # dem Uebergang COUNTDOWN->CAPTURE_PENDING nicht mehr (siehe
+            # _handle_countdown, "stop_preview") und wird hier deshalb
+            # explizit neu gestartet - _go_countdown() selbst tut das
+            # bewusst nicht, weil es sonst auf dem regulaeren Weg von
+            # PHOTO_PREVIEW aus die dort bereits laufende Vorschau unnoetig
+            # neu starten wuerde.
             session = replace(model.session, current_photo_path=None)
+            countdown_result = self._go_countdown(model.evolve(session=session), now)
             return TransitionResult(
-                model=self._main_menu_model(model.evolve(session=session), now),
-                actions=("delete_photo", "set_led_main_menu", "stop_preview"),
+                model=countdown_result.model,
+                actions=("delete_photo", "start_preview") + countdown_result.actions,
             )
         return TransitionResult(model=model)
 
+    # GEAENDERT (Sprint 11, Feature 3): trotz des Namens QR_DISPLAY zeigt
+    # dieser Screen seit diesem Umbau KEIN Bild mehr, sondern nur noch den
+    # _SAVE_CONFIRMATION_TEXT-Hinweis (siehe _handle_review/TAP_SAVE oben).
+    # Der Enum-Name wurde bewusst NICHT umbenannt, um den Aenderungsradius
+    # klein zu halten (siehe README "Enum-getriebene Pipelines konsequent
+    # pflegen").
     def _handle_qr_display(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type in {EventType.TAP_CANCEL, EventType.QR_TIMEOUT}:
             return self._go_photo_intro(model, now)
@@ -261,6 +332,8 @@ class StateMachine:
             return self._go_admin_delete_confirm(model, now)
         if event.type == EventType.TAP_ADMIN_USB_EXPORT:      # NEU (4.6)
             return self._go_admin_usb_wait(model, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_SETTINGS:  # NEU (Sprint 11, Feature 2)
+            return self._go_admin_camera_settings(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
         # BUTTON_PRESS wird hier bewusst NICHT behandelt: der Hardware-
@@ -276,6 +349,67 @@ class StateMachine:
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_admin_menu(model, now)
         return TransitionResult(model=model)
+
+    # NEU (Sprint 11, Feature 2): ISO/Blende ueber USB. read_admin_camera_
+    # settings (synchron, siehe app_with_hw._read_admin_camera_settings)
+    # liefert die aktuellen Werte + gueltigen Auswahllisten; +/- wandert
+    # innerhalb dieser Liste. Die eigentliche gphoto2-set_config()-Aktion
+    # laeuft ebenfalls synchron (kein Hintergrund-Thread noetig - einzelne
+    # Config-Calls sind ueblicherweise deutlich unter einer Sekunde) und
+    # liest den bereits optimistisch aktualisierten Wert direkt aus
+    # model.ui (gleiches Prinzip wie "generate_gallery_qr" liest
+    # ui.selected_gallery_index, siehe Feature 4).
+    def _handle_admin_camera_settings(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_CAMERA_SETTINGS_READY:
+            payload = event.payload
+            ui = replace(
+                model.ui,
+                admin_camera_available=bool(payload.get("available", False)),
+                admin_camera_error=payload.get("error"),
+                admin_camera_iso=str(payload.get("iso", "")),
+                admin_camera_iso_choices=tuple(payload.get("iso_choices", ())),
+                admin_camera_aperture=str(payload.get("aperture", "")),
+                admin_camera_aperture_choices=tuple(payload.get("aperture_choices", ())),
+            )
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_CAMERA_ISO_UP and model.ui.admin_camera_iso_choices:
+            return self._step_admin_camera_iso(model, +1)
+        if event.type == EventType.TAP_ADMIN_CAMERA_ISO_DOWN and model.ui.admin_camera_iso_choices:
+            return self._step_admin_camera_iso(model, -1)
+        if event.type == EventType.TAP_ADMIN_CAMERA_APERTURE_UP and model.ui.admin_camera_aperture_choices:
+            return self._step_admin_camera_aperture(model, +1)
+        if event.type == EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN and model.ui.admin_camera_aperture_choices:
+            return self._step_admin_camera_aperture(model, -1)
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    @staticmethod
+    def _step_choice(choices: tuple[str, ...], current: str, direction: int) -> str:
+        """Wandert in `choices` einen Schritt vor/zurueck, ausgehend vom
+        aktuellen Wert. Bleibt am jeweiligen Ende stehen (kein Umlaufen) -
+        Blenden-/ISO-Listen sind geordnet (kleinster..groesster Wert), ein
+        Umlauf waere fuer die Bedienung eher verwirrend als hilfreich.
+        Ist der aktuelle Wert nicht in der Liste (z.B. Kamera meldet einen
+        krummen Zwischenwert), wird bei Index 0 begonnen."""
+        if not choices:
+            return current
+        try:
+            index = choices.index(current)
+        except ValueError:
+            index = 0
+        index = max(0, min(len(choices) - 1, index + direction))
+        return choices[index]
+
+    def _step_admin_camera_iso(self, model: AppModel, direction: int) -> TransitionResult:
+        new_value = self._step_choice(model.ui.admin_camera_iso_choices, model.ui.admin_camera_iso, direction)
+        ui = replace(model.ui, admin_camera_iso=new_value)
+        return TransitionResult(model=model.evolve(ui=ui), actions=("set_admin_camera_iso",))
+
+    def _step_admin_camera_aperture(self, model: AppModel, direction: int) -> TransitionResult:
+        new_value = self._step_choice(model.ui.admin_camera_aperture_choices, model.ui.admin_camera_aperture, direction)
+        ui = replace(model.ui, admin_camera_aperture=new_value)
+        return TransitionResult(model=model.evolve(ui=ui), actions=("set_admin_camera_aperture",))
 
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen vor dem
     # eigentlichen Neustart (analog zu SHUTDOWN_GOODBYE).
@@ -490,6 +624,27 @@ class StateMachine:
         return TransitionResult(
             model=model.evolve(state=AppState.ADMIN_STATUS, ui=ui, timers=timers),
             actions=("collect_admin_status",),
+        )
+
+    # NEU (Sprint 11, Feature 2): Kamera-Einstellungen-Unterseite - gleiches
+    # Muster wie _go_admin_status (Idle-Timer wie im Menue, Werte kommen kurz
+    # darauf synchron per ADMIN_CAMERA_SETTINGS_READY).
+    def _go_admin_camera_settings(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Kamera-Einstellungen",
+            error_text=None,
+            admin_camera_available=True,
+            admin_camera_error=None,
+            admin_camera_iso="",
+            admin_camera_iso_choices=(),
+            admin_camera_aperture="",
+            admin_camera_aperture_choices=(),
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_CAMERA_SETTINGS, ui=ui, timers=timers),
+            actions=("read_admin_camera_settings",),
         )
 
     # NEU (4.3): kurzer Zwischenscreen vor dem eigentlichen App-Neustart.

@@ -117,6 +117,7 @@ class Renderer:
         fps: float,
         preview_frame: pygame.Surface | None = None,
         qr_surface: pygame.Surface | None = None,
+        capture_progress: float | None = None,
     ) -> None:
         # Scroll-Position der Anleitung zuruecksetzen, sobald man neu in
         # diesen State wechselt (nicht bei jedem Frame innerhalb des States).
@@ -164,8 +165,23 @@ class Renderer:
         if model.state == AppState.GALLERY_FULLSCREEN:
             self._draw_gallery_fullscreen(model)
 
+        # NEU (Sprint 11, Feature 4): zeigt das Foto weiterhin im Hintergrund
+        # (gleiche Zeichenmethode wie GALLERY_FULLSCREEN) und legt die
+        # QR-Karte fuer genau dieses Foto darueber.
+        if model.state == AppState.GALLERY_PHOTO_QR:
+            self._draw_gallery_fullscreen(model)
+            self._draw_gallery_photo_qr(qr_surface)
+
         if model.state == AppState.QR_DISPLAY:
-            self._draw_qr_code(qr_surface)
+            self._draw_save_confirmation(model)
+
+        # NEU (Sprint 11, Feature 1): Datei-Symbol-Animation waehrend der
+        # eigentlichen Uebertragung (capture_progress ist nur waehrend
+        # dieser Phase gesetzt - siehe app_with_hw._capture_progress_fraction).
+        # Davor (Ausloeseimpuls, kurzer Vorlauf) zeigt CAPTURE_PENDING
+        # bewusst noch keine Animation, siehe _draw_capture_transfer_animation.
+        if model.state == AppState.CAPTURE_PENDING and capture_progress is not None:
+            self._draw_capture_transfer_animation(capture_progress)
 
         if model.state == AppState.INSTRUCTIONS:
             self._draw_instructions()
@@ -181,6 +197,9 @@ class Renderer:
 
         if model.state == AppState.ADMIN_STATUS:          # NEU (4.3)
             self._draw_admin_status(model)
+
+        if model.state == AppState.ADMIN_CAMERA_SETTINGS:  # NEU (Sprint 11, Feature 2)
+            self._draw_admin_camera_settings(model)
 
         if model.state == AppState.ADMIN_RESTART_PENDING:  # NEU (4.3)
             self._draw_admin_restart_pending(model)
@@ -229,7 +248,21 @@ class Renderer:
         # die den vollen Bildschirm brauchen).
         text_screens = {
             AppState.INSTRUCTIONS, AppState.TERMS, AppState.PIN_ENTRY, AppState.SHUTDOWN_GOODBYE,
+            # NEU (Sprint 11, Feature 3): zeigt seit diesem Umbau keinen
+            # QR-Code mehr, nur noch einen selbst gezeichneten Hinweistext
+            # (siehe _draw_save_confirmation) - Titel/Statuszeile werden
+            # dort selbst gezeichnet, der generische Block soll nicht
+            # zusaetzlich darueberzeichnen.
+            AppState.QR_DISPLAY,
+            # NEU (Sprint-11-Nachbesserung): GALLERY_PHOTO_QR zeichnet seine
+            # eigene Ueberschrift ("QR-Code für dieses Foto", siehe
+            # _draw_gallery_photo_qr) - der generische Fotobox-Titel oben
+            # links wuerde sich sonst genau damit ueberlappen (Feedback-
+            # Screenshot zeigte "150 Jahre-Feier" ueber "QR-Code für dieses
+            # Foto").
+            AppState.GALLERY_PHOTO_QR,
             AppState.ADMIN_MENU, AppState.ADMIN_STATUS, AppState.ADMIN_RESTART_PENDING,  # NEU (4.3)
+            AppState.ADMIN_CAMERA_SETTINGS,  # NEU (Sprint 11, Feature 2)
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,                # NEU (4.4)
             AppState.ADMIN_DELETE_DONE,                                                  # NEU (4.4)
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY, # NEU (4.6)
@@ -249,6 +282,9 @@ class Renderer:
         elif model.state == AppState.ADMIN_STATUS:
             # NEU (4.3): eigener Titel statt des Fotobox-Titels, wie ADMIN_MENU.
             self._draw_text("Status / Diagnose", self.font_title, (255, 255, 255), (60, 60))
+        elif model.state == AppState.ADMIN_CAMERA_SETTINGS:
+            # NEU (Sprint 11, Feature 2): eigener Titel, wie ADMIN_STATUS.
+            self._draw_text("Kamera-Einstellungen", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_DELETE_DONE:
             # NEU (4.4): Ergebnis der Loeschung.
             self._draw_text("Löschen abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
@@ -282,6 +318,46 @@ class Renderer:
                 model.ui.status_text, self.font_status_main_menu, (255, 220, 120),
                 self.config.screen.height // 2,
             )
+        elif model.state == AppState.CAPTURE_PENDING and not hide_all_text:
+            # NEU (Sprint 11, Feature 1): Gaeste haben das grosse weisse
+            # LED-Blitzen (Ausloesemoment) faelschlich fuer den eigentlichen
+            # Aufnahmemoment gehalten und dachten, erst das nachfolgende
+            # gruene Leuchten sei die Aufnahme - dabei laeuft da nur noch
+            # die Uebertragung. Gleicher Sonderfall wie PHOTO_PREVIEW (grosse,
+            # zentrierte Schrift statt der sonst kleinen, linksbuendigen
+            # Statuszeile), oben statt mittig positioniert, damit darunter
+            # noch Platz fuer die Uebertragungs-Animation bleibt (siehe
+            # _draw_capture_transfer_animation).
+            lines = model.ui.status_text.split("\n")
+            # NEU (Sprint-11-Nachbesserung): beide Zeilen MUESSEN dieselbe
+            # Schriftgroesse haben. _blit_center() verkleinert pro Aufruf
+            # unabhaengig, falls eine Zeile zu breit fuer den Bildschirm
+            # waere (siehe _fit_text_font) - bei der ersten, laengeren Zeile
+            # ("Foto wird von der Kamera heruntergeladen") griff das bisher,
+            # bei der kurzen zweiten Zeile ("und verarbeitet...") nicht, was
+            # zu zwei sichtbar unterschiedlichen Schriftgroessen fuehrte.
+            # Fix: einmalig ueber die LAENGSTE Zeile fitten und diese eine
+            # Schriftgroesse fuer alle Zeilen verwenden.
+            max_width = self.config.screen.width - 80
+            fitted_font = self.font_status_main_menu
+            for line in lines:
+                fitted_font = self._fit_text_font(line, fitted_font, max_width)
+            line_height = fitted_font.get_linesize()
+            # Zone unterhalb des Fotobox-Titels (der hier - anders als bei
+            # PHOTO_PREVIEW - bewusst weiter oben stehen bleibt) und
+            # oberhalb der Uebertragungs-Animation (siehe
+            # _draw_capture_transfer_animation), damit sich beide nie
+            # ueberlappen koennen.
+            zone_top = round(self.config.screen.height * 0.26)
+            zone_bottom = round(self.config.screen.height * 0.52)
+            total_height = len(lines) * line_height
+            top = zone_top + max(0, (zone_bottom - zone_top - total_height) // 2)
+            for i, line in enumerate(lines):
+                surf = fitted_font.render(line, True, (150, 255, 150))
+                rect = surf.get_rect(
+                    center=(self.config.screen.width // 2, top + i * line_height + line_height // 2)
+                )
+                self.screen.blit(surf, rect)
         elif model.state not in text_screens and not hide_all_text:
             # Im Hauptmenue liegt der Text auf dem Hintergrundbild - Anthrazit statt
             # dem sonst ueblichen Amber, da Amber auf dem Bild schlecht lesbar war.
@@ -818,83 +894,245 @@ class Renderer:
 
         self.screen.blit(image, (x, y))
 
-    def _draw_qr_code(self, qr_surface: pygame.Surface | None) -> None:
-        """NEU (Layout-Ueberarbeitung): QR-Code in der rechten Bildschirm-
-        haelfte, Hinweistext + WLAN-Zugangsdaten linksbuendig in der linken
-        Haelfte daneben - vorher lag der QR-Code zentriert mit dem Hinweis
-        darueber. Beide Bloecke sind vertikal auf derselben Hoehe zentriert,
-        damit sie bei jeder Aufloesung sauber nebeneinander stehen.
+    def _draw_capture_transfer_animation(self, progress: float) -> None:
+        """NEU (Sprint 11, Feature 1): waehrend der Bilduebertragung wandert
+        ein kleines Datei-Symbol vom Kamera-Symbol (links) zum Raspi-
+        Speicher-Symbol (rechts) - synchron zum wandernden LED-Punkt
+        (hw_led_provider._render_capture_transfer, dieselbe `progress`-
+        Herkunft: app_with_hw._capture_progress_fraction, gespeist aus der
+        in capture_timing.py persistierten Zeitschaetzung).
 
-        Die verfuegbare Hoehe wird bewusst NICHT aus der vollen Bildschirm-
-        hoehe abgeleitet, sondern endet oberhalb von layout.right (dem
-        "Zurueck"-Button unten rechts) - sonst wuerde die groesser gewordene
-        QR-Karte (Lesbarkeits-Update, siehe __post_init__) den Button
-        ueberlappen.
-        """
+        Alle Symbole werden mit pygame-Bordmitteln gezeichnet (keine neuen
+        Bild-Assets) - gleicher Stil wie die Cinema-Countdown-Grafik
+        (_draw_cinema_countdown) und der Speicheralarm-Rahmen
+        (_draw_storage_critical_overlay)."""
+        progress = max(0.0, min(1.0, progress))
         width, height = self.config.screen.width, self.config.screen.height
+        cy = round(height * 0.66)
+        camera_x = round(width * 0.14)
+        storage_x = round(width * 0.86)
+
+        # Duenne gepunktete Verbindungslinie zwischen den beiden Symbolen.
+        dot_gap = 18
+        x = camera_x + 40
+        while x < storage_x - 40:
+            pygame.draw.circle(self.screen, (90, 140, 90), (x, cy), 2)
+            x += dot_gap
+
+        self._draw_camera_icon((camera_x, cy))
+        self._draw_storage_icon((storage_x, cy))
+
+        # Smoothstep statt linear - sanftes Anlaufen/Abbremsen statt
+        # eines abrupten Starts/Stopps.
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        file_x = round(camera_x + eased * (storage_x - camera_x))
+        # Leichter Bogen nach oben waehrend der Bewegung ("huepft" ein
+        # Stueck), steht an beiden Enden still auf der Mittellinie.
+        bounce = round(-22 * math.sin(eased * math.pi))
+        self._draw_file_icon((file_x, cy + bounce))
+
+    def _draw_camera_icon(self, center: tuple[int, int]) -> None:
+        """Stark vereinfachtes Kamera-Symbol (Gehaeuse + Objektiv-Kreis)."""
+        cx, cy = center
+        body = pygame.Rect(0, 0, 64, 44)
+        body.center = (cx, cy + 4)
+        pygame.draw.rect(self.screen, (210, 215, 220), body, border_radius=6)
+        # Sucher-Buckel oben
+        bump = pygame.Rect(0, 0, 22, 12)
+        bump.midbottom = (cx - 10, body.top + 2)
+        pygame.draw.rect(self.screen, (210, 215, 220), bump, border_radius=3)
+        # Objektiv
+        pygame.draw.circle(self.screen, (40, 40, 45), (cx + 6, cy + 4), 15)
+        pygame.draw.circle(self.screen, (140, 190, 230), (cx + 6, cy + 4), 9)
+
+    def _draw_storage_icon(self, center: tuple[int, int]) -> None:
+        """Stark vereinfachtes Speicherkarten-Symbol (microSD-Silhouette mit
+        abgeschraegter Ecke + Kontakt-Striche) fuer den Raspi-Speicher."""
+        cx, cy = center
+        w, h = 46, 60
+        rect = pygame.Rect(0, 0, w, h)
+        rect.center = (cx, cy)
+        points = [
+            (rect.left + 14, rect.top), (rect.right, rect.top),
+            (rect.right, rect.bottom), (rect.left, rect.bottom),
+            (rect.left, rect.top + 14),
+        ]
+        pygame.draw.polygon(self.screen, (230, 200, 90), points)
+        pygame.draw.polygon(self.screen, (120, 100, 30), points, width=2)
+        for i in range(4):
+            contact_x = rect.left + 8 + i * 9
+            pygame.draw.line(
+                self.screen, (120, 100, 30),
+                (contact_x, rect.top + 20), (contact_x, rect.top + 34), 2,
+            )
+
+    def _draw_file_icon(self, center: tuple[int, int]) -> None:
+        """Stark vereinfachtes Bilddatei-Symbol (Blatt mit umgeknickter
+        Ecke + kleines Berg-/Sonne-Piktogramm) - siehe Beispielbild aus dem
+        Refinement (JPEG-/Bild-Symbol)."""
+        cx, cy = center
+        w, h = 34, 42
+        fold = 10
+        rect = pygame.Rect(0, 0, w, h)
+        rect.center = (cx, cy)
+        points = [
+            (rect.left, rect.top), (rect.right - fold, rect.top),
+            (rect.right, rect.top + fold), (rect.right, rect.bottom),
+            (rect.left, rect.bottom),
+        ]
+        pygame.draw.polygon(self.screen, (255, 255, 255), points)
+        pygame.draw.polygon(self.screen, (60, 60, 65), points, width=2)
+        pygame.draw.line(
+            self.screen, (60, 60, 65),
+            (rect.right - fold, rect.top), (rect.right - fold, rect.top + fold), 2,
+        )
+        pygame.draw.line(
+            self.screen, (60, 60, 65),
+            (rect.right - fold, rect.top + fold), (rect.right, rect.top + fold), 2,
+        )
+        # kleines Bild-Piktogramm (Sonne + Berg), analog zum Beispielbild
+        pygame.draw.circle(self.screen, (255, 200, 60), (rect.left + 10, rect.top + 16), 3)
+        mountain = [
+            (rect.left + 5, rect.bottom - 6), (rect.left + 14, rect.bottom - 18),
+            (rect.left + 20, rect.bottom - 10), (rect.left + 26, rect.bottom - 20),
+            (rect.right - 4, rect.bottom - 6),
+        ]
+        pygame.draw.lines(self.screen, (60, 60, 65), False, mountain, 2)
+
+    def _draw_qr_card(
+        self,
+        qr_surface: pygame.Surface | None,
+        center: tuple[int, int],
+        max_size: tuple[int, int],
+    ) -> None:
+        """Zeichnet eine weiße Karte mit dem QR-Code zentriert auf `center`,
+        so gross wie innerhalb von `max_size` (Breite, Hoehe) moeglich -
+        deutlich bessere Scanbarkeit auf dunklem Hintergrund und robuster
+        gegen schraege Blickwinkel als der QR-Code direkt auf dem
+        Fotobox-Hintergrund. Gemeinsamer Helfer fuer AppState.GALLERY_PHOTO_QR
+        (Feature 4) - fruehrer war das derselbe Code wie in der inzwischen
+        entfernten QR-Kartenanzeige von AppState.QR_DISPLAY (siehe
+        _draw_save_confirmation, seit Sprint 11 kein QR-Bild mehr dort)."""
         if qr_surface is None:
-            self._draw_text(
-                "QR-Code konnte nicht erzeugt werden.", self.font_body, (200, 80, 80),
-                (60, round(0.4 * height)),
+            self._blit_center(
+                "QR-Code konnte nicht erzeugt werden.", self.font_body, (255, 120, 120), center[1],
             )
             return
-
-        right_x0 = round(width * 0.5)
-        right_w = width - right_x0
-        # Verfuegbarer Hoehenbereich zwischen Titel (oben) und dem
-        # "Zurueck"-Button (unten, layout.right) - analog zur Ableitung von
-        # "bottom" aus der tatsaechlichen Button-Position in
-        # _draw_instructions/_draw_terms.
-        area_top = round(0.16 * height)
-        area_bottom = self.layout.right.y - 24
-        area_cy = (area_top + area_bottom) // 2
-
-        # Rechte Haelfte: weiße Karte mit Rand hinter dem Code - deutlich
-        # bessere Scanbarkeit auf dunklem Hintergrund und robuster gegen
-        # schräge Blickwinkel. Groesse an den kleineren der beiden
-        # verfuegbaren Masse (Hoehenbereich vs. rechte Haelfte, jeweils mit
-        # Rand) angepasst, damit die Karte weder den Button unten noch den
-        # Textbereich links beruehrt.
-        card_padding = 24
-        available_h = area_bottom - area_top
-        available_w = right_w - 80
-        card_total = max(80, min(available_h, available_w))
+        # GEAENDERT (Nutzer-Feedback): weisse Umrandung schmaler als vorher
+        # (war ein fester Wert von 24px unabhaengig von der Kartengroesse) -
+        # jetzt proportional zur Kartengroesse, damit sie bei der insgesamt
+        # groesseren Karte (siehe _draw_gallery_photo_qr) nicht breit wirkt.
+        card_total = max(80, min(max_size[0], max_size[1]))
+        card_padding = max(10, round(card_total * 0.045))
         target_size = card_total - 2 * card_padding
         scaled = pygame.transform.smoothscale(qr_surface, (target_size, target_size))
-        card = pygame.Surface((target_size + 2 * card_padding, target_size + 2 * card_padding))
+        card_side = target_size + 2 * card_padding
+
+        # NEU (Nutzer-Feedback): Schlagschatten wie bei den Buttons - gleiche
+        # Optik/Technik wie in _draw_button (Anthrazit statt Schwarz, leicht
+        # nach rechts unten versetzt, ueber eine SRCALPHA-Zwischenflaeche fuer
+        # echte Transparenz). Bewusst OHNE border_radius, damit der Schatten
+        # exakt zur eckigen Karte passt (kein rundes Schatten-Eck hinter
+        # einer eckigen Kartenecke).
+        shadow_offset = 6
+        shadow_surface = pygame.Surface((card_side, card_side), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surface, (60, 63, 68, 140), shadow_surface.get_rect())
+        shadow_rect = shadow_surface.get_rect(center=center)
+        self.screen.blit(shadow_surface, (shadow_rect.x + shadow_offset, shadow_rect.y + shadow_offset))
+
+        card = pygame.Surface((card_side, card_side))
         card.fill((255, 255, 255))
         card.blit(scaled, (card_padding, card_padding))
-        card_rect = card.get_rect(center=(right_x0 + right_w // 2, area_cy))
+        card_rect = card.get_rect(center=center)
         self.screen.blit(card, card_rect)
 
-        # Linke Haelfte: Hinweistext plus WLAN-Name/Passwort, damit Gäste
-        # nicht extra in die Anleitung wechseln muessen, um sich zu
-        # verbinden. Als kurze Einzelzeilen statt eines langen Fließtexts,
-        # da der verfuegbare Platz links neben dem QR-Code schmaler ist als
-        # die volle Bildschirmbreite. Jede Zeile wird bei Bedarf gekuerzt
-        # (wie bei Dateinamen in _draw_admin_usb_conflicts), damit ein
-        # langes Event-WLAN-Passwort nicht in den QR-Code-Bereich rechts
-        # hineinlaeuft.
-        wifi_name = "Fotobox_Gast"
-        wifi_password = self.config.network.guest_wifi_password
-        lines = [
-            "QR-Code scannen,",
-            "um dein Foto",
-            "herunterzuladen.",
-            "",
-            f"WLAN: {wifi_name}",
-            f"Passwort: {wifi_password}",
-        ]
-        left = 60
-        max_text_w = right_x0 - left - 40
+    def _draw_gallery_photo_qr(self, qr_surface: pygame.Surface | None) -> None:
+        """NEU (Sprint 11, Feature 4): legt ueber das im Hintergrund weiter
+        sichtbare Foto (siehe render(), ruft vorher bereits
+        _draw_gallery_fullscreen()) eine abgedunkelte Flaeche plus die
+        QR-Karte fuer GENAU dieses Foto (app_with_hw._generate_gallery_qr
+        erzeugt qr_surface passend zum aktuell ausgewaehlten Foto). Schliesst
+        sich automatisch nach config.timeouts.gallery_qr_seconds oder per
+        "Zurück" (siehe state_machine._handle_gallery_photo_qr)."""
+        width, height = self.config.screen.width, self.config.screen.height
+
+        # Dezente Abdunkelung, damit die weisse QR-Karte auf jedem Foto
+        # (auch auf hellen Bildern) gut lesbar bleibt - gleiche Technik wie
+        # der halbtransparente Banner-Hinweis im Hauptmenue.
+        overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 120))
+        self.screen.blit(overlay, (0, 0))
+
+        # GEAENDERT (Sprint-11-Nachbesserung): komplett neu vermessen, nach
+        # Feedback-Screenshots mit zwei Ueberlappungen - (1) die Ueberschrift
+        # kollidierte mit dem generischen Fotobox-Titel oben links (behoben
+        # durch Aufnahme in text_screens, siehe render()) und (2) der
+        # "Zurück"-Button (rects.back, unten LINKS, Bereich ca. 0.80-0.955
+        # der Bildschirmhoehe) ueberlappte mit dem Hinweistext darunter. Die
+        # Karte war deshalb zunaechst kleiner (0.34 statt 0.5 der
+        # Bildschirmhoehe) - auf Nutzer-Feedback hin wieder etwas vergroessert
+        # (0.38), bei gleichzeitig schmalerer weisser Umrandung (siehe
+        # _draw_qr_card), sodass weiterhin alle drei Elemente in klar
+        # getrennten Zonen bleiben: Ueberschrift oben, Karte in der Mitte,
+        # Hinweistext knapp darunter mit Abstand zum "Zurück"-Button.
+        self._blit_center("QR-Code für dieses Foto", self.font_status_main_menu, (255, 255, 255), round(0.14 * height))
+
+        center = (width // 2, round(height * 0.44))
+        card_side = round(height * 0.38)
+        max_size = (card_side, card_side)
+        self._draw_qr_card(qr_surface, center, max_size)
+
+        self._blit_center(
+            "Mit dem Handy scannen, um dieses Bild herunterzuladen.",
+            self.font_body, (220, 220, 220), round(height * 0.70),
+        )
+
+    def _draw_save_confirmation(self, model: AppModel) -> None:
+        """NEU (Sprint 11, Feature 3): AppState.QR_DISPLAY zeigt seit diesem
+        Umbau KEINEN QR-Code mehr direkt nach dem Speichern (siehe
+        state_machine._SAVE_CONFIRMATION_TEXT fuer die Begruendung) -
+        stattdessen nur noch einen zentrierten, umgebrochenen Hinweistext in
+        Gaeste-Schriftgroesse. Der Zustand ist bewusst Teil von
+        `text_screens` (siehe render()), damit weder der normale
+        Fotobox-Titel noch der generische Statuszeilen-Block darueber
+        gezeichnet werden - diese Methode uebernimmt Titel und Text
+        vollstaendig selbst."""
+        width, height = self.config.screen.width, self.config.screen.height
+        self._blit_center("Foto gespeichert!", self.font_title, (255, 255, 255), round(0.16 * height))
+
+        max_text_w = width - 160
+        lines = self._wrap_text(model.ui.status_text, self.font_body, max_text_w)
         line_height = self.font_body.get_linesize()
         total_height = len(lines) * line_height
-        top = area_cy - total_height // 2
+        # Vertikal zentriert im Bereich zwischen Titel und dem "Zurück"-
+        # Button unten rechts (layout.right) - analog zur Bereichsableitung
+        # in _draw_instructions/_draw_terms.
+        area_top = round(0.30 * height)
+        area_bottom = self.layout.right.y - 24
+        top = area_top + max(0, (area_bottom - area_top - total_height) // 2)
         y = top
         for line in lines:
-            label = self._truncate_text(line, self.font_body, max_text_w) if line else line
-            self._draw_text(label, self.font_body, (230, 230, 230), (left, y))
+            self._blit_center(line, self.font_body, (230, 230, 230), y + line_height // 2)
             y += line_height
+
+    def _wrap_text(self, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+        """Greedy Wortumbruch: haengt Woerter zeilenweise an, bis die Zeile
+        breiter als max_width waere, dann beginnt eine neue Zeile. Reicht
+        fuer die kurzen, statischen Hinweistexte hier voellig aus - kein
+        Bedarf fuer Silbentrennung o.ae."""
+        words = text.split()
+        lines: list[str] = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if current and font.size(candidate)[0] > max_width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        return lines
 
     def _blit_center(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], cy: int) -> None:
         """Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
@@ -1237,6 +1475,14 @@ class Renderer:
             self._draw_button("Zurück", self.layout.right, (100, 100, 100))
         elif state == AppState.GALLERY_FULLSCREEN:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+            # NEU (Sprint 11, Feature 4): gleichwertige Alternative zum
+            # Doppeltap auf das Foto (siehe app_with_hw._handle_pygame_event).
+            self._draw_button("QR-Code anfordern", self.layout.gallery_qr_icon, (0, 100, 150))
+        elif state == AppState.GALLERY_PHOTO_QR:
+            # NEU (Sprint 11, Feature 4): gleiche Position/Optik wie bei
+            # GALLERY_FULLSCREEN - schliesst die QR-Karte wieder vorzeitig,
+            # ohne auf den 30s-Timeout (gallery_qr_seconds) warten zu muessen.
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.REVIEW:
             self._draw_button("Speichern", self.layout.left, (0, 150, 0))
             self._draw_button("Löschen", self.layout.right, (150, 0, 0))
@@ -1251,6 +1497,22 @@ class Renderer:
             self._draw_admin_menu_buttons()
         elif state == AppState.ADMIN_STATUS:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_CAMERA_SETTINGS:
+            # NEU (Sprint 11, Feature 2): +/- nur zeichnen, wenn die Kamera
+            # tatsaechlich erreichbar ist - sonst zeigt
+            # _draw_admin_camera_settings() bereits die Fehlermeldung, und
+            # funktionslose Buttons wuerden nur verwirren.
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+            if self._admin_camera_available:
+                # NEU (Sprint-11-Nachbesserung): Beschriftung "+"/"-" um
+                # 100% vergroessert (Standard waere 50) - besser lesbar/
+                # treffsicherer auf den jetzt quadratischen, groesseren
+                # Buttons (siehe layout.py).
+                camera_btn_font_size = 100
+                self._draw_button("-", self.layout.admin_camera_iso_minus, (70, 70, 75), font_size=camera_btn_font_size)
+                self._draw_button("+", self.layout.admin_camera_iso_plus, (70, 70, 75), font_size=camera_btn_font_size)
+                self._draw_button("-", self.layout.admin_camera_aperture_minus, (70, 70, 75), font_size=camera_btn_font_size)
+                self._draw_button("+", self.layout.admin_camera_aperture_plus, (70, 70, 75), font_size=camera_btn_font_size)
         elif state == AppState.ADMIN_DELETE_CONFIRM:
             # NEU (4.4): "Nein" links neutral-grau, "Ja" rechts deutlich rot -
             # die gefaehrliche Wahl soll nicht wie die naheliegende aussehen.
@@ -1317,6 +1579,58 @@ class Renderer:
             self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
 
+    def _draw_admin_camera_settings(self, model: AppModel) -> None:
+        """NEU (Sprint 11, Feature 2): zeigt ISO/Blende zwischen den
+        jeweiligen "-"/"+"-Buttons (die zeichnet _draw_buttons(), wie bei
+        allen anderen Screens - hier nur die Werte/Texte). Zeichnet
+        stattdessen eine Fehlermeldung, falls die Kamera nicht erreichbar
+        ist oder weder ISO noch Blende liefert (siehe
+        hw_camera_settings_provider.read_current)."""
+        ui = model.ui
+        height = self.config.screen.height
+        # NEU (Sprint 11, Feature 2): merkt sich fuer _draw_buttons (wird
+        # danach aufgerufen, siehe render()), ob die +/- Buttons ueberhaupt
+        # sinnvoll sind - gleiches Prinzip wie _usb_continue_enabled.
+        self._admin_camera_available = ui.admin_camera_available
+
+        if not ui.admin_camera_available:
+            message = ui.admin_camera_error or "Kamera-Einstellungen nicht verfügbar."
+            self._blit_center(message, self.font_body_admin, (255, 160, 120), round(height * 0.5))
+            return
+
+        if not ui.admin_camera_iso_choices and not ui.admin_camera_aperture_choices:
+            # Kurzes Zeitfenster zwischen Betreten des Screens (Werte noch
+            # leer) und dem Eintreffen von ADMIN_CAMERA_SETTINGS_READY -
+            # gleiches Prinzip wie "Ermittle Status ..." bei ADMIN_STATUS.
+            self._draw_text("Lese Kamera-Einstellungen ...", self.font_body_admin, (200, 200, 200), (60, round(0.35 * height)))
+            return
+
+        iso_label = f"ISO: {ui.admin_camera_iso}" if ui.admin_camera_iso else "ISO: -"
+        self._blit_center(iso_label, self.font_status_admin, (230, 230, 230), self.layout.admin_camera_iso_minus.centery)
+
+        # BUGFIX (Sprint-11-Nachbesserung): der von der Kamera gelieferte
+        # Rohwert enthaelt je nach Modell/libgphoto2-Version teils schon ein
+        # "f/"-Praefix (z.B. "f/8") und teils nicht (nur "8") - bisher wurde
+        # hier IMMER zusaetzlich "f/" davorgesetzt, was bei Kameras mit
+        # eigenem Praefix zu "f/f/8" fuehrte. Ein evtl. vorhandenes Praefix
+        # wird deshalb zuerst abgeschnitten, danach genau EIN "f/" ergaenzt.
+        raw_aperture = ui.admin_camera_aperture
+        aperture_value = raw_aperture[2:] if raw_aperture.lower().startswith("f/") else raw_aperture
+        aperture_label = f"Blende: f/{aperture_value}" if aperture_value else "Blende: -"
+        self._blit_center(aperture_label, self.font_status_admin, (230, 230, 230), self.layout.admin_camera_aperture_minus.centery)
+
+        # GEAENDERT (Sprint-11-Nachbesserung): "Kamera muss im Modus M
+        # stehen" entfernt - Lutz nutzt eine Zeitautomatik (Blende wird
+        # vorgegeben, die Kamera berechnet die Belichtungszeit selbst), das
+        # entspricht Nikons Modus A, nicht M. Ausserdem neu positioniert
+        # (0.76 statt vorher 0.75 der Bildschirmhoehe, mittig in der Luecke
+        # zwischen dem Ende der Blenden-Buttonreihe und dem Beginn von
+        # "Zurück"), damit die Zeile nicht mehr mit den jetzt groesseren,
+        # quadratischen Buttons ueberlappt (siehe layout.py,
+        # camera_btn_side/camera_aperture_y).
+        hint = "Blende hängt vom montierten Objektiv ab. Kamera sollte im Modus A (Zeitautomatik) stehen."
+        self._blit_center(hint, self.font_small, (170, 170, 170), round(height * 0.76))
+
     # NEU (4.6): merkt sich fuer _draw_buttons, ob "Weiter" aktiv sein
     # darf. Wird in render() aus dem Modell gesetzt - _draw_buttons
     # bekommt nur den Zustand uebergeben, nicht das Modell.
@@ -1324,6 +1638,10 @@ class Renderer:
 
     # NEU (4.7): merkt sich, ob "Stick leeren" angeboten werden darf.
     _usb_not_enough_free: bool = False
+
+    # NEU (Sprint 11, Feature 2): merkt sich, ob die +/- Buttons fuer ISO/
+    # Blende gezeichnet werden duerfen (Kamera erreichbar).
+    _admin_camera_available: bool = True
 
     def _draw_admin_usb_copy(self, model: AppModel) -> None:
         # GEAENDERT (4.8): Fortschrittsbalken statt durchlaufender
@@ -1607,6 +1925,115 @@ class Renderer:
             model.ui.admin_delete_fraction, round(0.48 * height),
             color=(200, 45, 45), track=(58, 20, 20), border=(150, 95, 95),
         )
+        # NEU (Sprint-11-Nachbesserung): zusaetzlich zum Fortschrittsbalken
+        # eine bildliche Animation, siehe _draw_admin_delete_shredder_animation.
+        self._draw_admin_delete_shredder_animation()
+
+    def _draw_admin_delete_shredder_animation(self) -> None:
+        """NEU (Sprint-11-Nachbesserung): begleitet ADMIN_DELETE_RUNNING
+        zusaetzlich zum Fortschrittsbalken mit einer Animation - kleine
+        Bilddatei-Symbole (dasselbe Icon wie bei der Uebertragungs-
+        Animation, siehe _draw_file_icon) fallen von oben in der
+        horizontalen Bildschirmmitte in einen Shredder darunter (ebenfalls
+        horizontal mittig) und kommen unten als Schnipsel heraus.
+
+        Rein zeitbasiert und endlos wiederholend (time.time(), gleiche
+        Technik wie das blinkende Warnsymbol weiter oben in dieser Datei) -
+        es gibt bewusst KEINEN direkten Bezug zu einzelnen tatsaechlich
+        geloeschten Dateien (deren genaue Anzahl/Zeitpunkt kennt der
+        Renderer nicht, nur die Bruchzahl admin_delete_fraction) - das
+        uebernimmt weiterhin ausschliesslich der Fortschrittsbalken.
+        Mehrere ueberlappende "Spuren" (lanes) sorgen fuer einen
+        kontinuierlichen statt einen einzelnen, isolierten Durchlauf."""
+        width, height = self.config.screen.width, self.config.screen.height
+        cx = width // 2
+
+        # Vertikale Zonen (von oben nach unten): Fortschrittsbalken +
+        # Prozentzahl (siehe _draw_admin_delete_running, endet bei ca. 0.60),
+        # Fallstrecke des Datei-Symbols (0.66 bis knapp vor den Schlitz),
+        # Shredder-Koerper (Oberkante 0.78), Schnipsel-Fallstrecke darunter.
+        shredder_rect = pygame.Rect(0, 0, round(width * 0.26), round(height * 0.05))
+        shredder_rect.midtop = (cx, round(height * 0.78))
+
+        drop_start_y = round(height * 0.66)
+        slot_y = shredder_rect.top + 4
+        shred_end_y = round(height * 0.95)
+
+        self._draw_shredder_body(shredder_rect)
+
+        cycle_seconds = 1.6
+        lanes = 3
+        now = time.time()
+        for lane in range(lanes):
+            phase = ((now / cycle_seconds) + lane / lanes) % 1.0
+            if phase < 0.45:
+                # Datei-Symbol faellt von oben in den Einzugsschlitz -
+                # leichtes Beschleunigen statt linearer Bewegung, damit es
+                # sich eher wie "hineinfallen" anfuehlt.
+                local = phase / 0.45
+                eased = local * local
+                y = round(drop_start_y + eased * (slot_y - drop_start_y))
+                self._draw_file_icon((cx, y))
+            else:
+                local = (phase - 0.45) / 0.55
+                self._draw_shred_strips(cx, shredder_rect.bottom, shred_end_y, local, lane)
+
+    def _draw_shredder_body(self, rect: pygame.Rect) -> None:
+        """Stark vereinfachtes Shredder-Symbol (Vorbild: das im Refinement
+        angehaengte Beispielbild) - dunkler Geraetekoerper mit einem
+        Einzugsschlitz oben und gezackten "Zaehnen" am unteren Rand, aus
+        denen die Papierschnipsel fallen (siehe _draw_shred_strips). Die
+        Zaehne wackeln leicht (Sinuskurve ueber time.time()), um den
+        laufenden "Mahl"-Vorgang anzudeuten."""
+        pygame.draw.rect(self.screen, (70, 70, 78), rect, border_radius=8)
+        pygame.draw.rect(self.screen, (200, 200, 205), rect, width=2, border_radius=8)
+
+        slot = pygame.Rect(0, 0, rect.width - 30, 8)
+        slot.center = (rect.centerx, rect.top + 14)
+        pygame.draw.rect(self.screen, (25, 25, 28), slot, border_radius=4)
+
+        jitter = round(2 * math.sin(time.time() * 20))
+        tooth_count = max(3, round(rect.width / 14))
+        tooth_w = rect.width / tooth_count
+        for i in range(tooth_count):
+            base_left = round(rect.left + i * tooth_w)
+            base_right = round(rect.left + (i + 1) * tooth_w)
+            tip_x = round((base_left + base_right) / 2)
+            points = [
+                (base_left, rect.bottom), (base_right, rect.bottom),
+                (tip_x, rect.bottom + 10 + jitter),
+            ]
+            pygame.draw.polygon(self.screen, (70, 70, 78), points)
+            pygame.draw.polygon(self.screen, (200, 200, 205), points, width=1)
+
+    def _draw_shred_strips(self, cx: int, start_y: int, end_y: int, local: float, seed: int) -> None:
+        """Zeichnet die Papierschnipsel, die unten aus dem Shredder fallen -
+        mehrere kleine, leicht gestreute Streifen, die beim Fallen weiter
+        auseinanderdriften und ausblassen. `local` ist der Fortschritt
+        (0..1) innerhalb dieser Phase (siehe
+        _draw_admin_delete_shredder_animation), `seed` unterscheidet die
+        einzelnen "Spuren" (lanes) - feste Zufallswerte pro Spur statt
+        echten Zufalls pro Frame, damit die Bewegung ruckelfrei bleibt
+        (nur `local`, nicht die Zufallswerte selbst, aendert sich pro
+        Frame)."""
+        local = max(0.0, min(1.0, local))
+        alpha = round(255 * (1.0 - local))
+        if alpha <= 10:
+            return
+        rng = random.Random(seed * 97 + 13)
+        fall_y = start_y + local * (end_y - start_y)
+        spread = 1.0 + local * 2.4
+        for i in range(6):
+            dx = ((i - 2.5) * 9 + rng.uniform(-3, 3)) * spread
+            x = round(cx + dx)
+            y = round(fall_y + rng.uniform(-6, 6) + i * 2)
+            strip_w, strip_h = 5, 14
+            strip_surf = pygame.Surface((strip_w, strip_h), pygame.SRCALPHA)
+            strip_surf.fill((235, 235, 235, alpha))
+            pygame.draw.rect(strip_surf, (90, 90, 95, alpha), strip_surf.get_rect(), width=1)
+            rotated = pygame.transform.rotate(strip_surf, dx * 4)
+            strip_rect = rotated.get_rect(center=(x, y))
+            self.screen.blit(rotated, strip_rect)
 
     def _draw_admin_delete_done(self, model: AppModel) -> None:
         # NEU (4.4): Zusammenfassung als Zeilenliste, gleiche Optik wie
@@ -1632,7 +2059,9 @@ class Renderer:
             round(0.45 * self.config.screen.height),
         )
 
-    def _draw_button(self, label: str, rect: pygame.Rect, color: tuple[int, int, int]) -> None:
+    def _draw_button(
+        self, label: str, rect: pygame.Rect, color: tuple[int, int, int], font_size: int | None = None,
+    ) -> None:
         # Leichter Schatten nach rechts unten fuer einen dezenten 3D-Effekt.
         # Braucht eine separate SRCALPHA-Zwischenflaeche, weil self.screen
         # selbst keinen Alphakanal hat - echte Transparenz beim Zeichnen
@@ -1657,9 +2086,15 @@ class Renderer:
 
         # Schrift so gross wie moeglich, aber automatisch verkleinert, falls
         # ein langes Label (z.B. "Wirklich löschen") sonst ueberlaufen wuerde.
+        # NEU (Sprint-11-Nachbesserung): optionaler `font_size`-Parameter,
+        # damit einzelne Buttons (z.B. die ISO/Blende "+"/"-"-Buttons im
+        # Service-Menue) bewusst groesser starten koennen als der sonst
+        # uebliche Standard (50) - die Verkleinerungsschleife darunter
+        # greift trotzdem weiterhin, falls das Label selbst dafuer zu breit
+        # waere.
         max_w = rect.width - 24
-        size = 50
-        font = self.font_button
+        size = font_size if font_size is not None else 50
+        font = self.font_button if font_size is None else pygame.font.Font(None, size)
         text_surface = font.render(label, True, (255, 255, 255))
         while text_surface.get_width() > max_w and size > 24:
             size -= 4
@@ -1706,6 +2141,11 @@ class Renderer:
             # eine einladende Botschaft statt eines rein technischen Grids.
             AppState.GALLERY_EMPTY: (10, 22, 20),
             AppState.GALLERY_FULLSCREEN: (5, 5, 5),
+            # NEU (Sprint 11, Feature 4): dasselbe Dunkel wie GALLERY_FULLSCREEN -
+            # das Foto fuellt ohnehin den ganzen Bildschirm (render() ruft
+            # zuerst _draw_gallery_fullscreen()), diese Farbe ist nur der
+            # Rahmen fuer den Bruchteil einer Sekunde vor dem ersten Blit.
+            AppState.GALLERY_PHOTO_QR: (5, 5, 5),
             AppState.PHOTO_PREVIEW: (30, 30, 40),
             AppState.COUNTDOWN: (60, 30, 20),
             AppState.CAPTURE_PENDING: (20, 40, 20),
@@ -1720,6 +2160,7 @@ class Renderer:
             AppState.MAINTENANCE: (50, 50, 10),
             AppState.ADMIN_MENU: (18, 22, 30),         # NEU (4.1) - wie PIN_ENTRY
             AppState.ADMIN_STATUS: (18, 22, 30),       # NEU (4.3) - wie ADMIN_MENU
+            AppState.ADMIN_CAMERA_SETTINGS: (18, 22, 30),  # NEU (Sprint 11, Feature 2) - wie ADMIN_STATUS
             AppState.ADMIN_RESTART_PENDING: (20, 40, 20),  # NEU (4.3) - wie CAPTURE_PENDING
             # NEU (4.4): kraeftiges Dunkelrot als unuebersehbares Warnsignal,
             # deutlich abgesetzt vom ruhigen Blaugrau der uebrigen Admin-Screens.

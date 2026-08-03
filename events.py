@@ -19,6 +19,12 @@ class EventType(Enum):
     TAP_CONFIRM_DELETE = auto()
     TAP_ABORT_DELETE = auto()
     TAP_FULLSCREEN_PHOTO = auto()
+    # NEU (Sprint 11, Feature 4): Doppeltap auf das Foto oder Icon "QR-Code
+    # anfordern" in GALLERY_FULLSCREEN -> AppState.GALLERY_PHOTO_QR.
+    TAP_GALLERY_QR = auto()
+    # NEU (Sprint 11, Feature 4): gallery_qr_deadline abgelaufen -> zurueck
+    # zu GALLERY_FULLSCREEN (analog zu QR_TIMEOUT).
+    GALLERY_QR_TIMEOUT = auto()
     BUTTON_PRESS = auto()
     SWIPE_LEFT = auto()
     SWIPE_RIGHT = auto()
@@ -57,6 +63,19 @@ class EventType(Enum):
     TAP_ADMIN_DELETE_ALL = auto()
     TAP_ADMIN_RESTART_APP = auto()
     TAP_ADMIN_SHUTDOWN = auto()
+    # NEU (Sprint 11, Feature 2): Kamera-Einstellungen (ISO/Blende) direkt
+    # ueber USB, ohne die Kamera aus dem Gehaeuse zu nehmen.
+    TAP_ADMIN_CAMERA_SETTINGS = auto()
+    # Aktuelle Werte + gueltige Auswahllisten sind ermittelt (synchron
+    # gelesen, siehe app_with_hw._read_admin_camera_settings); payload
+    # traegt die Snapshot-Felder (iso, aperture, iso_choices,
+    # aperture_choices, available, error).
+    ADMIN_CAMERA_SETTINGS_READY = auto()
+    # +/- durch die von der Kamera gelieferte choices-Liste wandern.
+    TAP_ADMIN_CAMERA_ISO_UP = auto()
+    TAP_ADMIN_CAMERA_ISO_DOWN = auto()
+    TAP_ADMIN_CAMERA_APERTURE_UP = auto()
+    TAP_ADMIN_CAMERA_APERTURE_DOWN = auto()
     # NEU (4.3): Diagnosezeilen sind fertig ermittelt (app_with_hw sammelt
     # sie synchron nach TAP_ADMIN_STATUS und liefert sie im payload zurueck).
     ADMIN_STATUS_READY = auto()
