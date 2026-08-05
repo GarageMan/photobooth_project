@@ -116,15 +116,30 @@ def build_layout(width: int, height: int) -> LayoutRects:
 
     # NEU (3.3): Ziffernfeld fuer PIN_ENTRY.
     # Zentriertes 3x4-Raster: 1-9, dann [backspace] 0 [submit].
-    # "cancel" bewusst abseits oben links, damit es beim Tippen der Ziffern
-    # nicht versehentlich getroffen wird.
-    key_w = 0.14
+    #
+    # GEAENDERT (Nutzer-Feedback): "cancel" lag vorher oben links und
+    # ueberlappte dort mit der zentrierten Kopfzeile ("Wartungs-PIN
+    # eingeben", siehe renderer._draw_pin_entry) - liegt jetzt stattdessen
+    # UNTERHALB des Tastenfelds. Die Tasten sind ausserdem quadratisch: die
+    # Hoehe (key_h) bleibt unveraendert, die Breite wird daraus in Pixeln
+    # abgeleitet (Breite/Hoehe haben bei einem nicht quadratischen
+    # Bildschirm wie 1280x720 unterschiedliche Prozent-Basis - eine feste
+    # Breite in Prozent ergaebe KEIN Quadrat).
+    #
+    # GEAENDERT (2. Nutzer-Feedback-Runde): Raster nochmal weiter nach oben
+    # gerueckt (grid_y0 kleiner) UND "Abbrechen" auf dieselbe Groesse wie in
+    # den uebrigen Menues gebracht (button_h=0.155 statt vorher 0.08). Beides
+    # zusammen ist auf 720px Bildschirmhoehe eng - Kopfzeile/PIN-Punkte/
+    # Fehlertext (siehe renderer._draw_pin_entry) wurden dafuer ebenfalls
+    # kompakter positioniert, sonst haette "Abbrechen" unten aus dem
+    # Bildschirm herausgeragt.
     key_h = 0.135
-    gap_x = 0.035
-    gap_y = 0.03
+    key_w = (key_h * height) / width
+    gap_y = 0.02
+    gap_x = (gap_y * height) / width
     grid_w = 3 * key_w + 2 * gap_x
     grid_x0 = (1.0 - grid_w) / 2.0
-    grid_y0 = 0.30
+    grid_y0 = 0.21
 
     def key_rect(col: int, row: int) -> pygame.Rect:
         return rect(
@@ -140,7 +155,12 @@ def build_layout(width: int, height: int) -> LayoutRects:
     pin_keys["backspace"] = key_rect(0, 3)   # untere Reihe: <-  0  OK
     pin_keys["0"] = key_rect(1, 3)
     pin_keys["submit"] = key_rect(2, 3)
-    pin_keys["cancel"] = rect(0.03, 0.03, 0.18, 0.09)
+    # "Abbrechen" unterhalb des Rasters, zentriert, jetzt in derselben
+    # Groesse (button_w/button_h von oben) wie die "Zurueck"/"Abbrechen"-
+    # Buttons in den uebrigen Menues.
+    grid_bottom = grid_y0 + 4 * key_h + 3 * gap_y
+    cancel_y = grid_bottom + 0.015
+    pin_keys["cancel"] = rect((1.0 - button_w) / 2.0, cancel_y, button_w, button_h)
 
     # NEU (6c, ueberarbeitet nach Nutzer-Feedback): Kontrollkaesten der
     # "Alle auswaehlen"-Zeile - kompakt statt grosse Buttons, damit sie

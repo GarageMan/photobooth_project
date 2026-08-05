@@ -67,7 +67,7 @@ from storage_service import StorageService
 from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
 from layout import build_layout, button_rects_for_state
 from renderer import Renderer
-from shutdown_service import PinLockout, SecretGestureDetector  # NEU (3.4)
+from admin_service import PinLockout, SecretGestureDetector  # NEU (3.4), umbenannt (Sprint 11, vormals shutdown_service.py)
 import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
 
 # ------------------------------------------------------------------------------
@@ -354,7 +354,12 @@ class PhotoboothApp:
                 # s.o.) - ein Einzeltap in der Bildmitte loeste bisher schon
                 # nichts aus (siehe _map_click_to_event), daher hier ohne
                 # Regressionsrisiko fuer bestehendes Verhalten.
-                if abs(dx) < 30 and abs(dy) < 30:
+                # GEAENDERT (Sprint-11-Nachbesserung): ganzer Doppeltap-Zweig
+                # entfaellt ohne QR-Funktion (config.qr_codes_enabled) - die
+                # state_machine wuerde das Event zwar ohnehin ignorieren
+                # (siehe _handle_gallery_fullscreen), aber so bleibt auch die
+                # Tap-Zeit-/Positions-Verfolgung ungenutzt.
+                if self.config.qr_codes_enabled and abs(dx) < 30 and abs(dy) < 30:
                     tap_time = time.monotonic()
                     is_double_tap = (
                         self._last_fullscreen_tap_time is not None
@@ -471,6 +476,19 @@ class PhotoboothApp:
             return self._map_admin_menu_click(pos)
 
         rects = button_rects_for_state(state, self.layout)
+        # NEU (Sprint-11-Nachbesserung): kein Icon "QR-Code anfordern" ohne
+        # QR-Funktion (config.qr_codes_enabled) - state_machine ignoriert das
+        # Event zwar ohnehin (siehe _handle_gallery_fullscreen), aber ein
+        # unsichtbar weiter antippbares Icon waere trotzdem verwirrend.
+        if not self.config.qr_codes_enabled:
+            rects = {name: rect for name, rect in rects.items() if name != "gallery_qr"}
+        # NEU (Sprint 11): kein "Galerie"-Button im Hauptmenue ohne
+        # Galerie-Funktion (config.gallery_enabled) - gleiches Prinzip wie
+        # bei gallery_qr oben. state_machine ignoriert TAP_GALLERY zwar
+        # ohnehin (siehe _handle_main_menu), aber ein unsichtbar weiter
+        # antippbarer Button waere trotzdem verwirrend.
+        if not self.config.gallery_enabled:
+            rects = {name: rect for name, rect in rects.items() if name != "gallery"}
 
         mapping = {
             "photo":          AppEvent(EventType.TAP_PHOTO, source="touch"),

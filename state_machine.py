@@ -7,7 +7,7 @@ from config import AppConfig
 from events import AppEvent, EventType
 from models import AppModel, SessionState, TimerState, TransitionResult, UiState
 from states import AppState
-from shutdown_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine Logik/Dateizugriff
+from admin_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine Logik/Dateizugriff - umbenannt (Sprint 11, vormals shutdown_service.py)
 
 
 # NEU (3.2): Obergrenze fuer die PIN-Eingabe (verhindert unbegrenztes Anwachsen
@@ -23,12 +23,20 @@ _MAX_PIN_LENGTH = 12
 # bevor der Screen weiterschaltete. Der QR-Code je Einzelbild ist jetzt
 # stattdessen jederzeit aus der Galerie heraus abrufbar (siehe Feature 4,
 # AppState.GALLERY_PHOTO_QR).
-_SAVE_CONFIRMATION_TEXT = (
+#
+# GEAENDERT (Sprint-11-Nachbesserung): QR-Codes sind jetzt pro Veranstaltung
+# ueber event_config.json (qr_codes_enabled, siehe config.py) ab-/anschaltbar
+# - zwei Textvarianten statt einer festen Konstante, gewaehlt in
+# _handle_review je nach self.config.qr_codes_enabled.
+_SAVE_CONFIRMATION_TEXT_QR = (
     "Das Bild kann in der Galerie betrachtet werden. Dort hast du die "
     "Möglichkeit, einen QR-Code für jedes Bild aufzurufen und darüber "
     "einzelne Bilder von der Fotobox auf dein Mobiltelefon herunter zu "
     "laden. Die Bilder liegen NICHT auf einem Web-Server, sondern "
     "ausschließlich hier auf der Fotobox!"
+)
+_SAVE_CONFIRMATION_TEXT_NO_QR = (
+    "Das Bild kann in der Galerie betrachtet werden."
 )
 
 
@@ -66,7 +74,14 @@ class StateMachine:
             if model.ui.storage_alarm_level >= 2:
                 return TransitionResult(model=model)
             return self._go_photo_intro(model, now)
-        if event.type == EventType.TAP_GALLERY:
+        # NEU (Sprint 11): ohne Galerie-Funktion fuer diese Veranstaltung
+        # (config.gallery_enabled, siehe event_config.json) ignoriert die
+        # State Machine TAP_GALLERY - der Button ist im Renderer/Layout
+        # ohnehin schon nicht antippbar (siehe app_with_hw._map_click_to_
+        # event), dies ist die zusaetzliche Absicherung, falls das Event
+        # trotzdem irgendwie ausgeloest wird (Verteidigung in der Tiefe,
+        # gleiches Muster wie config.qr_codes_enabled).
+        if event.type == EventType.TAP_GALLERY and self.config.gallery_enabled:
             # NEU (Etappe 7): ohne Fotos zeigt GALLERY_GRID nur einen leeren
             # Dateipfad - stattdessen ein eigener, einladender Zustand.
             if not model.session.photos:
@@ -79,7 +94,16 @@ class StateMachine:
         if event.type == EventType.SHUTDOWN_GESTURE_DETECTED:  # NEU (3.2)
             return self._go_pin_entry(model, now)
         if event.type == EventType.IDLE_TIMEOUT:
-            return self._go_attract_gallery(model, now)
+            # NEU (Sprint 11): der Attract-Modus zeigt bisherige Fotos als
+            # Einladung - ohne Galerie-Funktion fuer diese Veranstaltung
+            # inhaltlich nicht mehr passend (Gaeste sollen dann grundsaetzlich
+            # keine fremden Fotos auf dem Display sehen). Stattdessen bleibt
+            # das Hauptmenue einfach stehen (_go_main_menu haengt die
+            # Idle-Deadline neu ein, sonst wuerde IDLE_TIMEOUT sofort wieder
+            # feuern).
+            if self.config.gallery_enabled:
+                return self._go_attract_gallery(model, now)
+            return self._go_main_menu(model, now)
         return TransitionResult(model=model)
 
     def _handle_instructions(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
@@ -169,7 +193,13 @@ class StateMachine:
         # NEU (Sprint 11, Feature 4): Doppeltap auf das Foto oder das Icon
         # "QR-Code anfordern" (beide loesen dasselbe Event aus, siehe
         # app_with_hw.py) - QR-Code fuer GENAU dieses Foto einblenden.
-        if event.type == EventType.TAP_GALLERY_QR and photo_count:
+        # GEAENDERT (Sprint-11-Nachbesserung): ignoriert das Event komplett,
+        # wenn QR-Codes fuer diese Veranstaltung deaktiviert sind
+        # (config.qr_codes_enabled) - zentrale Stelle, die sowohl den
+        # Doppeltap als auch das Icon (falls trotzdem angetippt) abdeckt,
+        # unabhaengig davon, ob die Anzeige des Icons selbst auch schon
+        # unterdrueckt wird (siehe app_with_hw.py/renderer.py).
+        if event.type == EventType.TAP_GALLERY_QR and photo_count and self.config.qr_codes_enabled:
             return self._go_gallery_photo_qr(model, now)
         return TransitionResult(model=model)
 
@@ -257,15 +287,28 @@ class StateMachine:
             )
             timers = replace(model.timers, qr_deadline=now + self.config.timeouts.qr_display_seconds)
             # GEAENDERT (Sprint 11, Feature 3): kein sofortiger QR-Code mehr,
-            # siehe _SAVE_CONFIRMATION_TEXT oben. "export_photo" bleibt
+            # siehe _SAVE_CONFIRMATION_TEXT_QR oben. "export_photo" bleibt
             # bestehen - kopiert das Foto weiterhin unter demselben Dateinamen
             # ins Web-Verzeichnis, das braucht der spaetere Foto-QR aus der
             # Galerie (Feature 4, AppState.GALLERY_PHOTO_QR). "generate_qr"
             # entfaellt, da auf diesem Screen kein QR-Bild mehr gezeichnet wird.
-            ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT)
+            #
+            # GEAENDERT (Sprint-11-Nachbesserung): ist qr_codes_enabled fuer
+            # diese Veranstaltung aus, entfaellt zusaetzlich "export_photo" -
+            # ohne QR-Funktion gibt es keinen Grund, das Foto in das (vom
+            # Gaeste-WLAN aus erreichbare) Web-Verzeichnis zu kopieren. Das
+            # ist nicht nur Aufraeumen, sondern auch Datenschutz: kein Foto
+            # landet dann ueberhaupt erst dort, wo es theoretisch abrufbar
+            # waere.
+            if self.config.qr_codes_enabled:
+                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_QR)
+                actions = ("export_photo", "set_led_qr", "stop_preview")
+            else:
+                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_NO_QR)
+                actions = ("set_led_qr", "stop_preview")
             return TransitionResult(
                 model=model.evolve(state=AppState.QR_DISPLAY, session=session, timers=timers, ui=ui),
-                actions=("export_photo", "set_led_qr", "stop_preview"),
+                actions=actions,
             )
         if event.type == EventType.TAP_DELETE:
             timers = replace(model.timers, delete_deadline=now + self.config.timeouts.delete_confirm_seconds)

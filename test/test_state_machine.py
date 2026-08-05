@@ -355,5 +355,87 @@ class StorageAlarmLockTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.GALLERY_GRID)
 
 
+# -- QR-Codes pro Veranstaltung deaktivierbar (Sprint-11-Nachbesserung) -----
+# Eigene TestCase statt einzelner Tests in StateMachineTestCase, weil hier
+# ein abweichender AppConfig (qr_codes_enabled=False) noetig ist - setUp()
+# baut Machine/Model bewusst analog zu StateMachineTestCase.setUp() auf,
+# nur mit diesem einen geaenderten Wert.
+class QrCodesDisabledTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = replace(DEFAULT_CONFIG, qr_codes_enabled=False)
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def boot_and_go_to_countdown_menu(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+
+    def test_review_save_skips_export_photo_when_qr_disabled(self) -> None:
+        self.boot_and_go_to_countdown_menu()
+        self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        self.transition(EventType.COUNTDOWN_FINISHED, now_offset=self.config.timeouts.boot_seconds + 4.5)
+        self.transition(EventType.CAPTURE_OK, now_offset=self.config.timeouts.boot_seconds + 4.6, payload={"photo_path": "/tmp/test.jpg"})
+        result = self.transition(EventType.TAP_SAVE, now_offset=self.config.timeouts.boot_seconds + 4.7, payload={"filename": "test.jpg"})
+        self.assertEqual(result.model.state, AppState.QR_DISPLAY)
+        self.assertNotIn("export_photo", result.actions)
+        self.assertNotIn("QR", result.model.ui.status_text)
+        self.assertIn("Galerie", result.model.ui.status_text)
+
+    def test_gallery_qr_tap_is_ignored_when_qr_disabled(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("a.jpg", "b.jpg")))
+        self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.transition(
+            EventType.TAP_FULLSCREEN_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.3,
+            payload={"index": 1},
+        )
+        result = self.transition(EventType.TAP_GALLERY_QR, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        self.assertEqual(result.model.state, AppState.GALLERY_FULLSCREEN)
+
+
+# NEU (Sprint 11): Galerie-Funktion ueber event_config.json (config.
+# gallery_enabled) ab-/anschaltbar - analog zu QrCodesDisabledTestCase
+# oben, nur fuer TAP_GALLERY und den Attract-Modus.
+class GalleryDisabledTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = replace(DEFAULT_CONFIG, gallery_enabled=False)
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def boot_to_main_menu(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+
+    def test_tap_gallery_is_ignored_when_gallery_disabled(self) -> None:
+        self.boot_to_main_menu()
+        self.model = self.model.evolve(session=replace(self.model.session, photos=("a.jpg", "b.jpg")))
+        result = self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+
+    def test_idle_timeout_stays_on_main_menu_when_gallery_disabled(self) -> None:
+        self.boot_to_main_menu()
+        offset = self.config.timeouts.boot_seconds + self.config.timeouts.main_menu_idle_seconds + 1.0
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=offset)
+        self.assertEqual(result.model.state, AppState.MAIN_MENU)
+        # Idle-Deadline muss neu gesetzt sein (in der Zukunft liegen) -
+        # sonst wuerde IDLE_TIMEOUT bei jedem folgenden Tick sofort wieder
+        # feuern (siehe app_with_hw._emit_due_timers).
+        self.assertGreater(result.model.timers.idle_deadline, self.now + offset)
+
+
 if __name__ == "__main__":
     unittest.main()

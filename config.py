@@ -18,18 +18,36 @@ except ImportError:
     print("[Config] WARNUNG: local_secrets.py fehlt - siehe local_secrets_example.py")
 
 _PLACEHOLDER = "BITTE_local_secrets.py_ANLEGEN"
-SHUTDOWN_PIN = getattr(_secrets, "SHUTDOWN_PIN", _PLACEHOLDER)
+
+# GEAENDERT (Sprint 11): SHUTDOWN_PIN -> SERVICE_MENU_PIN (und ebenso fuer
+# die drei Geste-Parameter unten) - die PIN schuetzt den Zugang zum
+# GESAMTEN Service-Menue (Status/Diagnose, USB-Export, Bilder loeschen,
+# Kamera-Einstellungen, Herunterfahren, ...), nicht nur das Herunterfahren,
+# das urspruenglich der einzige Menuepunkt dahinter war (siehe
+# admin_service.py, vormals shutdown_service.py). Liest bevorzugt den
+# neuen Namen aus local_secrets.py, faellt aber - fuer bereits im Einsatz
+# befindliche local_secrets.py-Dateien auf dem Pi, die noch nicht manuell
+# umbenannt wurden - auf den alten Namen zurueck, bevor der eingebaute
+# Standard greift. Dieser Fallback kann entfernt werden, sobald
+# local_secrets.py ueberall auf die neuen Namen umgestellt ist.
+def _secret(new_name: str, old_name: str, default):
+    return getattr(_secrets, new_name, getattr(_secrets, old_name, default))
+
+
+SERVICE_MENU_PIN = _secret("SERVICE_MENU_PIN", "SHUTDOWN_PIN", _PLACEHOLDER)
 
 # Parameter der Geheim-Geste - ebenfalls aus local_secrets.py, damit weder
 # Muster noch Position im Repo stehen. Sinnvolle Standards, falls nicht
 # gesetzt (die Geste funktioniert dann trotzdem, nur eben mit den hier
 # hinterlegten Default-Werten).
-SHUTDOWN_GESTURE_ZONE = getattr(_secrets, "SHUTDOWN_GESTURE_ZONE", "rechts")
-SHUTDOWN_GESTURE_PATTERN = getattr(
-    _secrets, "SHUTDOWN_GESTURE_PATTERN",
+SERVICE_MENU_GESTURE_ZONE = _secret("SERVICE_MENU_GESTURE_ZONE", "SHUTDOWN_GESTURE_ZONE", "rechts")
+SERVICE_MENU_GESTURE_PATTERN = _secret(
+    "SERVICE_MENU_GESTURE_PATTERN", "SHUTDOWN_GESTURE_PATTERN",
     ("kurz", "kurz", "kurz", "lang", "kurz", "kurz"),
 )
-SHUTDOWN_LONG_PRESS_SECONDS = getattr(_secrets, "SHUTDOWN_LONG_PRESS_SECONDS", 0.6)
+SERVICE_MENU_LONG_PRESS_SECONDS = _secret(
+    "SERVICE_MENU_LONG_PRESS_SECONDS", "SHUTDOWN_LONG_PRESS_SECONDS", 0.6,
+)
 
 
 # Vier waehlbare, unsichtbare Zonen fuer die Geste - jeweils als Bruchteil
@@ -123,6 +141,36 @@ if _event_wifi_password:
     GUEST_WIFI_PASSWORD = str(_event_wifi_password)
 else:
     GUEST_WIFI_PASSWORD = getattr(_secrets, "GUEST_WIFI_PASSWORD", _PLACEHOLDER)
+
+# NEU (Sprint-11-Nachbesserung): ob QR-Codes fuer diese Veranstaltung
+# ueberhaupt erzeugt/angezeigt werden sollen - Speicher-Bestaetigung
+# (state_machine._SAVE_CONFIRMATION_TEXT_*), das Icon/der Doppeltap "QR-Code
+# anfordern" in der Galerie-Vollansicht sowie AppState.GALLERY_PHOTO_QR
+# richten sich alle danach (siehe state_machine.py, app_with_hw.py). Manche
+# Veranstaltungsorte haben kein Gaeste-WLAN oder der Gastgeber moechte
+# grundsaetzlich keinen digitalen Download anbieten. Default True - das
+# bisherige Verhalten bleibt fuer bestehende Installationen unveraendert,
+# solange event_config.json diesen Schluessel nicht explizit auf false setzt.
+QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
+
+# NEU (Sprint 11): ob die Galerie (Durchblaettern bisheriger Fotos + Voll-
+# ansicht) fuer diese Veranstaltung ueberhaupt angeboten wird. Manche
+# Veranstaltungen wollen/duerfen aus Datenschutz- oder Praesentationsgruenden
+# nicht, dass Gaeste die Fotos anderer Gaeste auf dem Display durchsehen
+# koennen. Betrifft den "Galerie"-Button im Hauptmenue, den automatischen
+# Attract-Modus (ATTRACT_GALLERY zeigt bisherige Fotos als Einladung - ohne
+# Galerie-Funktion inhaltlich nicht mehr passend) sowie Anleitung und
+# Nutzungsbedingungen (siehe renderer.py). Default True - bestehende
+# Installationen bleiben unveraendert, solange event_config.json diesen
+# Schluessel nicht explizit auf false setzt.
+#
+# WICHTIG: der foto-spezifische QR-Download (Sprint 11, Feature 4) ist
+# ausschliesslich aus der Galerie-Vollansicht heraus erreichbar - ist die
+# Galerie deaktiviert, ist der QR-Download damit automatisch ebenfalls
+# unerreichbar, unabhaengig vom eigenen Schalter QR_CODES_ENABLED. Beide
+# Schalter wirken daher an manchen Stellen (siehe renderer._draw_terms)
+# gemeinsam (UND-verknuepft).
+GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 
 # NEU (Etappe 8, Feedback): erkennt, ob die Event-Konfiguration noch auf den
 # generischen Platzhaltern steht - entweder weil data/event_config.json
@@ -313,22 +361,30 @@ class StorageConfig:
 
 @dataclass(frozen=True)
 class ShutdownConfig:
+    # NEU (Sprint 11): Klassenname/Feldname (AppConfig.shutdown) bewusst
+    # unveraendert gelassen, obwohl die PIN laengst den gesamten
+    # Service-Bereich schuetzt, nicht nur das Herunterfahren - anders als
+    # bei den lokalen Secrets-Variablen (SERVICE_MENU_PIN u.a., siehe
+    # unten) haette eine Umbenennung hier deutlich mehr Dateien beruehrt
+    # (jede Stelle, die self.config.shutdown.* liest). Auf Wunsch spaeter
+    # in einem eigenen Schritt nachziehbar.
+    #
     # Verstecktes Herunterfahren per Geheim-Geste im Hauptmenue + PIN.
     # PIN, Zone, Muster und Long-Press-Dauer kommen aus local_secrets.py
     # (Fallbacks siehe oben) - stehen bewusst NICHT im Repo.
-    pin: str = SHUTDOWN_PIN
+    pin: str = SERVICE_MENU_PIN
 
     # Gewaehlte Zone als Schluesselwort (nur informativ / fuer Debug-Ausgaben).
-    gesture_zone: str = SHUTDOWN_GESTURE_ZONE
+    gesture_zone: str = SERVICE_MENU_GESTURE_ZONE
     # Zone als konkretes Bruchteil-Rechteck (x, y, Breite, Hoehe), aus dem
     # Schluesselwort aufgeloest. Der Detector rechnet das mit der aktuellen
     # Bildschirmgroesse in Pixel um (SecretGestureDetector.from_config).
-    gesture_corner_fraction: tuple[float, float, float, float] = _resolve_gesture_zone(SHUTDOWN_GESTURE_ZONE)
+    gesture_corner_fraction: tuple[float, float, float, float] = _resolve_gesture_zone(SERVICE_MENU_GESTURE_ZONE)
 
     # Muster der Geste ("Anzahl"): Reihenfolge aus "kurz"/"lang".
-    gesture_pattern: tuple[str, ...] = SHUTDOWN_GESTURE_PATTERN
+    gesture_pattern: tuple[str, ...] = SERVICE_MENU_GESTURE_PATTERN
     # Dauer: ab dieser Haltedauer gilt ein Tipp als "lang" (Sekunden).
-    long_press_seconds: float = SHUTDOWN_LONG_PRESS_SECONDS
+    long_press_seconds: float = SERVICE_MENU_LONG_PRESS_SECONDS
     # Groesste erlaubte Pause zwischen zwei Tipps; danach beginnt die Geste
     # von vorn. Bewusst in config (Robustheits-Konstante, kein Geheimnis).
     gesture_max_gap_seconds: float = 2.0
@@ -408,6 +464,12 @@ class AppConfig:
     # Passwort noch auf den generischen Platzhaltern stehen - siehe
     # NEEDS_EVENT_SETUP oben fuer die genaue Bedingung.
     needs_event_setup: bool = NEEDS_EVENT_SETUP
+    # NEU (Sprint-11-Nachbesserung): kommt aus data/event_config.json
+    # (Fallback True), nicht mehr fest im Code - siehe QR_CODES_ENABLED oben.
+    qr_codes_enabled: bool = QR_CODES_ENABLED
+    # NEU (Sprint 11): kommt aus data/event_config.json (Fallback True),
+    # siehe GALLERY_ENABLED oben.
+    gallery_enabled: bool = GALLERY_ENABLED
 
     def ensure_directories(self) -> None:
         for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):

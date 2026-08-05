@@ -34,7 +34,8 @@ class AppState(Enum):
     MAINTENANCE = auto()
     # --- Verstecktes Herunterfahren (Schritt 3) ---
     # PIN_ENTRY: Ziffernfeld, erscheint nach erkannter Geheim-Geste im
-    # Hauptmenue (siehe shutdown_service.SecretGestureDetector).
+    # Hauptmenue (siehe admin_service.SecretGestureDetector, umbenannt
+    # Sprint 11, vormals shutdown_service.py).
     PIN_ENTRY = auto()
     # SHUTDOWN_GOODBYE: Abschieds-Animation (Wallpaper shutdown_wallpaper.png
     # + LED-Sonnenuntergang led_shutdown.py); danach faehrt der Pi herunter.
@@ -94,4 +95,3 @@ class AppState(Enum):
     ADMIN_USB_RESOLVE = auto()
     # NEU (4.7): Ergebnis-Screen nach dem Export.
     ADMIN_USB_EXPORT_DONE = auto()
-

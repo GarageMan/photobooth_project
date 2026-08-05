@@ -16,7 +16,7 @@ import unittest
 
 from config import DEFAULT_CONFIG
 from events import AppEvent, EventType
-from shutdown_service import PinResult
+from admin_service import PinResult  # umbenannt (Sprint 11, vormals shutdown_service.py)
 from state_machine import StateMachine, _MAX_PIN_LENGTH
 from states import AppState
 

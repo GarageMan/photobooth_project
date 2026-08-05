@@ -85,6 +85,26 @@ class Renderer:
         # _current_countdown_image gezogen (siehe render()).
         self._countdown_image_pool: list[pygame.Surface] | None = None
         self._current_countdown_image: pygame.Surface | None = None
+        # NEU (Sprint-11-Nachbesserung): Pools aller "file_icon_01.png" ..
+        # "_19.png"-Varianten (echte Fotos statt des handgezeichneten
+        # Symbols) fuer die Datei-Animationen (Aufnahme-Uebertragung,
+        # USB-Export, Pruefsummen-Vergleich, Loesch-Schredder) - gleiches
+        # Lade-/Cache-Prinzip wie _countdown_image_pool, siehe
+        # _load_file_icon_pool(). Ein Eintrag pro angefragter Zielgroesse
+        # (_FILE_ICON_SIZE fuer die kleinen "fliegenden" Symbole,
+        # _FILE_ICON_COMPARE_SIZE fuer die groessere Vergleichsanimation).
+        self._file_icon_pools: dict[tuple[int, int], list[pygame.Surface]] = {}
+        # Merkt sich pro laufender Aufnahme-Uebertragung (_draw_
+        # capture_transfer_animation), welches Symbol aus dem Pool gezogen
+        # wurde, damit es waehrend EINER Uebertragung stabil bleibt statt
+        # bei jedem Frame zu wechseln - siehe _capture_transfer_icon_key().
+        self._capture_transfer_counter: int = 0
+        self._capture_transfer_progress_seen: float | None = None
+        # NEU (Sprint-11-Nachbesserung): Zeitpunkt (time.time()), zu dem der
+        # USB-Export-Abschluss-Screen betreten wurde - fuer die kurze
+        # "Pop"-Einblendung des Ergebnis-Symbols, siehe
+        # _draw_admin_usb_result_badge() und render().
+        self._admin_usb_done_entered_at: float | None = None
         self._main_menu_background: pygame.Surface | bool | None = None
         self._boot_background: pygame.Surface | bool | None = None
         self._shutdown_background: pygame.Surface | bool | None = None  # NEU (3.3)
@@ -110,6 +130,10 @@ class Renderer:
         # Muster wie gallery_thumbnail_hitboxes.
         self.usb_conflict_row_hitboxes: list[tuple[pygame.Rect, str, str]] = []
         self._last_rendered_state: AppState | None = None
+        # NEU (Nutzer-Feedback, Screenshot "Dateien mit abweichendem Inhalt
+        # gef[unden]" ragte rechts ueber den Bildschirmrand hinaus): Cache
+        # fuer verkleinerte Varianten von font_title, siehe _title_font_for().
+        self._title_font_cache: dict[tuple[str, int], pygame.font.Font] = {}
 
     def render(
         self,
@@ -134,6 +158,11 @@ class Renderer:
         # ziehen, damit es bei jedem Foto wechselt statt immer gleich zu sein.
         if model.state == AppState.COUNTDOWN and self._last_rendered_state != AppState.COUNTDOWN:
             self._select_random_countdown_image()
+        # NEU (Sprint-11-Nachbesserung): Startzeitpunkt fuer die kurze
+        # "Pop"-Einblendung des Erfolg/Fehler-Symbols auf dem USB-Export-
+        # Abschluss-Screen - siehe _draw_admin_usb_result_badge().
+        if model.state == AppState.ADMIN_USB_EXPORT_DONE and self._last_rendered_state != AppState.ADMIN_USB_EXPORT_DONE:
+            self._admin_usb_done_entered_at = time.time()
         self._last_rendered_state = model.state
 
         self.screen.fill(self._background_color(model.state))
@@ -238,6 +267,9 @@ class Renderer:
 
         if model.state == AppState.ADMIN_USB_EXPORT_DONE:    # NEU (4.7)
             self._draw_admin_usb_lines(model)
+            # NEU (Sprint-11-Nachbesserung #2): Haken/Kreuz-Ergebnissymbol,
+            # siehe _draw_admin_usb_result_badge().
+            self._draw_admin_usb_result_badge(model)
 
         # Bei Ziffer 1 (Liveview aus, "bitte laecheln") soll GAR KEIN Text
         # mehr zu sehen sein - weder Titel noch Statuszeile.
@@ -272,25 +304,24 @@ class Renderer:
         }
 
         if model.state not in text_screens and not hide_all_text:
-            self._draw_text(self.config.screen.title, self.font_title, (30, 30, 35), (63, 64))
-            self._draw_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_MENU:
             # NEU (4.2): statt des Fotobox-Titels an gleicher Position/
             # Schrift/Farbe der Menuename - der Titel ist hier nicht der
             # passende Kontext.
-            self._draw_text("Service-Menü", self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text("Service-Menü", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_STATUS:
             # NEU (4.3): eigener Titel statt des Fotobox-Titels, wie ADMIN_MENU.
-            self._draw_text("Status / Diagnose", self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text("Status / Diagnose", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_CAMERA_SETTINGS:
             # NEU (Sprint 11, Feature 2): eigener Titel, wie ADMIN_STATUS.
-            self._draw_text("Kamera-Einstellungen", self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text("Kamera-Einstellungen", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_DELETE_DONE:
             # NEU (4.4): Ergebnis der Loeschung.
-            self._draw_text("Löschen abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text("Löschen abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_USB_EXPORT_DONE:
             # NEU (4.7): eigener Titel statt des generischen status_text.
-            self._draw_text("Export abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
+            self._draw_shadowed_text("Export abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
         elif model.state in {
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
@@ -298,7 +329,14 @@ class Renderer:
         }:
             # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
             # eine Ueberschrift fuer alle Screens, kein Sonderfall je Zustand.
-            self._draw_text(model.ui.status_text, self.font_title, (255, 255, 255), (60, 60))
+            # NEU (Nutzer-Feedback): laengere Varianten (z.B. "Dateien mit
+            # abweichendem Inhalt gefunden") ragten bei voller Titelgroesse
+            # rechts ueber den Bildschirmrand hinaus - siehe
+            # _title_font_for(). 60px Rand links, 40px Sicherheitsabstand
+            # rechts.
+            title_max_width = self.config.screen.width - 60 - 40
+            title_font = self._title_font_for(model.ui.status_text, title_max_width)
+            self._draw_shadowed_text(model.ui.status_text, title_font, (255, 255, 255), (60, 60))
         # ADMIN_RESTART_PENDING/ADMIN_USB_RESOLVE zeigen bewusst gar keinen
         # Titel - nur die grosse zentrierte Statuszeile.
 
@@ -364,17 +402,33 @@ class Renderer:
             status_color = (40, 40, 45) if model.state == AppState.MAIN_MENU else (255, 220, 120)
             status_font = self.font_status_main_menu if model.state == AppState.MAIN_MENU else self.font_body
             if model.state == AppState.MAIN_MENU:
-                # NEU (Lesbarkeit): der Willkommenstext ("Willkommen an der
-                # Fotobox!") ist bei der um 50% vergroesserten Schrift nur
-                # noch knapp schmaler als der Bildschirm - eine automatische
-                # Verkleinerung (gleiche Technik wie bei Button-Labels in
-                # _draw_button()) verhindert ein Abschneiden am rechten Rand,
-                # falls die Systemschrift auf der eingesetzten Hardware
-                # geringfuegig breiter rendert als hier getestet.
+                # NEU (Lesbarkeit): der Willkommenstext ("Lass dich zur
+                # Erinnerung an die Veranstaltung fotografieren!") ist bei
+                # der um 50% vergroesserten Schrift nur noch knapp schmaler
+                # als der Bildschirm - eine automatische Verkleinerung
+                # (gleiche Technik wie bei Button-Labels in _draw_button())
+                # verhindert ein Abschneiden am rechten Rand, falls die
+                # Systemschrift auf der eingesetzten Hardware geringfuegig
+                # breiter rendert als hier getestet. Die Kartenpolsterung
+                # (2x card_padding_x) wird beim Fitting mit beruecksichtigt,
+                # damit die fertige Karte nicht ueber den Bildschirmrand
+                # hinausragt.
+                card_padding_x = 40
                 status_font = self._fit_text_font(
-                    model.ui.status_text, status_font, self.config.screen.width - 60 - 40,
+                    model.ui.status_text, status_font, self.config.screen.width - 60 - 40 - 2 * card_padding_x,
                 )
-            self._draw_text(model.ui.status_text, status_font, status_color, (60, 240))
+                # NEU (Nutzer-Feedback, Lesbarkeit): der Begruessungstext lag
+                # bisher direkt auf dem (teils unruhigen) Eventfoto im
+                # Hintergrund - eine weisse, abgerundete Karte mit Schatten
+                # (siehe _draw_text_card, gleiche Optik wie Titel/Buttons)
+                # sorgt jetzt fuer verlaesslichen Kontrast unabhaengig vom
+                # jeweiligen Foto.
+                self._draw_text_card(
+                    model.ui.status_text, status_font, status_color,
+                    (self.config.screen.width // 2, 270), padding_x=card_padding_x,
+                )
+            else:
+                self._draw_text(model.ui.status_text, status_font, status_color, (60, 240))
 
         if model.ui.error_text and model.state not in text_screens:
             self._draw_text(model.ui.error_text, self.font_body, (255, 120, 120), (60, 320))
@@ -902,10 +956,13 @@ class Renderer:
         Herkunft: app_with_hw._capture_progress_fraction, gespeist aus der
         in capture_timing.py persistierten Zeitschaetzung).
 
-        Alle Symbole werden mit pygame-Bordmitteln gezeichnet (keine neuen
-        Bild-Assets) - gleicher Stil wie die Cinema-Countdown-Grafik
-        (_draw_cinema_countdown) und der Speicheralarm-Rahmen
-        (_draw_storage_critical_overlay)."""
+        Kamera- und Speicher-Symbol sind weiterhin mit pygame-Bordmitteln
+        gezeichnet (keine neuen Bild-Assets noetig) - gleicher Stil wie die
+        Cinema-Countdown-Grafik (_draw_cinema_countdown) und der
+        Speicheralarm-Rahmen (_draw_storage_critical_overlay). Das
+        fliegende Datei-Symbol selbst nutzt seit der Sprint-11-
+        Nachbesserung eines der echten file_icon_XX.png-Fotos, siehe
+        _draw_file_icon()."""
         progress = max(0.0, min(1.0, progress))
         width, height = self.config.screen.width, self.config.screen.height
         cy = round(height * 0.66)
@@ -929,7 +986,8 @@ class Renderer:
         # Leichter Bogen nach oben waehrend der Bewegung ("huepft" ein
         # Stueck), steht an beiden Enden still auf der Mittellinie.
         bounce = round(-22 * math.sin(eased * math.pi))
-        self._draw_file_icon((file_x, cy + bounce))
+        key = self._capture_transfer_icon_key(progress)
+        self._draw_file_icon((file_x, cy + bounce), key=key)
 
     def _draw_camera_icon(self, center: tuple[int, int]) -> None:
         """Stark vereinfachtes Kamera-Symbol (Gehaeuse + Objektiv-Kreis)."""
@@ -966,38 +1024,188 @@ class Renderer:
                 (contact_x, rect.top + 20), (contact_x, rect.top + 34), 2,
             )
 
-    def _draw_file_icon(self, center: tuple[int, int]) -> None:
-        """Stark vereinfachtes Bilddatei-Symbol (Blatt mit umgeknickter
-        Ecke + kleines Berg-/Sonne-Piktogramm) - siehe Beispielbild aus dem
-        Refinement (JPEG-/Bild-Symbol)."""
+    def _draw_usb_stick_icon(self, center: tuple[int, int]) -> None:
+        """Stark vereinfachtes USB-Stick-Symbol (silberner Stecker oben,
+        oranger Koerper darunter) - Farb-/Formsprache angelehnt an das vom
+        Nutzer im Refinement mitgeschickte Beispielbild, aber im selben
+        reduzierten Icon-Stil wie die uebrigen handgezeichneten Symbole
+        dieser Datei (_draw_storage_icon, _draw_camera_icon).
+
+        GEAENDERT (Nutzer-Feedback): schmaler und weniger rund als die
+        erste Fassung (Koerper 46px breit, border_radius 12) - wirkte im
+        Vergleich zum Beispielbild zu "breit"/blobby. Koerper und Stecker
+        sind jetzt schlanker (34px breit) und weniger stark abgerundet
+        (border_radius 8/3), naeher an den Proportionen des Beispielbilds."""
+        cx, cy = center
+        body = pygame.Rect(0, 0, 34, 58)
+        body.center = (cx, cy + 12)
+        connector = pygame.Rect(0, 0, 16, 22)
+        connector.midbottom = (cx, body.top + 6)
+
+        pygame.draw.rect(self.screen, (250, 165, 15), body, border_radius=8)
+        pygame.draw.rect(self.screen, (200, 120, 0), body, width=2, border_radius=8)
+
+        pygame.draw.rect(self.screen, (210, 215, 220), connector, border_radius=2)
+        pygame.draw.rect(self.screen, (140, 145, 150), connector, width=2, border_radius=2)
+        for dx in (-4, 4):
+            contact = pygame.Rect(0, 0, 3, 7)
+            contact.center = (cx + dx, connector.top + 7)
+            pygame.draw.rect(self.screen, (60, 60, 65), contact)
+
+    # NEU (Sprint-11-Nachbesserung): Groesse, in der die echten
+    # file_icon_XX.png-Fotos auf dem Bildschirm dargestellt werden - naeher
+    # am Original-Seitenverhaeltnis (330:439 ≈ 0.75) als das alte
+    # handgezeichnete Symbol (34x42) und etwas groesser, weil Portrait +
+    # "JPG"-Schriftzug bei sehr kleiner Darstellung sonst kaum noch lesbar
+    # waeren.
+    _FILE_ICON_SIZE = (46, 61)
+    # NEU (Sprint-11-Nachbesserung): deutlich groessere Darstellung fuer die
+    # Pruefsummen-Vergleichsanimation (_draw_admin_usb_verify_animation) -
+    # dort stehen nur zwei Symbole im Mittelpunkt der Aufmerksamkeit statt
+    # mehrerer kleiner "fliegender" Symbole, daher duerfen/sollen sie
+    # deutlich groesser sein. Gleiches Seitenverhaeltnis wie _FILE_ICON_SIZE.
+    _FILE_ICON_COMPARE_SIZE = (96, 128)
+
+    def _draw_file_icon(
+        self,
+        center: tuple[int, int],
+        key: object = None,
+        alpha: int = 255,
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        """Zeichnet ein Bilddatei-Symbol bei `center` - bevorzugt eines der
+        19 vom Nutzer bereitgestellten Fotos (assets/file_icon_01.png ..
+        _19.png, siehe _load_file_icon_pool()) statt des urspruenglichen
+        handgezeichneten Platzhalters. `key` waehlt dabei STABIL statt rein
+        zufaellig aus (z.B. Lane+Zyklus-Nummer einer Animation) - derselbe
+        `key` liefert innerhalb eines Aufrufs immer dasselbe Bild, damit ein
+        einzelnes "fliegendes" Symbol waehrend seiner gesamten Bewegung
+        nicht bei jedem Frame das Bild wechselt. Ohne `key` (None) wird pro
+        Aufruf zufaellig gezogen. Ist kein einziges file_icon_XX.png
+        vorhanden (z.B. Testumgebung ohne assets/), faellt die Methode auf
+        das alte handgezeichnete Symbol zurueck (_draw_file_icon_vector).
+
+        `alpha` (0..255) blendet das Symbol zusaetzlich ein-/aus - genutzt
+        von _draw_admin_usb_transfer_animation, damit ein ankommendes
+        Symbol beim USB-Stick nicht sichtbar "einfriert", sondern kurz vor
+        dem Ziel weich verblasst statt starr darauf liegen zu bleiben.
+
+        `size` waehlt einen alternativen, groesser/kleiner vorskalierten
+        Bild-Pool (siehe _load_file_icon_pool) - Standard ist
+        _FILE_ICON_SIZE, die Pruefsummen-Vergleichsanimation nutzt das
+        deutlich groessere _FILE_ICON_COMPARE_SIZE."""
+        pool = self._load_file_icon_pool(size)
+        if not pool:
+            self._draw_file_icon_vector(center, alpha=alpha)
+            return
+        index = (hash(key) % len(pool)) if key is not None else random.randrange(len(pool))
+        icon = pool[index]
+        alpha = max(0, min(255, alpha))
+        if alpha >= 255:
+            self.screen.blit(icon, icon.get_rect(center=center))
+            return
+        faded = icon.copy()
+        faded.set_alpha(alpha)
+        self.screen.blit(faded, faded.get_rect(center=center))
+
+    def _load_file_icon_pool(self, size: tuple[int, int] | None = None) -> list[pygame.Surface]:
+        """Laedt und skaliert alle 19 moeglichen "file_icon_XX.png"-Fotos
+        (file_icon_01.png .. file_icon_19.png) einmalig pro angefragter
+        Zielgroesse und haelt sie fertig skaliert im Speicher (Cache-Dict
+        `_file_icon_pools`, ein Eintrag je `size`) - gleiches Prinzip wie
+        _load_countdown_image_pool() fuer die "bitte_laecheln"-Bilder, nur
+        mit mehreren parallelen Groessen (siehe _FILE_ICON_SIZE vs.
+        _FILE_ICON_COMPARE_SIZE). Skaliert wird immer aus der Original-
+        Datei (nicht aus einem bereits verkleinerten Pool), damit auch die
+        groessere Vergleichsanimation scharf bleibt.
+
+        Fehlende Nummern werden stillschweigend uebersprungen (kein
+        Fehler) - Stand Sprint-11-Nachbesserung liegen alle 19 Nummern vor."""
+        target_w, target_h = size or self._FILE_ICON_SIZE
+        cache_key = (target_w, target_h)
+        cached = self._file_icon_pools.get(cache_key)
+        if cached is not None:
+            return cached
+
+        pool: list[pygame.Surface] = []
+        for i in range(1, 20):
+            path = self.config.assets_dir / f"file_icon_{i:02d}.png"
+            try:
+                raw = pygame.image.load(str(path)).convert_alpha()
+            except (pygame.error, FileNotFoundError):
+                continue
+            scaled = pygame.transform.smoothscale(raw, (target_w, target_h))
+            pool.append(scaled)
+
+        if not pool:
+            print("[Renderer] Kein einziges file_icon_XX.png gefunden - Fallback auf das handgezeichnete Symbol.")
+
+        self._file_icon_pools[cache_key] = pool
+        return pool
+
+    def _capture_transfer_icon_key(self, progress: float) -> int:
+        """Liefert einen ueber die gesamte Dauer EINER Bilduebertragung
+        stabilen Schluessel fuer die Zufallsauswahl in _draw_file_icon()
+        (siehe _draw_capture_transfer_animation). Eine neue Uebertragung
+        wird daran erkannt, dass `progress` gegenueber dem letzten Aufruf
+        gesunken ist (oder dies der erste Aufruf ist) - dann wird ein
+        Zaehler erhoeht, der bis zum Ende dieser Uebertragung stabil
+        bleibt, danach fuer die naechste Uebertragung wieder wechselt."""
+        if self._capture_transfer_progress_seen is None or progress < self._capture_transfer_progress_seen - 0.01:
+            self._capture_transfer_counter += 1
+        self._capture_transfer_progress_seen = progress
+        return self._capture_transfer_counter
+
+    def _draw_file_icon_vector(self, center: tuple[int, int], alpha: int = 255) -> None:
+        """Urspruengliches, handgezeichnetes Bilddatei-Symbol (Blatt mit
+        umgeknickter Ecke + kleines Berg-/Sonne-Piktogramm). Seit der
+        Sprint-11-Nachbesserung (echte file_icon_XX.png-Fotos, siehe
+        _draw_file_icon) nur noch Fallback fuer den Fall, dass im
+        assets/-Ordner kein einziges dieser Fotos gefunden wird."""
         cx, cy = center
         w, h = 34, 42
         fold = 10
+        alpha = max(0, min(255, alpha))
+
+        if alpha >= 255:
+            target: pygame.Surface = self.screen
+            tcx, tcy = cx, cy
+            surf = None
+        else:
+            pad = 6
+            surf = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
+            target = surf
+            tcx, tcy = w // 2 + pad, h // 2 + pad
+
         rect = pygame.Rect(0, 0, w, h)
-        rect.center = (cx, cy)
+        rect.center = (tcx, tcy)
         points = [
             (rect.left, rect.top), (rect.right - fold, rect.top),
             (rect.right, rect.top + fold), (rect.right, rect.bottom),
             (rect.left, rect.bottom),
         ]
-        pygame.draw.polygon(self.screen, (255, 255, 255), points)
-        pygame.draw.polygon(self.screen, (60, 60, 65), points, width=2)
+        pygame.draw.polygon(target, (255, 255, 255), points)
+        pygame.draw.polygon(target, (60, 60, 65), points, width=2)
         pygame.draw.line(
-            self.screen, (60, 60, 65),
+            target, (60, 60, 65),
             (rect.right - fold, rect.top), (rect.right - fold, rect.top + fold), 2,
         )
         pygame.draw.line(
-            self.screen, (60, 60, 65),
+            target, (60, 60, 65),
             (rect.right - fold, rect.top + fold), (rect.right, rect.top + fold), 2,
         )
         # kleines Bild-Piktogramm (Sonne + Berg), analog zum Beispielbild
-        pygame.draw.circle(self.screen, (255, 200, 60), (rect.left + 10, rect.top + 16), 3)
+        pygame.draw.circle(target, (255, 200, 60), (rect.left + 10, rect.top + 16), 3)
         mountain = [
             (rect.left + 5, rect.bottom - 6), (rect.left + 14, rect.bottom - 18),
             (rect.left + 20, rect.bottom - 10), (rect.left + 26, rect.bottom - 20),
             (rect.right - 4, rect.bottom - 6),
         ]
-        pygame.draw.lines(self.screen, (60, 60, 65), False, mountain, 2)
+        pygame.draw.lines(target, (60, 60, 65), False, mountain, 2)
+
+        if surf is not None:
+            surf.set_alpha(alpha)
+            self.screen.blit(surf, (cx - (w // 2 + pad), cy - (h // 2 + pad)))
 
     def _draw_qr_card(
         self,
@@ -1018,12 +1226,15 @@ class Renderer:
                 "QR-Code konnte nicht erzeugt werden.", self.font_body, (255, 120, 120), center[1],
             )
             return
-        # GEAENDERT (Nutzer-Feedback): weisse Umrandung schmaler als vorher
-        # (war ein fester Wert von 24px unabhaengig von der Kartengroesse) -
-        # jetzt proportional zur Kartengroesse, damit sie bei der insgesamt
-        # groesseren Karte (siehe _draw_gallery_photo_qr) nicht breit wirkt.
+        # GEAENDERT (Nutzer-Feedback, 2. Runde): 12px reichen aus - fester
+        # Wert statt der zuvor proportionalen Berechnung (die war schon
+        # kleiner als der urspruengliche feste Wert von 24px, wirkte aber
+        # trotzdem noch breit). Grund war primaer NICHT dieser Kartenrand,
+        # sondern die in das QR-Bild selbst eingebackene Ruhezone der
+        # qrcode-Bibliothek (border=4 Module) - die wurde separat in
+        # qr_service.py auf 1 Modul reduziert, siehe dortigen Kommentar.
         card_total = max(80, min(max_size[0], max_size[1]))
-        card_padding = max(10, round(card_total * 0.045))
+        card_padding = 12
         target_size = card_total - 2 * card_padding
         scaled = pygame.transform.smoothscale(qr_surface, (target_size, target_size))
         card_side = target_size + 2 * card_padding
@@ -1034,11 +1245,12 @@ class Renderer:
         # echte Transparenz). Bewusst OHNE border_radius, damit der Schatten
         # exakt zur eckigen Karte passt (kein rundes Schatten-Eck hinter
         # einer eckigen Kartenecke).
-        shadow_offset = 6
         shadow_surface = pygame.Surface((card_side, card_side), pygame.SRCALPHA)
-        pygame.draw.rect(shadow_surface, (60, 63, 68, 140), shadow_surface.get_rect())
+        pygame.draw.rect(shadow_surface, (*self._SHADOW_COLOR, self._SHADOW_ALPHA), shadow_surface.get_rect())
         shadow_rect = shadow_surface.get_rect(center=center)
-        self.screen.blit(shadow_surface, (shadow_rect.x + shadow_offset, shadow_rect.y + shadow_offset))
+        self.screen.blit(
+            shadow_surface, (shadow_rect.x + self._SHADOW_OFFSET, shadow_rect.y + self._SHADOW_OFFSET)
+        )
 
         card = pygame.Surface((card_side, card_side))
         card.fill((255, 255, 255))
@@ -1181,14 +1393,21 @@ class Renderer:
         """Verstecktes Ziffernfeld fuer die Wartungs-PIN (AppState.PIN_ENTRY).
 
         Erreichbar nur ueber die Geheim-Geste im Hauptmenue (siehe
-        shutdown_service / app_with_hw). Die eingegebene PIN wird maskiert
+        admin_service / app_with_hw, admin_service umbenannt Sprint 11,
+        vormals shutdown_service.py). Die eingegebene PIN wird maskiert
         (ein Kreis je Ziffer), das Raster kommt aus layout.pin_keys.
         """
         width, height = self.config.screen.width, self.config.screen.height
 
+        # GEAENDERT (2. Nutzer-Feedback-Runde): Kopfzeile/PIN-Punkte/
+        # Fehlertext kompakter nach oben gerueckt (0.07/0.17/0.235 ->
+        # 0.055/0.132/0.178), damit unterhalb genug Platz fuer das nach oben
+        # gerueckte Tastenfeld PLUS ein "Abbrechen" in Standardgroesse bleibt
+        # (siehe layout.py, grid_y0/pin_keys["cancel"]) - beides zusammen
+        # passt sonst nicht auf 720px Bildschirmhoehe.
         # Kopfzeile (vom State gesetzt: "Wartungs-PIN eingeben").
         header = model.ui.status_text or "Wartungs-PIN eingeben"
-        self._blit_center(header, self.font_title, (255, 255, 255), round(0.07 * height))
+        self._blit_center(header, self.font_title, (255, 255, 255), round(0.055 * height))
 
         # Maskierte Anzeige: ein gefuellter Kreis pro eingegebener Ziffer.
         n = len(model.ui.pin_entry)
@@ -1197,7 +1416,7 @@ class Renderer:
             spacing = 44
             total_w = (n - 1) * spacing
             cx0 = width // 2 - total_w // 2
-            cy = round(0.17 * height)
+            cy = round(0.132 * height)
             for i in range(n):
                 pygame.draw.circle(self.screen, (240, 240, 240), (cx0 + i * spacing, cy), radius)
 
@@ -1205,14 +1424,24 @@ class Renderer:
         # Eingabe ist Teil des Service-Menues (nur Lutz) - font_body_admin
         # statt der fuer Gaeste vergroesserten font_body.
         if model.ui.error_text:
-            self._blit_center(model.ui.error_text, self.font_body_admin, (255, 120, 120), round(0.235 * height))
+            self._blit_center(model.ui.error_text, self.font_body_admin, (255, 120, 120), round(0.178 * height))
 
         # Ziffernfeld aus layout.pin_keys. Ziffern-Schluessel sind bereits
         # "0".."9"; Sondertasten bekommen sprechende Beschriftungen/Farben.
-        labels = {"backspace": "Löschen", "submit": "OK", "cancel": "Abbrechen"}
+        # GEAENDERT (Nutzer-Feedback): "Löschen" -> "DEL", passt auf der
+        # jetzt quadratischen, schmaleren Taste ohne staerkere automatische
+        # Verkleinerung als die uebrigen Tasten.
+        labels = {"backspace": "DEL", "submit": "OK", "cancel": "Abbrechen"}
         colors = {"backspace": (120, 90, 0), "submit": (0, 130, 0), "cancel": (100, 100, 100)}
+        # NEU (Nutzer-Feedback): Ziffern +50% groesser (Standard-Startgroesse
+        # waere 50, siehe _draw_button) - die Tasten sind seit der
+        # Layout-Ueberarbeitung quadratisch und schmaler als vorher, die
+        # Verkleinerungsschleife in _draw_button greift bei Bedarf trotzdem
+        # weiterhin. "Löschen"/"OK"/"Abbrechen" bleiben bei der Standardgroesse.
+        digit_font_size = 75
         for name, rect in self.layout.pin_keys.items():
-            self._draw_button(labels.get(name, name), rect, colors.get(name, (55, 65, 85)))
+            font_size = digit_font_size if name.isdigit() else None
+            self._draw_button(labels.get(name, name), rect, colors.get(name, (55, 65, 85)), font_size=font_size)
 
         # Fehler-Optik: schnelles Rot/Gelb-Blinken am Bildschirmrand als
         # Bildschirm-Echo zur LED-/Taster-Fehleranzeige, solange
@@ -1271,6 +1500,47 @@ class Renderer:
         sichtbaren Bereich passt (Wischen hoch/runter, siehe app_with_hw.py).
         """
         width, height = self.config.screen.width, self.config.screen.height
+        # GEAENDERT (Sprint-11-Nachbesserung): der bisherige Punkt 5 (QR-Code
+        # direkt nach dem Speichern scannen) beschrieb ein Verhalten, das es
+        # seit Sprint 11 Feature 3 gar nicht mehr gibt (kein sofortiges
+        # QR-Bild mehr, siehe state_machine._SAVE_CONFIRMATION_TEXT_*) - er
+        # entfaellt daher ersatzlos, unabhaengig von qr_codes_enabled. Der
+        # bisherige Punkt 6 (Galerie) ruckt zu Punkt 5 nach und bekommt den
+        # QR-Hinweissatz nur noch angehaengt, wenn QR-Codes fuer diese
+        # Veranstaltung ueberhaupt aktiv sind (config.qr_codes_enabled,
+        # siehe event_config.json) - dynamisch umgebrochen statt als feste
+        # Zeilenliste, da der Satz je nach Einstellung unterschiedlich lang
+        # ist (siehe _wrap_text).
+        #
+        # NEU (Sprint 11): der ganze Punkt 5 (Galerie) entfaellt jetzt
+        # ersatzlos, wenn die Galerie-Funktion fuer diese Veranstaltung
+        # deaktiviert ist (config.gallery_enabled) - dann gibt es nichts,
+        # worauf sich der Text noch beziehen wuerde (auch der QR-Hinweis
+        # darin, da der QR-Download ausschliesslich aus der Galerie-
+        # Vollansicht heraus erreichbar ist, siehe config.GALLERY_ENABLED).
+        gallery_lines: list[str] = []
+        if self.config.gallery_enabled:
+            gallery_point_text = (
+                "In der \"Galerie\" siehst du alle bisherigen Fotos. "
+                "Hoch/runter Wischen zum Blättern durch die Galerie, ein Foto "
+                "antippen für die Vollansicht, dort links/rechts Wischen"
+            )
+            if self.config.qr_codes_enabled:
+                gallery_point_text += (
+                    " und die Möglichkeit den QR-Code zum Download anzeigen "
+                    "zu lassen."
+                )
+            else:
+                gallery_point_text += "."
+            # "5. "/"    " sind beide exakt gleich breit (siehe Messung) - ein
+            # einheitlicher Puffer reicht fuer Erst- und Folgezeilen.
+            prefix_w = self.font_body.size("5. ")[0]
+            max_text_w = width - 60 - 40 - prefix_w
+            gallery_lines = [
+                ("5. " if i == 0 else "    ") + wrapped
+                for i, wrapped in enumerate(self._wrap_text(gallery_point_text, self.font_body, max_text_w))
+            ]
+
         lines = [
             "Bitte nutze die Fotobox nur, wenn du den",
             "Nutzungsbedingungen zustimmst.",
@@ -1285,20 +1555,12 @@ class Renderer:
             "3. Auf die Markierung stellen und lächeln!",
             "",
             "4. Nach der Aufnahme: Foto speichern oder löschen.",
-            "",
-            "5. Wurde das Foto gespeichert, so kannst du den",
-            "    QR-Code mit deinem Mobiltelefon scannen,",
-            "    um das Foto auf dein Mobiltelefon zu laden.",
-            "    Verbinde dich dazu mit dem Gäste-WLAN.",
-            "",
-            "6. In der \"Galerie\" siehst du alle bisherigen Fotos.",
-            "",
-            "    Hoch/runter Wischen zum Blättern durch die Galerie,",
-            "    ein Foto antippen für die Vollansicht, dort links/rechts",
-            "    Wischen.",
-            "",
-            "Viel Spaß! Bei Fragen bitte an Lutz wenden."
         ]
+        if gallery_lines:
+            lines.append("")
+            lines.extend(gallery_lines)
+        lines.append("")
+        lines.append("Viel Spaß! Bei Fragen bitte an Lutz wenden.")
 
         left = 60
         top = round(0.06 * height)
@@ -1350,7 +1612,43 @@ class Renderer:
         Veranstaltung) macht man hier direkt in der Liste `lines`.
         """
         width, height = self.config.screen.width, self.config.screen.height
-        wifi = self.config.network.guest_wifi_password
+        # GEAENDERT (Sprint-11-Nachbesserung): der ganze Abschnitt zum
+        # QR-Download entfaellt, wenn QR-Codes fuer diese Veranstaltung
+        # deaktiviert sind (config.qr_codes_enabled, siehe event_config.json)
+        # - ohne die Funktion gibt es auch nichts, worauf dieser Passus sich
+        # noch beziehen wuerde.
+        #
+        # NEU (Sprint 11): der QR-Download ist ausschliesslich aus der
+        # Galerie-Vollansicht heraus erreichbar (Sprint 11, Feature 4) -
+        # ohne Galerie-Funktion (config.gallery_enabled) ist er also
+        # ebenfalls unerreichbar, unabhaengig von qr_codes_enabled. Beide
+        # Schalter muessen daher UND-verknuepft aktiv sein, damit dieser
+        # Passus angezeigt wird.
+        qr_download_section = [
+            self._heading("Lokaler Download (WLAN)"),
+            "",
+            "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto",
+            "nach der Aufnahme per QR-Code herunterladen.",
+            "Da es sich um ein Veranstaltungsnetzwerk handelt",
+            "sind die Bilddateien dabei theoretisch für andere",
+            "angemeldete Nutzer einsehbar.",
+            "Lade keine Bilder herunter, wenn du damit nicht",
+            "einverstanden bist.",
+            "",
+        ] if (self.config.qr_codes_enabled and self.config.gallery_enabled) else []
+        # NEU (Sprint 11): diese Aussage stimmt nur, wenn die Galerie fuer
+        # diese Veranstaltung tatsaechlich aktiv ist (config.gallery_enabled)
+        # - ohne Galerie-Funktion koennen andere Gaeste die Fotos gerade
+        # NICHT auf dem Display einsehen, das muss der rechtlich relevante
+        # Text korrekt widerspiegeln statt etwas Falsches zu behaupten.
+        gallery_visibility_lines = [
+            "Während der Veranstaltung sind deine Fotos auf dem",
+            "Display von anderen Nutzern der Fotobox einsehbar.",
+        ] if self.config.gallery_enabled else [
+            "Eine Galerie-Funktion ist bei dieser Veranstaltung nicht",
+            "aktiv - andere Gäste können deine Fotos auf dem Display",
+            "der Fotobox nicht einsehen.",
+        ]
         lines = [
             self._heading("Nutzungsbedingungen zur Fotobox"),
             "",
@@ -1366,22 +1664,12 @@ class Renderer:
             "Sie werden zunächst lokal auf der Fotobox gespeichert",
             "und anschließend vom Gastgeber in einem privaten Kreis",
             "weiterverarbeitet.",
-            "Während der Veranstaltung sind deine Fotos auf dem",
-            "Display von anderen Nutzern der Fotobox einsehbar.",
+            *gallery_visibility_lines,
             "Eine Weitergabe an unbeteiligte Dritte, eine",
             "Veröffentlichung bspw. im Internet oder eine",
             "kommerzielle Nutzung findet nicht statt.",
             "",
-            self._heading("Lokaler Download (WLAN)"),
-            "",
-            "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto",
-            "nach der Aufnahme per QR-Code herunterladen.",
-            "Da es sich um ein Veranstaltungsnetzwerk handelt",
-            "sind die Bilddateien dabei theoretisch für andere",
-            "angemeldete Nutzer einsehbar.",
-            "Lade keine Bilder herunter, wenn du damit nicht",
-            "einverstanden bist.",
-            "",
+            *qr_download_section,
             self._heading("Deine Rechte"),
             "",
             "Du kannst der Speicherung deines Bildes direkt nach",
@@ -1450,7 +1738,14 @@ class Renderer:
     def _draw_buttons(self, state: AppState) -> None:
         if state == AppState.MAIN_MENU:
             self._draw_button("Fotografieren", self.layout.main_photo, (0, 150, 0))
-            self._draw_button("Galerie", self.layout.main_gallery, (0, 100, 150))
+            # NEU (Sprint 11): kein "Galerie"-Button ohne Galerie-Funktion
+            # fuer diese Veranstaltung (config.gallery_enabled, siehe
+            # event_config.json) - die anderen drei Buttons behalten
+            # bewusst ihre bisherigen Positionen (keine Neuanordnung),
+            # gleiches Vorgehen wie beim optionalen QR-Icon in
+            # GALLERY_FULLSCREEN.
+            if self.config.gallery_enabled:
+                self._draw_button("Galerie", self.layout.main_gallery, (0, 100, 150))
             self._draw_button("Anleitung", self.layout.main_instructions, (120, 90, 0))
             self._draw_button("Bedingungen", self.layout.main_terms, (120, 30, 90))
         elif state == AppState.ATTRACT_GALLERY:
@@ -1477,7 +1772,12 @@ class Renderer:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
             # NEU (Sprint 11, Feature 4): gleichwertige Alternative zum
             # Doppeltap auf das Foto (siehe app_with_hw._handle_pygame_event).
-            self._draw_button("QR-Code anfordern", self.layout.gallery_qr_icon, (0, 100, 150))
+            # GEAENDERT (Sprint-11-Nachbesserung): kein Button ohne
+            # QR-Funktion (config.qr_codes_enabled) - siehe auch
+            # app_with_hw._map_click_to_event (Treffer-Rechteck entfaellt
+            # dort ebenfalls).
+            if self.config.qr_codes_enabled:
+                self._draw_button("QR-Code anfordern", self.layout.gallery_qr_icon, (0, 100, 150))
         elif state == AppState.GALLERY_PHOTO_QR:
             # NEU (Sprint 11, Feature 4): gleiche Position/Optik wie bei
             # GALLERY_FULLSCREEN - schliesst die QR-Karte wieder vorzeitig,
@@ -1655,6 +1955,211 @@ class Renderer:
         text = model.ui.admin_usb_export_progress or "Export wird vorbereitet ..."
         self._blit_center(text, self.font_status_admin, (200, 235, 225), round(0.32 * height))
         self._draw_progress_bar(model.ui.admin_usb_progress_fraction, round(0.48 * height))
+        # NEU (Sprint-11-Nachbesserung): zusaetzlich zum Fortschrittsbalken
+        # eine bildliche Animation. ADMIN_USB_RESOLVE zeichnet mit derselben
+        # Methode (siehe render()) - die Animation laeuft dort automatisch
+        # mit.
+        #
+        # NEU (Sprint-11-Nachbesserung #2): der Fortschrittsbalken belegt
+        # die erste Haelfte (0.0-0.5) mit dem eigentlichen Kopieren/
+        # Aufloesen und die zweite Haelfte (0.5-1.0) mit der SHA256-
+        # Pruefsummen-Kontrolle (siehe app_with_hw._emit_due_timers,
+        # phase == "copy"/"resolve" vs. "verify" - dieselbe 0.5-Schwelle).
+        # Waehrend des Kopierens bleibt die bisherige "fliegende" Animation
+        # (Speicher -> Stick), waehrend der Pruefung zeigt eine eigene
+        # Animation zwei Dateien im direkten Vergleich (siehe
+        # _draw_admin_usb_verify_animation).
+        if model.ui.admin_usb_progress_fraction < 0.5:
+            self._draw_admin_usb_transfer_animation()
+        else:
+            self._draw_admin_usb_verify_animation()
+
+    def _draw_admin_usb_transfer_animation(self) -> None:
+        """NEU (Sprint-11-Nachbesserung): begleitet den USB-Export (und die
+        Aufloesung gleichnamiger Dateikonflikte, ADMIN_USB_RESOLVE - nutzt
+        dieselbe Zeichenmethode _draw_admin_usb_copy, siehe render())
+        zusaetzlich zum Fortschrittsbalken mit einer Animation, analog zur
+        Uebertragungs-Animation nach der Aufnahme
+        (_draw_capture_transfer_animation): mehrere Datei-Symbole "fliegen"
+        kontinuierlich vom Raspi-Speicher-Symbol (links, _draw_storage_icon)
+        zum USB-Stick-Symbol (rechts, _draw_usb_stick_icon).
+
+        Wie schon bei der Shredder-Animation
+        (_draw_admin_delete_shredder_animation) rein zeitbasiert und endlos
+        wiederholend (time.time()), OHNE direkten Bezug zu einzelnen
+        tatsaechlich kopierten Dateien - das uebernimmt weiterhin
+        ausschliesslich der Fortschrittsbalken/die Prozentzahl darunter."""
+        width, height = self.config.screen.width, self.config.screen.height
+        cy = round(height * 0.75)
+        storage_x = round(width * 0.14)
+        usb_x = round(width * 0.86)
+
+        # Duenne gepunktete Verbindungslinie zwischen den beiden Symbolen -
+        # gleiche Optik wie bei _draw_capture_transfer_animation.
+        dot_gap = 18
+        x = storage_x + 40
+        while x < usb_x - 40:
+            pygame.draw.circle(self.screen, (90, 140, 90), (x, cy), 2)
+            x += dot_gap
+
+        self._draw_storage_icon((storage_x, cy))
+        self._draw_usb_stick_icon((usb_x, cy))
+
+        cycle_seconds = 1.4
+        lanes = 3
+        # GEAENDERT (Nutzer-Feedback, Fotobeleg vom laufenden Pi): Smoothstep
+        # bremst symmetrisch an BEIDEN Enden ab - bei einer ueber den vollen
+        # Zyklus (0..1) laufenden Phase blieb das Datei-Symbol dadurch recht
+        # lange direkt auf dem USB-Symbol "stehen", bevor die Phase zurueck
+        # auf 0 sprang. Das sah wie ein einzelnes, verschmolzenes Symbol aus
+        # (irrtuemlich als "zu breites USB-Symbol" wahrgenommen).
+        #
+        # NACHGEBESSERT (Nutzer-Feedback #2, Fotobeleg vom laufenden Pi):
+        # der erste Fix (visible_fraction=0.82, Strecke auf 88% gedeckelt)
+        # hat ueberkorrigiert - das Symbol blieb sichtbar VOR dem Ziel
+        # stehen ("3 Punkte" Luecke zum USB-Stick). Jetzt legt das Symbol
+        # die volle Strecke bis zum USB-Symbol zurueck (kein
+        # travel_fraction-Deckel mehr) und wird stattdessen kurz vor/beim
+        # Erreichen des Ziels weich ausgeblendet (siehe fade_from unten) -
+        # es "landet" sichtbar auf dem Stick statt kurz davor zu verharren,
+        # verschwindet dabei aber weich statt starr liegen zu bleiben.
+        visible_fraction = 0.94
+        now = time.time()
+        for lane in range(lanes):
+            cycle_count = int((now / cycle_seconds) + lane / lanes)
+            phase = ((now / cycle_seconds) + lane / lanes) % 1.0
+            if phase >= visible_fraction:
+                continue
+            local = phase / visible_fraction
+            # Smoothstep statt linear - sanftes Anlaufen/Abbremsen, gleiche
+            # Technik wie bei _draw_capture_transfer_animation. Laeuft jetzt
+            # bis local=1.0 auf die volle Strecke (eased=1.0 -> file_x ==
+            # usb_x), siehe Kommentar oben.
+            eased = local * local * (3.0 - 2.0 * local)
+            file_x = round(storage_x + eased * (usb_x - storage_x))
+            bounce = round(-18 * math.sin(eased * math.pi))
+            # Weiches Ausblenden im letzten Viertel der Sichtbarkeitsdauer,
+            # nicht schon beim Erreichen des Ziels - dadurch ist das Symbol
+            # tatsaechlich (kurz) auf dem USB-Stick sichtbar, verschwindet
+            # dann aber weich statt dort einzufrieren.
+            fade_from = 0.75
+            if local > fade_from:
+                fade_local = (local - fade_from) / (1.0 - fade_from)
+                alpha = round(255 * (1.0 - fade_local))
+            else:
+                alpha = 255
+            self._draw_file_icon((file_x, cy + bounce), key=(lane, cycle_count), alpha=alpha)
+
+    def _draw_admin_usb_verify_animation(self) -> None:
+        """NEU (Sprint-11-Nachbesserung #2): begleitet die SHA256-Pruef-
+        summen-Kontrolle (zweite Haelfte von ADMIN_USB_COPY/ADMIN_USB_
+        RESOLVE, siehe _draw_admin_usb_copy und admin_usb_export.py -
+        Phase "verify") mit einer eigenen Animation statt der "fliegenden"
+        Symbole aus der Kopier-Phase: zwei GROESSERE, unterschiedliche
+        Datei-Symbole (siehe _FILE_ICON_COMPARE_SIZE) schieben sich von
+        aussen kommend zusammen, ueberlappen sich kurz vollstaendig in der
+        Bildschirmmitte ("werden verglichen") und schieben sich wieder
+        auseinander - endlos wiederholend, rein zeitbasiert (time.time()),
+        gleiches Prinzip wie die uebrigen Animationen dieser Datei. Das
+        tatsaechliche Ergebnis (Haken/Kreuz) erscheint danach auf dem
+        Abschluss-Screen, siehe _draw_admin_usb_result_badge() -
+        waehrend der Pruefung selbst ist ja noch offen, ob am Ende alle
+        Dateien uebereinstimmen."""
+        width, height = self.config.screen.width, self.config.screen.height
+        cx = width // 2
+        cy = round(height * 0.75)
+
+        cycle_seconds = 1.8
+        now = time.time()
+        cycle_count = int(now / cycle_seconds)
+        phase = (now / cycle_seconds) % 1.0
+
+        # Dreieckskurve (1 -> 0 -> 1 pro Zyklus), zusaetzlich mit Smoothstep
+        # geglaettet: bei phase=0 stehen die Symbole am weitesten auseinander,
+        # bei phase=0.5 liegen sie deckungsgleich uebereinander ("Vergleich"),
+        # bei phase=1 (=0 des naechsten Zyklus) wieder auseinander.
+        triangle = abs(1.0 - 2.0 * phase)
+        eased = triangle * triangle * (3.0 - 2.0 * triangle)
+        max_offset = round(width * 0.09)
+        offset = round(eased * max_offset)
+
+        pool = self._load_file_icon_pool(self._FILE_ICON_COMPARE_SIZE)
+        index_a = hash(("usbverify-a", cycle_count)) % len(pool) if pool else 0
+        index_b = hash(("usbverify-b", cycle_count)) % len(pool) if pool else 0
+        # Zwei UNTERSCHIEDLICHE Symbole (siehe Nutzer-Wunsch "zwei
+        # unterschiedliche Bilddateien-Symbole") - bei zufaelligem
+        # Zusammentreffen auf denselben Index einfach den Nachbarn nehmen.
+        if len(pool) > 1 and index_a == index_b:
+            index_b = (index_b + 1) % len(pool)
+
+        key_a = ("usbverify-a", cycle_count, index_a)
+        key_b = ("usbverify-b", cycle_count, index_b)
+        self._draw_file_icon((cx - offset, cy), key=key_a, size=self._FILE_ICON_COMPARE_SIZE)
+        self._draw_file_icon((cx + offset, cy), key=key_b, size=self._FILE_ICON_COMPARE_SIZE)
+
+        hint = "Dateien werden verglichen (Prüfsumme) ..."
+        self._blit_center(hint, self.font_small, (170, 200, 190), round(height * 0.62))
+
+    def _draw_admin_usb_result_badge(self, model: AppModel) -> None:
+        """NEU (Sprint-11-Nachbesserung #2): grosses Ergebnis-Symbol
+        (gruener Haken bei Erfolg, rotes Kreuz bei Pruefsummenfehlern/
+        anderen Fehlern) auf dem Abschluss-Screen des USB-Exports
+        (ADMIN_USB_EXPORT_DONE) - der Abschluss des in
+        _draw_admin_usb_verify_animation begonnenen "Dateien werden
+        verglichen"-Bildes: dort war das Ergebnis noch offen, hier steht
+        es fest.
+
+        BEWUSST als gezeichnete Form statt Unicode-Haken (U+2713): siehe
+        Kommentar in admin_usb_export.py::ExportResult.summary_lines() -
+        die Pygame-Schriftart auf dem Pi kennt dieses Zeichen nicht und
+        zeichnet ersatzweise ein leeres Kaestchen.
+
+        `model.ui.admin_usb_offer_delete` ist deckungsgleich mit
+        ExportResult.ok (siehe state_machine._go_admin_usb_export_done:
+        `admin_usb_offer_delete=ok`) und wird hier als Erfolgs-/Fehler-
+        Signal wiederverwendet, statt ein eigenes UI-Feld nur fuer dieses
+        Symbol anzulegen."""
+        ok = model.ui.admin_usb_offer_delete
+        width = self.config.screen.width
+        center = (width - 130, 130)
+
+        # Kurze "Pop"-Einblendung beim Betreten des Screens (Startzeitpunkt
+        # siehe render()) - waechst binnen ca. 0.35s mit leichtem
+        # Ueberschwingen auf volle Groesse, danach stabil stehen bleibend.
+        duration = 0.35
+        elapsed = duration
+        if self._admin_usb_done_entered_at is not None:
+            elapsed = time.time() - self._admin_usb_done_entered_at
+        t = max(0.0, min(1.0, elapsed / duration))
+        scale = math.sin(t * math.pi * 0.5) * (1.0 + 0.15 * math.sin(t * math.pi))
+        radius = round(52 * scale)
+        if radius <= 1:
+            return
+
+        color = (40, 170, 90) if ok else (200, 60, 60)
+        ring = (25, 100, 55) if ok else (130, 35, 35)
+        pygame.draw.circle(self.screen, color, center, radius)
+        pygame.draw.circle(self.screen, ring, center, radius, width=max(2, round(radius * 0.08)))
+
+        cx, cy = center
+        s = radius / 52.0
+        line_width = max(4, round(8 * s))
+        if ok:
+            points = [
+                (round(cx - 24 * s), round(cy + 2 * s)),
+                (round(cx - 8 * s), round(cy + 18 * s)),
+                (round(cx + 26 * s), round(cy - 20 * s)),
+            ]
+            pygame.draw.lines(self.screen, (255, 255, 255), False, points, line_width)
+        else:
+            pygame.draw.line(
+                self.screen, (255, 255, 255),
+                (round(cx - 20 * s), round(cy - 20 * s)), (round(cx + 20 * s), round(cy + 20 * s)), line_width,
+            )
+            pygame.draw.line(
+                self.screen, (255, 255, 255),
+                (round(cx - 20 * s), round(cy + 20 * s)), (round(cx + 20 * s), round(cy - 20 * s)), line_width,
+            )
 
     def _draw_progress_bar(
         self,
@@ -1906,10 +2411,21 @@ class Renderer:
             y += line_height
         # Zusaetzlicher Hinweis, was "alles" konkret umfasst - beugt der
         # Fehlannahme vor, es gehe nur um die Bilder auf dem Bildschirm.
-        self._blit_center(
-            "Betrifft Fotobox, QR-Download und Kamera-Speicherkarte.",
-            self.font_body_admin, (230, 170, 170), y + 16,
+        # GEAENDERT (Sprint-11-Nachbesserung): "QR-Download" nur erwaehnen,
+        # wenn die Funktion fuer diese Veranstaltung ueberhaupt aktiv ist
+        # (config.qr_codes_enabled) - ohne QR-Funktion landet ohnehin nichts
+        # im Web-Verzeichnis, das dieser Hinweis meinen koennte.
+        # NEU (Sprint 11): der QR-Download ist ausschliesslich aus der
+        # Galerie-Vollansicht heraus erreichbar - ohne Galerie-Funktion
+        # (config.gallery_enabled) landet ebenfalls nichts im Web-
+        # Verzeichnis, unabhaengig von qr_codes_enabled. Beide Schalter
+        # muessen daher UND-verknuepft aktiv sein.
+        hint = (
+            "Betrifft Fotobox, QR-Download und Kamera-Speicherkarte."
+            if (self.config.qr_codes_enabled and self.config.gallery_enabled)
+            else "Betrifft Fotobox und Kamera-Speicherkarte."
         )
+        self._blit_center(hint, self.font_body_admin, (230, 170, 170), y + 16)
 
     def _draw_admin_delete_running(self, model: AppModel) -> None:
         # GEAENDERT (4.9): Fortschrittsbalken wie beim Export, aber in Rot.
@@ -1965,6 +2481,7 @@ class Renderer:
         lanes = 3
         now = time.time()
         for lane in range(lanes):
+            cycle_count = int((now / cycle_seconds) + lane / lanes)
             phase = ((now / cycle_seconds) + lane / lanes) % 1.0
             if phase < 0.45:
                 # Datei-Symbol faellt von oben in den Einzugsschlitz -
@@ -1973,7 +2490,7 @@ class Renderer:
                 local = phase / 0.45
                 eased = local * local
                 y = round(drop_start_y + eased * (slot_y - drop_start_y))
-                self._draw_file_icon((cx, y))
+                self._draw_file_icon((cx, y), key=(lane, cycle_count))
             else:
                 local = (phase - 0.45) / 0.55
                 self._draw_shred_strips(cx, shredder_rect.bottom, shred_end_y, local, lane)
@@ -2076,10 +2593,9 @@ class Renderer:
         # dort tatsaechlich heller als der Hintergrund und bleibt dadurch
         # als Tiefenkontur sichtbar, auch fuer Nutzer mit schwaecherem
         # Kontrastsehen.
-        shadow_offset = 6
         shadow_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        pygame.draw.rect(shadow_surface, (60, 63, 68, 140), shadow_surface.get_rect(), border_radius=14)
-        self.screen.blit(shadow_surface, (rect.x + shadow_offset, rect.y + shadow_offset))
+        pygame.draw.rect(shadow_surface, (*self._SHADOW_COLOR, self._SHADOW_ALPHA), shadow_surface.get_rect(), border_radius=14)
+        self.screen.blit(shadow_surface, (rect.x + self._SHADOW_OFFSET, rect.y + self._SHADOW_OFFSET))
 
         pygame.draw.rect(self.screen, color, rect, border_radius=14)
         pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=14)
@@ -2111,6 +2627,130 @@ class Renderer:
         for line in text.split("\n"):
             surf = font.render(line, True, color)
             self.screen.blit(surf, (x, y))
+            y += line_height
+
+    # GEAENDERT (Nutzer-Feedback): einheitliche Schatten-Konstanten fuer das
+    # gesamte Projekt - Buttons (_draw_button), Karten (_draw_qr_card,
+    # _draw_text_card) und jetzt auch Ueberschriften-Text
+    # (_draw_shadowed_text) verwenden alle denselben Versatz (nach rechts
+    # unten, Lichtquelle gedacht oben links) und denselben Anthrazit-Ton mit
+    # gleicher Transparenz statt bisher leicht abweichender Werte je Stelle.
+    _SHADOW_OFFSET = 6
+    _SHADOW_COLOR = (60, 63, 68)
+    _SHADOW_ALPHA = 140
+
+    def _draw_shadowed_text(
+        self, text: str, font: pygame.font.Font, color: tuple[int, int, int], pos: tuple[int, int],
+    ) -> None:
+        """Rendert Text mit Schlagschatten - gleiche Optik (Richtung, Farbe,
+        Transparenz) wie der Schatten von Buttons/Karten (siehe
+        _SHADOW_OFFSET/_SHADOW_COLOR/_SHADOW_ALPHA). Ersetzt den zuvor nur
+        beim Haupttitel "Fotobox" per Hand nachgebauten (und davon
+        abweichenden) Text-Schatten sowie das Fehlen jeglichen Schattens bei
+        den uebrigen Bildschirm-Ueberschriften (Service-Menü,
+        Status/Diagnose, ...) - jetzt sehen alle Ueberschriften gleich aus.
+        Unterstuetzt mehrzeilige Strings ueber "\\n" wie _draw_text.
+
+        Nur fuer Ueberschriften/freistehenden Text gedacht - Button-
+        Beschriftungen bleiben bewusst flach ohne Schatten (siehe
+        _draw_button, unveraendert)."""
+        x, y = pos
+        line_height = font.get_linesize()
+        for line in text.split("\n"):
+            shadow_surf = font.render(line, True, self._SHADOW_COLOR)
+            shadow_surf.set_alpha(self._SHADOW_ALPHA)
+            self.screen.blit(shadow_surf, (x + self._SHADOW_OFFSET, y + self._SHADOW_OFFSET))
+            surf = font.render(line, True, color)
+            self.screen.blit(surf, (x, y))
+            y += line_height
+
+    # NEU (Nutzer-Feedback): manche Bildschirm-Ueberschriften kommen aus
+    # Laufzeit-Text (model.ui.status_text, z.B. "Dateien mit abweichendem
+    # Inhalt gefunden" auf ADMIN_USB_CONFLICTS) statt aus kurzen, fest
+    # geprueften Konstanten wie "Service-Menü" - bei voller font_title-
+    # Groesse (100pt) ragten laengere Varianten davon rechts ueber den
+    # Bildschirmrand hinaus. _title_font_for() liefert stattdessen bei
+    # Bedarf eine kleinere, noch passende Variante derselben Schriftart.
+    _TITLE_FONT_MIN_SIZE = 40
+    _TITLE_FONT_STEP = 4
+
+    def _title_font_for(self, text: str, max_width: int) -> pygame.font.Font:
+        """Liefert font_title unveraendert, falls `text` darin bereits in
+        `max_width` passt - sonst die groesste noch passende, kleinere
+        Variante derselben Schriftart (Cache pro Text+max_width, damit
+        nicht jedes Frame neu nach unten gesucht/ein neues Font-Objekt
+        erzeugt wird - dieselbe Statuszeile steht ja meist mehrere Frames
+        lang unveraendert)."""
+        if self.font_title.size(text)[0] <= max_width:
+            return self.font_title
+
+        cache_key = (text, max_width)
+        cached = self._title_font_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        font = pygame.font.Font(None, self._TITLE_FONT_MIN_SIZE)
+        size = 100
+        while size > self._TITLE_FONT_MIN_SIZE:
+            size -= self._TITLE_FONT_STEP
+            candidate = pygame.font.Font(None, size)
+            if candidate.size(text)[0] <= max_width:
+                font = candidate
+                break
+
+        self._title_font_cache[cache_key] = font
+        return font
+
+    def _draw_text_card(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        text_color: tuple[int, int, int],
+        center: tuple[int, int],
+        padding_x: int = 40,
+        padding_y: int = 20,
+        card_opacity: float = 0.5,
+    ) -> None:
+        """NEU (Lesbarkeit Hauptmenue-Begruessungstext): zeichnet eine
+        weisse, abgerundete Karte mit Schatten hinter zentriertem Text -
+        gleiche Schatten-Technik wie _draw_button (SRCALPHA-Zwischenflaeche,
+        Versatz 6px, Anthrazit-Ton (60,63,68) statt Schwarz). Anders als bei
+        Buttons wird bewusst KEIN weisser Rahmen (width=2) um die Karte
+        gezogen - der Nutzer wollte explizit "kein erkennbarer Rahmen".
+        Unterstuetzt mehrzeilige Texte ueber "\\n" (aktuell ungenutzt, aber
+        konsistent zu _draw_text).
+
+        GEAENDERT (Nutzer-Feedback, zwei Nachbesserungsrunden: 75% -> 50%
+        deckend): die Karte selbst ist jetzt um `card_opacity` durchscheinend
+        (Default 0.5 = 50% deckend / 50% transparent, vom Nutzer als
+        "perfekt" bestaetigt) statt vollstaendig deckend weiss - dafuer wird
+        die Karte (wie schon der Schatten) ueber eine
+        SRCALPHA-Zwischenflaeche geblittet statt direkt mit
+        pygame.draw.rect() auf den (selbst nicht transparenten) Bildschirm
+        gezeichnet.
+        """
+        lines = text.split("\n")
+        line_height = font.get_linesize()
+        line_surfaces = [font.render(line, True, text_color) for line in lines]
+        text_w = max(surf.get_width() for surf in line_surfaces)
+        text_h = line_height * len(lines)
+
+        card_rect = pygame.Rect(0, 0, text_w + 2 * padding_x, text_h + 2 * padding_y)
+        card_rect.center = center
+
+        shadow_surface = pygame.Surface((card_rect.width, card_rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surface, (*self._SHADOW_COLOR, self._SHADOW_ALPHA), shadow_surface.get_rect(), border_radius=24)
+        self.screen.blit(shadow_surface, (card_rect.x + self._SHADOW_OFFSET, card_rect.y + self._SHADOW_OFFSET))
+
+        card_alpha = round(255 * card_opacity)
+        card_surface = pygame.Surface((card_rect.width, card_rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(card_surface, (255, 255, 255, card_alpha), card_surface.get_rect(), border_radius=24)
+        self.screen.blit(card_surface, card_rect.topleft)
+
+        y = card_rect.top + padding_y
+        for surf in line_surfaces:
+            line_rect = surf.get_rect(centerx=card_rect.centerx, top=y)
+            self.screen.blit(surf, line_rect)
             y += line_height
 
     def _draw_footer(self, model: AppModel, fps: float) -> None:

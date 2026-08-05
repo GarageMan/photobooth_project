@@ -19,32 +19,46 @@ einen auffaelligen Platzhalter bzw. sinnvolle Standards, falls die Datei
 # falsches Passwort an.
 GUEST_WIFI_PASSWORD = "CHANGE_ME"
 
-# Geheim-PIN zum Herunterfahren der Fotobox ueber die versteckte Geste
-# im Hauptmenue (siehe shutdown_service.py / config.ShutdownConfig).
-# Nur Ziffern verwenden, damit sie sich spaeter ueber ein einfaches
-# Touch-Ziffernfeld eingeben laesst. Nicht mit dem Gast-WLAN-Passwort
-# o.ae. teilen. Bleibt der Wert der Platzhalter, verweigert die App den
-# Shutdown bewusst (siehe shutdown_service.pin_is_configured).
-SHUTDOWN_PIN = "CHANGE_ME"
+# Geheim-PIN fuer den Zugang zum Service-Menue (Status/Diagnose,
+# USB-Export, Bilder loeschen, Kamera-Einstellungen, Herunterfahren, ...)
+# ueber die versteckte Geste im Hauptmenue (siehe admin_service.py /
+# config.ShutdownConfig). Nur Ziffern verwenden, damit sie sich ueber ein
+# einfaches Touch-Ziffernfeld eingeben laesst. Nicht mit dem Gast-WLAN-
+# Passwort o.ae. teilen. Bleibt der Wert der Platzhalter, verweigert die
+# App den Zugang zum Service-Menue bewusst (siehe
+# admin_service.pin_is_configured).
+#
+# GEAENDERT (Sprint 11): vormals SHUTDOWN_PIN - die PIN schuetzt den
+# gesamten Service-Bereich, nicht (mehr ausschliesslich) das
+# Herunterfahren, das urspruenglich der einzige Menuepunkt dahinter war.
+# Liegt auf dem Pi noch eine local_secrets.py mit dem alten Namen
+# SHUTDOWN_PIN: config.py liest diesen weiterhin als Fallback, eine
+# Umbenennung hier ist also nicht zwingend eilig, aber empfohlen.
+SERVICE_MENU_PIN = "CHANGE_ME"
 
-# --- Geheim-Geste, die die PIN-Eingabe aufruft (siehe shutdown_service.py) ---
+# --- Geheim-Geste, die die PIN-Eingabe aufruft (siehe admin_service.py) ---
 # Bewusst hier in der NICHT versionierten Datei, damit weder Muster noch
 # Position der versteckten Geste im oeffentlichen Repo stehen. Fehlt einer
 # dieser drei Werte, greift der jeweilige Standard aus config.py - nur
-# SHUTDOWN_PIN oben ist zwingend.
+# SERVICE_MENU_PIN oben ist zwingend.
+#
+# GEAENDERT (Sprint 11): die folgenden drei Variablen hiessen vormals
+# SHUTDOWN_GESTURE_ZONE/_PATTERN/SHUTDOWN_LONG_PRESS_SECONDS - siehe
+# Begruendung beim PIN oben. Auch hier gilt derselbe Fallback auf die
+# alten Namen in config.py, falls noch nicht nachgezogen.
 
 # Zone (unsichtbarer Bereich im Hauptmenue), in dem die Geste erkannt
 # wird. Genau einer von: "links", "rechts", "oben", "unten".
-SHUTDOWN_GESTURE_ZONE = "rechts"
+SERVICE_MENU_GESTURE_ZONE = "rechts"
 
 # Muster ("Anzahl"): Reihenfolge aus "kurz"/"lang"-Tipps. Laenge frei
 # waehlbar - der Detector passt sich automatisch an. Standard entspricht
 # bspw. "3x kurz, 1x lang, 2x kurz".
-SHUTDOWN_GESTURE_PATTERN = ("kurz", "kurz", "kurz", "lang", "kurz", "kurz")
+SERVICE_MENU_GESTURE_PATTERN = ("kurz", "kurz", "kurz", "lang", "kurz", "kurz")
 
 # Dauer: ab dieser Haltezeit (Sekunden) zaehlt ein Tipp als "lang".
 # Kleiner = empfindlicher, groesser = muss bewusst laenger gehalten werden.
-SHUTDOWN_LONG_PRESS_SECONDS = 0.6
+SERVICE_MENU_LONG_PRESS_SECONDS = 0.6
 
 # SMTP-Zugangsdaten fuer die automatische Update-Benachrichtigung
 # (siehe check_updates.py). Bei Gmail: kein normales Account-Passwort,

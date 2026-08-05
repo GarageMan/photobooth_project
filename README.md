@@ -87,6 +87,7 @@ automatisch, ohne App-Neustart.
 - [Entwicklungs-Workflow](#entwicklungs-workflow)
 - [Sicherheit / Härtung](#sicherheit--härtung)
 - [Datenschutz](#datenschutz)
+- [Lizenz und Urheberrecht](#-lizenz-und-urheberrecht-license--copyright)
 
 ## Funktionsumfang
 
@@ -123,6 +124,12 @@ automatisch, ohne App-Neustart.
   ein Foto in der Galerie-Vollansicht (oder das Icon "QR-Code anfordern"
   unten rechts) den Download-QR-Code für genau dieses Foto, schließt sich
   nach 30 s automatisch oder per "Zurück"
+- **QR-Codes pro Veranstaltung ab-/anschaltbar** (Sprint-11-Nachbesserung):
+  `qr_codes_enabled` in `event_config.json` (Default `true`) schaltet
+  Icon/Doppeltap "QR-Code anfordern", den QR-Hinweis in der
+  Speicher-Bestätigung sowie jede Erwähnung von QR-Codes in Anleitung und
+  Nutzungsbedingungen komplett ab — für Locations ohne Gäste-WLAN oder auf
+  Wunsch des Gastgebers (siehe [Event-Parameter](#event-parameter-event_configjson))
 - DSGVO/GDPR-Hinweis als eigener, scrollbarer Bildschirm (`TERMS`)
 - Touch- und Hardware-Button-Bedienung, Swipe-Gesten in der Galerie
 - Automatischer Neustart bei Absturz (`start_fotobox.sh`)
@@ -441,7 +448,8 @@ nano event_config.json
 {
   "event_title": "Minas Geburtstags-Fotobox",
   "photo_prefix": "mina_",
-  "guest_wifi_password": "..."
+  "guest_wifi_password": "...",
+  "qr_codes_enabled": true
 }
 ```
 
@@ -452,6 +460,21 @@ aufsetzen. Das Gäste-WLAN-Passwort kam ursprünglich aus
 `local_secrets.py`; falls in `event_config.json` nicht gesetzt, greift
 übergangsweise noch der alte Wert aus `local_secrets.py`, bevor ein
 Platzhalter verwendet wird.
+
+**`qr_codes_enabled`** (NEU, Sprint-11-Nachbesserung): schaltet die
+gesamte QR-Code-Funktion für diese Veranstaltung ein/aus (Default
+`true`, fehlt der Schlüssel bleibt bisheriges Verhalten). Auf `false`
+gesetzt, wenn eine Location kein Gäste-WLAN hat oder der Gastgeber
+grundsätzlich keinen digitalen Download anbieten möchte:
+
+- Kein Icon "QR-Code anfordern" und kein Doppeltap-QR-Code mehr in der
+  Galerie-Vollansicht; `AppState.GALLERY_PHOTO_QR` bleibt unerreichbar.
+- Die Speicher-Bestätigung nach der Aufnahme erwähnt keinen QR-Code
+  mehr und kopiert das Foto auch nicht mehr in das (vom Gäste-WLAN aus
+  erreichbare) Web-Verzeichnis (`export_photo` entfällt) — Datenschutz-
+  Vorteil, kein Foto landet dort, wo es theoretisch abrufbar wäre.
+- Anleitung und Nutzungsbedingungen erwähnen QR-Codes an keiner Stelle
+  mehr (siehe `renderer.py`, `_draw_instructions`/`_draw_terms`).
 
 ## Autostart
 
@@ -649,7 +672,16 @@ Fehlschläge in `test_admin_diagnostics.py` und
   Tests wurden entsprechend umgebaut (`test_accepted_goes_to_admin_menu`,
   neu: `test_admin_shutdown_leads_to_goodbye`, `_reach_goodbye()`-Hilfsmittel).
 
-Gesamter Lauf (alle `test_*.py`) zuletzt: **319 Tests, alle grün.**
+**Update (Sprint-11-Nachbesserung, `qr_codes_enabled`):** neue
+`QrCodesDisabledTestCase` in `test_state_machine.py` (eigener
+`AppConfig` mit `qr_codes_enabled=False`) prüft, dass `TAP_SAVE` dann
+kein `export_photo` mehr auslöst und keinen QR-Hinweis mehr in
+`status_text` setzt, sowie dass `TAP_GALLERY_QR` in der
+Galerie-Vollansicht folgenlos bleibt. Die Anleitungs-/Bedingungstexte
+selbst (renderer.py) sind wie die übrigen Darstellungs-Änderungen per
+Screenshot-Rendering gegengeprüft, nicht per pytest.
+
+Gesamter Lauf (alle `test_*.py`) zuletzt: **321 Tests, alle grün.**
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -908,3 +940,45 @@ Ein DSGVO/GDPR-konformer Hinweistext für den privaten Veranstaltungs-
 kontext liegt als eigener Bildschirm in der App (`TERMS`-State) sowie
 als Dokument im Repository vor
 (`Nutzungsbedingungen_zur_Fotobox.docx`).
+
+## ⚖️ Lizenz und Urheberrecht (License & Copyright)
+
+© 2026 Lutz Buchholz (GarageMan). Alle Rechte vorbehalten.
+
+Dieses Projekt sowie alle zugehörigen Quellcodedateien und Dokumente
+sind urheberrechtlich geschützt.
+
+**Erlaubte Nutzung (Private & Non-Commercial):**
+
+- Die Nutzung, das Kopieren und Modifizieren dieser Software ist
+  ausschließlich für private, nicht-kommerzielle Zwecke gestattet.
+
+**Untersagte Nutzung (Commercial Use):**
+
+- Jegliche kommerzielle Nutzung, Verbreitung oder der Verkauf dieses
+  Codes (oder Teilen davon) – ob als eigenständiges Produkt oder
+  integriert in andere Systeme – ist ohne ausdrückliche, schriftliche
+  Genehmigung des Urhebers strikt untersagt.
+- Wenn Sie diese Software kommerziell nutzen oder auf Basis dieses
+  Projekts ein kommerzielles Produkt entwickeln möchten, ist vorab eine
+  individuelle Lizenzvereinbarung (inkl. Umsatzbeteiligung/Lizenzgebühr)
+  zu treffen.
+
+Für kommerzielle Anfragen oder Lizenzwünsche kontaktieren Sie mich
+bitte direkt über [garageman@gmx.net](mailto:garageman@gmx.net) oder
+per GitHub-Issue.
+
+---
+
+© 2026 Lutz Buchholz (GarageMan). All rights reserved.
+
+This project and its source code are protected by copyright law.
+
+- **Non-commercial use:** Allowed for private, educational, and
+  non-commercial purposes only.
+- **Commercial use:** Strictly prohibited without prior written
+  permission and a valid commercial license agreement (including
+  revenue sharing or licensing fees).
+
+For commercial licensing inquiries, please contact
+[garageman@gmx.net](mailto:garageman@gmx.net) or open an issue.
