@@ -1,14 +1,14 @@
 """
-test_shutdown_service.py
-========================
-Offline-Tests (pytest) fuer shutdown_service.py und die Zonen-Aufloesung
-in config.py. Keine Hardware, kein pygame, keine echte Wanduhr - alle
-Zeitpunkte werden als Parameter injiziert, damit die Tests deterministisch
-und schnell sind.
+test_admin_service.py
+======================
+Offline-Tests (pytest) fuer admin_service.py (vormals shutdown_service.py -
+siehe dort) und die Zonen-Aufloesung in config.py. Keine Hardware, kein
+pygame, keine echte Wanduhr - alle Zeitpunkte werden als Parameter
+injiziert, damit die Tests deterministisch und schnell sind.
 
 Ausfuehren im Projektverzeichnis:
 
-    python3 -m pytest test_shutdown_service.py -v
+    python3 -m pytest test_admin_service.py -v
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from __future__ import annotations
 import pytest
 
 import config
-import shutdown_service as ss
-from shutdown_service import (
+import admin_service as ss
+from admin_service import (
     PinLockout,
     PinResult,
     SecretGestureDetector,

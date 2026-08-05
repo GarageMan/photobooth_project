@@ -17,7 +17,7 @@ import unittest
 from admin_usb_export import ExportConflict
 from config import DEFAULT_CONFIG
 from events import AppEvent, EventType
-from shutdown_service import PinResult
+from admin_service import PinResult
 from state_machine import StateMachine
 from states import AppState
 
@@ -38,7 +38,6 @@ class AdminMenuTestCase(unittest.TestCase):
         return result
 
     def _go_to_admin_menu(self, now_offset: float = 5.2) -> None:
-        # BOOT -> MAIN_MENU -> (Geste) PIN_ENTRY -> (PIN ok) ADMIN_MENU
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
         self.assertEqual(self.model.state, AppState.MAIN_MENU)
         self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
@@ -52,8 +51,6 @@ class AdminMenuTestCase(unittest.TestCase):
     # -- PIN -> Menue ------------------------------------------------------
 
     def test_accepted_pin_opens_admin_menu_not_shutdown(self) -> None:
-        # Kernaenderung von Etappe 4.1: die PIN fuehrt NICHT mehr direkt
-        # in die Abschieds-Animation.
         self._go_to_admin_menu()
         self.assertEqual(self.model.state, AppState.ADMIN_MENU)
         self.assertNotEqual(self.model.state, AppState.SHUTDOWN_GOODBYE)
@@ -86,15 +83,11 @@ class AdminMenuTestCase(unittest.TestCase):
         self.assertEqual(self.model.state, AppState.MAIN_MENU)
 
     def test_hardware_button_does_nothing_in_admin_menu(self) -> None:
-        # Der Taster darf im Service-Menue keine Aufnahme starten.
         self._go_to_admin_menu()
         self.transition(EventType.BUTTON_PRESS, now_offset=10.0)
         self.assertEqual(self.model.state, AppState.ADMIN_MENU)
 
     def test_every_menu_item_leads_somewhere(self) -> None:
-        # Seit Etappe 4a ist jeder Menuepunkt implementiert - es gibt
-        # keinen Platzhalter-Zweig mehr. Dieser Test faengt, wenn ein
-        # spaeter ergaenzter Punkt versehentlich ins Leere laeuft.
         from admin_menu import ADMIN_MENU_ITEMS
 
         for item in ADMIN_MENU_ITEMS:
@@ -171,7 +164,6 @@ class AdminStatusTestCase(unittest.TestCase):
 
     def test_tap_status_enters_admin_status_and_requests_collection(self) -> None:
         self._go_to_admin_status()
-        # Zeilen sind zu Beginn leer - kommen erst per ADMIN_STATUS_READY.
         self.assertEqual(self.model.ui.admin_status_lines, ())
 
     def test_status_ready_fills_lines(self) -> None:
@@ -294,8 +286,6 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
         self.assertEqual(self.model.ui.admin_camera_aperture, "2.8")
 
     def test_iso_up_without_choices_is_ignored(self) -> None:
-        # Kamera nicht erreichbar / noch nicht gelesen - kein Absturz, keine
-        # Aktion, State bleibt unveraendert.
         self._go_to_admin_camera_settings()
         result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
         self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
@@ -395,7 +385,6 @@ class AdminDeleteAllTestCase(unittest.TestCase):
     def test_tap_delete_all_opens_confirmation_without_deleting(self) -> None:
         result = self._go_to_delete_confirm()
         self.assertEqual(result.model.state, AppState.ADMIN_DELETE_CONFIRM)
-        # Entscheidend: das blosse Antippen darf noch NICHTS ausloesen.
         self.assertNotIn("start_delete_all", result.actions)
 
     def test_abort_returns_to_menu_without_deleting(self) -> None:
@@ -411,22 +400,18 @@ class AdminDeleteAllTestCase(unittest.TestCase):
         self.assertNotIn("start_delete_all", result.actions)
 
     def test_idle_timeout_aborts_rather_than_deletes(self) -> None:
-        # Unbeantwortete Abfrage muss als "nicht loeschen" enden.
         self._go_to_delete_confirm()
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=60.0)
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
         self.assertNotIn("start_delete_all", result.actions)
 
     def test_hardware_button_does_not_confirm(self) -> None:
-        # Der Taster darf die Sicherheitsabfrage nicht versehentlich bestaetigen.
         self._go_to_delete_confirm()
         result = self.transition(EventType.BUTTON_PRESS, now_offset=10.0)
         self.assertEqual(result.model.state, AppState.ADMIN_DELETE_CONFIRM)
         self.assertEqual(result.actions, ())
 
     def test_single_photo_delete_event_does_not_confirm(self) -> None:
-        # TAP_CONFIRM_DELETE gehoert zum Loeschen EINES Fotos im Review und
-        # darf hier keinesfalls den Gesamtbestand loeschen.
         self._go_to_delete_confirm()
         result = self.transition(EventType.TAP_CONFIRM_DELETE, now_offset=10.0)
         self.assertEqual(result.model.state, AppState.ADMIN_DELETE_CONFIRM)
@@ -441,7 +426,6 @@ class AdminDeleteAllTestCase(unittest.TestCase):
         self.assertIn("start_delete_all", result.actions)
 
     def test_running_has_no_idle_deadline(self) -> None:
-        # Ein Timeout darf einen laufenden Loeschvorgang nicht wegreissen.
         self._go_to_delete_confirm()
         self.transition(EventType.TAP_ADMIN_DELETE_CONFIRM, now_offset=10.0)
         self.assertIsNone(self.model.timers.idle_deadline)
@@ -468,22 +452,16 @@ class AdminDeleteAllTestCase(unittest.TestCase):
         self.assertEqual(result.model.ui.admin_delete_lines, ("Fotos gelöscht: 3", "Kamera: geleert"))
 
     def test_finished_clears_session_photos(self) -> None:
-        # Nach dem Loeschen duerfen keine Pfade zurueckbleiben, die es
-        # nicht mehr gibt (sonst zeigt die Galerie Leichen an).
         result = self._go_to_delete_done()
         self.assertEqual(result.model.session.photos, ())
         self.assertIsNone(result.model.session.current_photo_path)
         self.assertIsNone(result.model.session.last_saved_photo_path)
 
     def test_done_screen_has_idle_deadline(self) -> None:
-        # GEAENDERT (4.5): der Ergebnis-Screen bleibt nicht mehr unbegrenzt
-        # stehen - nach admin_menu_idle_seconds geht es automatisch weiter.
         result = self._go_to_delete_done()
         self.assertIsNotNone(result.model.timers.idle_deadline)
 
     def test_done_idle_timeout_returns_to_main_menu(self) -> None:
-        # NEU (4.5): unbeaufsichtigt stehen gelassen -> raus aus dem
-        # PIN-geschuetzten Bereich, nicht nur zurueck ins Service-Menue.
         self._go_to_delete_done()
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=60.0)
         self.assertEqual(result.model.state, AppState.MAIN_MENU)
@@ -509,27 +487,17 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
     einen Import Hardware-Provider und ein Pygame-Fenster erzeugen wuerde.
     """
 
-    # Admin-Zustaende, deren _go_*-Methode eine idle_deadline setzt und die
-    # daher zwingend im idle_states-Set von app_with_hw.py stehen muessen.
-    # Beim Anlegen eines neuen Admin-Zustands mit Timeout hier ergaenzen.
     ADMIN_STATES_WITH_IDLE = (
         "ADMIN_MENU", "ADMIN_STATUS", "ADMIN_DELETE_CONFIRM",
-        "ADMIN_DELETE_DONE",   # NEU (4.5)
-        # NEU (4.6) - bewusst OHNE ADMIN_USB_CHECK und ADMIN_USB_EJECT:
-        # dort laeuft ein Job, der nicht unterbrochen werden darf.
+        "ADMIN_DELETE_DONE",
         "ADMIN_USB_WAIT", "ADMIN_USB_READY", "ADMIN_USB_PROBLEM", "ADMIN_USB_REMOVE",
-        "ADMIN_USB_EXPORT_DONE",   # NEU (4.7)
-        # NEU (6b) - bewusst OHNE ADMIN_USB_RESOLVE: dort laeuft ein
-        # Hintergrund-Thread, der nicht unterbrochen werden darf.
+        "ADMIN_USB_EXPORT_DONE",
         "ADMIN_USB_CONFLICTS",
     )
 
     def test_states_with_idle_deadline_are_emitted_by_the_app(self) -> None:
         from pathlib import Path
-
-        source = (Path(__file__).resolve().parent / "app_with_hw.py").read_text(encoding="utf-8")
-        # Das Set beginnt mit den Basis-Zustaenden; AppState.TERMS ist ein
-        # stabiler Anker darin, alle Admin-Eintraege folgen dahinter.
+        source = (Path(__file__).resolve().parent.parent / "app_with_hw.py").read_text(encoding="utf-8")
         anchor = source.find("AppState.TERMS,")
         self.assertNotEqual(anchor, -1, "Anker 'AppState.TERMS,' in app_with_hw.py nicht gefunden.")
         block_end = source.find("}", anchor)
@@ -544,9 +512,6 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         )
 
     def test_state_machine_really_sets_those_deadlines(self) -> None:
-        # Gegenprobe: die obige Liste soll nicht aus Versehen Zustaende
-        # enthalten, die gar keine Deadline bekommen (dann waere der Test
-        # oben wertlos).
         machine = StateMachine(DEFAULT_CONFIG)
         now = 1000.0
         model = machine.initial_model(now)
@@ -569,8 +534,6 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
                 f"{expected.name} bekommt keine idle_deadline - Liste oben anpassen.",
             )
 
-        # ADMIN_DELETE_DONE ist nur ueber den Loeschlauf erreichbar, daher
-        # separat (NEU 4.5).
         confirm = machine.transition(model, AppEvent(EventType.TAP_ADMIN_DELETE_ALL), now + 13.0).model
         running = machine.transition(confirm, AppEvent(EventType.TAP_ADMIN_DELETE_CONFIRM), now + 14.0).model
         done = machine.transition(
@@ -582,7 +545,6 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
             "ADMIN_DELETE_DONE bekommt keine idle_deadline - Liste oben anpassen.",
         )
 
-        # USB-Kette (NEU 4.6): WAIT -> READY/PROBLEM -> REMOVE.
         wait = machine.transition(model, AppEvent(EventType.TAP_ADMIN_USB_EXPORT), now + 13.0).model
         self.assertEqual(wait.state, AppState.ADMIN_USB_WAIT)
         self.assertIsNotNone(wait.timers.idle_deadline, "ADMIN_USB_WAIT ohne idle_deadline.")
@@ -600,8 +562,6 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
             self.assertEqual(branch.state, expected)
             self.assertIsNotNone(branch.timers.idle_deadline, f"{expected.name} ohne idle_deadline.")
 
-            # GEAENDERT (4.7): TAP_CANCEL statt TAP_ADMIN_USB_CONTINUE -
-            # letzteres startet auf ADMIN_USB_READY inzwischen den Export.
             eject = machine.transition(branch, AppEvent(EventType.TAP_CANCEL), now + 17.0).model
             self.assertEqual(eject.state, AppState.ADMIN_USB_EJECT)
             remove = machine.transition(
@@ -645,9 +605,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         self.assertFalse(result.model.ui.admin_usb_device_ready)
 
     def test_continue_without_stick_does_nothing(self) -> None:
-        # Der wichtigste Test hier: ohne erkannten Stick darf "Weiter"
-        # nicht in den Pruefzweig fuehren (sonst wuerde spaeter versucht,
-        # ein nicht vorhandenes Geraet einzubinden).
         self._go_to_usb_wait()
         result = self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=10.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_WAIT)
@@ -675,8 +632,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
     def test_wait_uses_the_longer_timeout(self) -> None:
-        # Einen Stick zu holen und einzustecken dauert laenger als die
-        # 30s des uebrigen Menues.
         self._go_to_usb_wait(now_offset=5.2)
         expected = self.now + 7.2 + self.config.timeouts.admin_usb_wait_seconds
         self.assertAlmostEqual(self.model.timers.idle_deadline, expected)
@@ -689,8 +644,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         return self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=11.0)
 
     def test_check_has_no_idle_deadline(self) -> None:
-        # Einbinden darf nicht durch einen Timeout unterbrochen werden -
-        # sonst bliebe der Stick eingehaengt zurueck.
         self._go_to_check()
         self.assertIsNone(self.model.timers.idle_deadline)
 
@@ -724,10 +677,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         self.transition(
             EventType.ADMIN_USB_CHECK_DONE, now_offset=13.0, payload={"ok": ok, "lines": ()},
         )
-        # GEAENDERT (4.7): "Weiter" startet auf ADMIN_USB_READY jetzt den
-        # Export. Um ohne Export zum Auswerfen zu kommen, ist "Abbrechen"
-        # der richtige Weg - auf ADMIN_USB_PROBLEM ebenso, denn dort gibt
-        # es "Weiter" gar nicht mehr (nur "Abbrechen"/"Stick leeren").
         self.transition(EventType.TAP_CANCEL, now_offset=14.0)
         self.assertEqual(self.model.state, AppState.ADMIN_USB_EJECT)
         return self.transition(
@@ -736,7 +685,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         )
 
     def test_continue_on_ready_starts_export(self) -> None:
-        # NEU (4.7): "Export starten" startet den Kopierlauf.
         self._go_to_check()
         self.transition(EventType.ADMIN_USB_CHECK_DONE, now_offset=13.0, payload={"ok": True, "lines": ()})
         result = self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=14.0)
@@ -752,7 +700,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         self.assertIn("usb_eject", result.actions)
 
     def test_after_success_without_export_returns_to_menu(self) -> None:
-        # Kein Export durchgefuehrt: kein Loesch-Angebot.
         self._go_to_remove(ok=True)
         self.assertEqual(self.model.state, AppState.ADMIN_USB_REMOVE)
         self.assertFalse(self.model.ui.admin_usb_can_retry)
@@ -761,8 +708,6 @@ class AdminUsbFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
     def test_after_problem_remove_returns_to_wait_for_another_stick(self) -> None:
-        # Nach "Stick zu klein" soll direkt ein anderer probiert werden
-        # koennen, ohne den Umweg ueber das Menue.
         self._go_to_remove(ok=False)
         self.assertTrue(self.model.ui.admin_usb_can_retry)
         result = self.transition(EventType.TAP_BACK, now_offset=20.0)
@@ -840,14 +785,11 @@ class AdminUsbExportFlowTestCase(unittest.TestCase):
             EventType.ADMIN_USB_EXPORT_FINISHED, now_offset=15.0,
             payload={"ok": True, "lines": ()},
         )
-        # Weiter -> Eject
         self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=16.0)
         self.assertEqual(self.model.state, AppState.ADMIN_USB_EJECT)
-        # Ejected -> Remove
         self.transition(EventType.ADMIN_USB_EJECTED, now_offset=17.0, payload={"lines": ()})
         self.assertEqual(self.model.state, AppState.ADMIN_USB_REMOVE)
         self.assertTrue(self.model.ui.admin_usb_offer_delete)
-        # Zurueck -> Delete Confirm (nicht Admin Menu!)
         result = self.transition(EventType.TAP_BACK, now_offset=18.0)
         self.assertEqual(result.model.state, AppState.ADMIN_DELETE_CONFIRM)
 
@@ -871,14 +813,12 @@ class AdminUsbExportFlowTestCase(unittest.TestCase):
         self.transition(EventType.TAP_ADMIN_USB_EXPORT, now_offset=7.0)
         self.transition(EventType.ADMIN_USB_DETECTED, now_offset=8.0, payload={"name": "S"})
         self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=9.0)
-        # Problem: nicht genug frei
         self.transition(
             EventType.ADMIN_USB_CHECK_DONE, now_offset=10.0,
             payload={"ok": False, "not_enough_free": True, "lines": ("Nicht genug Platz",)},
         )
         self.assertEqual(self.model.state, AppState.ADMIN_USB_PROBLEM)
         self.assertTrue(self.model.ui.admin_usb_not_enough_free)
-        # Stick leeren -> zurueck zu Check
         result = self.transition(EventType.TAP_ADMIN_USB_CLEAR, now_offset=11.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_CHECK)
         self.assertIn("usb_clear_and_check", result.actions)
@@ -890,13 +830,11 @@ class AdminUsbExportFlowTestCase(unittest.TestCase):
         self.transition(EventType.TAP_ADMIN_USB_EXPORT, now_offset=7.0)
         self.transition(EventType.ADMIN_USB_DETECTED, now_offset=8.0, payload={"name": "S"})
         self.transition(EventType.TAP_ADMIN_USB_CONTINUE, now_offset=9.0)
-        # Problem: zu klein (not_enough_free=False)
         self.transition(
             EventType.ADMIN_USB_CHECK_DONE, now_offset=10.0,
             payload={"ok": False, "too_small": True, "not_enough_free": False, "lines": ("Zu klein",)},
         )
         self.assertFalse(self.model.ui.admin_usb_not_enough_free)
-        # Gleicher Button -> aber eject statt clear
         result = self.transition(EventType.TAP_ADMIN_USB_CLEAR, now_offset=11.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_EJECT)
 
@@ -950,8 +888,6 @@ class AdminUsbConflictFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.ui.admin_usb_conflicts[0].name, "a.jpg")
 
     def test_no_conflicts_keeps_old_behavior(self) -> None:
-        # Regressionsschutz: leere Konfliktliste -> unveraendertes
-        # Verhalten wie vor Etappe 6b (direkt zum Ergebnis-Screen).
         self._go_to_copy()
         result = self.transition(
             EventType.ADMIN_USB_EXPORT_FINISHED, now_offset=15.0,
@@ -973,7 +909,7 @@ class AdminUsbConflictFlowTestCase(unittest.TestCase):
         )
         by_name = {c.name: c.decision for c in result.model.ui.admin_usb_conflicts}
         self.assertEqual(by_name["a.jpg"], "overwrite")
-        self.assertEqual(by_name["b.jpg"], "rename")   # unangetastet
+        self.assertEqual(by_name["b.jpg"], "rename")
 
     def test_invalid_decision_is_ignored(self) -> None:
         self._go_to_conflicts((self._conflict("a.jpg"),))
@@ -1005,8 +941,6 @@ class AdminUsbConflictFlowTestCase(unittest.TestCase):
         self.assertIsNone(result.model.timers.idle_deadline)
 
     def test_back_also_starts_resolve(self) -> None:
-        # Kein sinnvolles "Abbrechen" mehr moeglich - TAP_BACK loest wie
-        # "Ausfuehren" die Aufloesung mit den aktuellen Entscheidungen aus.
         self._go_to_conflicts((self._conflict("a.jpg"),))
         result = self.transition(EventType.TAP_BACK, now_offset=16.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
@@ -1017,9 +951,6 @@ class AdminUsbConflictFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)
 
     def test_idle_timeout_also_starts_resolve(self) -> None:
-        # Unbeaufsichtigt bleibt die Box nicht haengen - die nicht-
-        # destruktive Standardentscheidung ("rename") wird automatisch
-        # angewendet.
         self._go_to_conflicts((self._conflict("a.jpg"),))
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=16.0)
         self.assertEqual(result.model.state, AppState.ADMIN_USB_RESOLVE)

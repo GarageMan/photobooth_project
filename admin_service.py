@@ -1,9 +1,20 @@
 """
-shutdown_service.py
-===================
-Reine Logik fuer das versteckte Herunterfahren der Fotobox (Schritt 2).
-Kein pygame-, kein Hardware-Bezug - dadurch offline (WSL/PC) mit pytest
-testbar, genau wie state_machine.py.
+admin_service.py
+=================
+Reine Logik fuer den Zugang zum PIN-geschuetzten Service-Menue der
+Fotobox (Status/Diagnose, USB-Export, Bilder loeschen, Kamera-
+Einstellungen, Herunterfahren, ...) ueber die versteckte Geste im
+Hauptmenue. Kein pygame-, kein Hardware-Bezug - dadurch offline (WSL/PC)
+mit pytest testbar, genau wie state_machine.py.
+
+UMBENANNT (Sprint 11, vormals shutdown_service.py): der PIN-Schutz galt
+von Anfang an dem GESAMTEN Service-Menue, nicht nur dem Herunterfahren -
+das war ueber lange Zeit nur der erste und einzige Menuepunkt dahinter.
+Name der Datei sowie die zugehoerigen Variablennamen in
+local_secrets_example.py (SERVICE_MENU_PIN u.a., vormals SHUTDOWN_PIN)
+sind jetzt entsprechend angepasst - siehe dort fuer Details zur
+Abwaertskompatibilitaet mit bereits im Einsatz befindlichen
+local_secrets.py-Dateien.
 
 Zwei voneinander unabhaengige Bausteine:
 
