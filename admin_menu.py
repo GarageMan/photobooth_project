@@ -86,14 +86,24 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
     # NEU (Sprint 11, Feature 2): eigene Zeile OBERHALB von "Zurück"/"Alle
     # Bilder löschen" (row=2 statt deren row=2 von frueher - diese beiden
     # ruecken auf row=3), damit die bewusste Platzierung "Loeschen unten
-    # rechts, weit weg von Zurueck" unveraendert bleibt. Spalte 1/row 2
-    # bleibt bewusst frei (kein zweiter neuer Menuepunkt in diesem Sprint).
+    # rechts, weit weg von Zurueck" unveraendert bleibt.
     AdminMenuItem(
         key="camera_settings",
         label="Kamera-Einstellungen",
         event_type=EventType.TAP_ADMIN_CAMERA_SETTINGS,
         color=(0, 90, 130),
         column=0,
+        row=2,
+        enabled=True,
+    ),
+    # NEU (letzte Sprint-11-Aufgabe): fuellt den bisher freien Platz
+    # Spalte 1/Zeile 2 - kein Umbau des 2x4-Rasters noetig.
+    AdminMenuItem(
+        key="event_settings",
+        label="Veranstaltungsdaten",
+        event_type=EventType.TAP_ADMIN_EVENT_SETTINGS,
+        color=(90, 60, 130),
+        column=1,
         row=2,
         enabled=True,
     ),

@@ -74,6 +74,14 @@ class HwGphoto2PreviewProvider:
     _running: bool = field(default=False, init=False)
     _frame_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _latest_frame: object = field(default=None, init=False, repr=False)
+    # NEU (Kamera-Menue 2.0): die bereits offene Kamera-Sitzung des Worker-
+    # Threads, damit andere Module (hw_camera_settings_provider) sie
+    # WAEHREND die Vorschau laeuft mitbenutzen koennen, statt eine zweite,
+    # unabhaengige PTP-Sitzung zu oeffnen (siehe run_with_camera() unten
+    # und den Docstring von hw_camera_settings_provider.py, gphoto2-Issue
+    # #491). Nur innerhalb von camera_lock lesen/schreiben.
+    _camera: object = field(default=None, init=False, repr=False)
+    _context: object = field(default=None, init=False, repr=False)
 
     def start(self) -> None:
         if not _GP_AVAILABLE or not _PYGAME_AVAILABLE:
@@ -99,12 +107,31 @@ class HwGphoto2PreviewProvider:
         with self._frame_lock:
             return self._latest_frame
 
+    def run_with_camera(self, fn):
+        """NEU (Kamera-Menue 2.0): fuehrt `fn(camera, context)` unter
+        camera_lock mit der bereits offenen Vorschau-Kamerasitzung aus -
+        fuer Aufrufer (hw_camera_settings_provider), die waehrend laufender
+        Vorschau denselben PTP-Handle mitbenutzen muessen, statt eine
+        zweite, unabhaengige Sitzung zu oeffnen (die scheitert bei den
+        meisten Kameras, siehe gphoto2-Issue #491).
+
+        Gibt (True, ergebnis_von_fn) zurueck, wenn gerade eine Vorschau-
+        Sitzung offen ist, sonst (False, None) - der Aufrufer faellt dann
+        auf seine eigene, kurze Sitzung zurueck (siehe
+        hw_camera_settings_provider.read_current/_set_widget)."""
+        with self.camera_lock:
+            if self._camera is None or self._context is None:
+                return False, None
+            return True, fn(self._camera, self._context)
+
     def _worker(self) -> None:
         context = gp.Context()
         camera = gp.Camera()
         try:
             with self.camera_lock:
                 camera.init(context)
+                self._camera = camera
+                self._context = context
         except Exception as exc:
             print(f"[HwGphoto2PreviewProvider] Kamera-Init fehlgeschlagen: {exc}")
             self._running = False
@@ -136,6 +163,9 @@ class HwGphoto2PreviewProvider:
                 camera.exit(context)
         except Exception:
             pass
+        with self.camera_lock:
+            self._camera = None
+            self._context = None
         print("[HwGphoto2PreviewProvider] Vorschau gestoppt.")
 
 

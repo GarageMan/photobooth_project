@@ -14,6 +14,27 @@ from admin_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine L
 # des Puffers). Keine Geheimhaltung noetig, daher Modulkonstante statt config.
 _MAX_PIN_LENGTH = 12
 
+# NEU (Veranstaltungsdaten): die vier ueber die Bildschirmtastatur
+# editierbaren Textfelder, dazu ihre jeweilige Laengenobergrenze - grosszuegig
+# genug fuer sinnvolle Werte, aber verhindert unbegrenztes Anwachsen des
+# Puffers (gleicher Grund wie _MAX_PIN_LENGTH oben).
+_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password")
+_ADMIN_EVENT_FIELD_MAX_LENGTH = {"title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63}
+# Anzeige-Beschriftung je Feld fuer die Kopfzeile des Tastatur-Screens (siehe
+# _go_admin_event_text_entry) - rein kosmetisch, keine Geschaeftslogik.
+_ADMIN_EVENT_FIELD_LABELS = {
+    "title": "Veranstaltungs-Titel",
+    "prefix": "Datei-Präfix",
+    "wifi_ssid": "WLAN-SSID",
+    "wifi_password": "WLAN-Passwort",
+}
+# Datei-Praefix landet direkt im Dateinamen gespeicherter Fotos (siehe
+# hw_capture_provider.py) - deshalb auf ein sicheres Zeichenset beschraenkt,
+# statt beliebigen Text zuzulassen (kein Leerzeichen, kein "/", keine Umlaute).
+_ADMIN_EVENT_PREFIX_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+
 # NEU (Sprint 11, Feature 3): Ersetzt die bisherige sofortige QR-Code-Anzeige
 # nach dem Speichern (AppState.QR_DISPLAY zeigt seit diesem Umbau KEIN Bild
 # mehr, nur noch diesen Hinweistext - siehe renderer.py). Gruende: Gaeste
@@ -366,7 +387,12 @@ class StateMachine:
     # Geheim-Geste im Hauptmenue + korrekte Wartungs-PIN.
     def _handle_admin_menu(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.TAP_ADMIN_SHUTDOWN:
-            return self._go_shutdown_goodbye(model, now)
+            # GEAENDERT (Sprint-11-Nachbesserung, Nutzer-Feedback): fuehrt
+            # nicht mehr direkt in das unabbrechbare SHUTDOWN_GOODBYE, sondern
+            # zuerst zu einer Sicherheitsabfrage (siehe
+            # _go_admin_shutdown_confirm) - ein Fehltipp im Service-Menue
+            # hatte sonst sofort die Fotobox heruntergefahren.
+            return self._go_admin_shutdown_confirm(model, now)
         if event.type == EventType.TAP_ADMIN_STATUS:          # NEU (4.3)
             return self._go_admin_status(model, now)
         if event.type == EventType.TAP_ADMIN_RESTART_APP:     # NEU (4.3)
@@ -377,6 +403,8 @@ class StateMachine:
             return self._go_admin_usb_wait(model, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_SETTINGS:  # NEU (Sprint 11, Feature 2)
             return self._go_admin_camera_settings(model, now)
+        if event.type == EventType.TAP_ADMIN_EVENT_SETTINGS:  # NEU (Veranstaltungsdaten)
+            return self._go_admin_event_settings(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
         # BUTTON_PRESS wird hier bewusst NICHT behandelt: der Hardware-
@@ -405,27 +433,139 @@ class StateMachine:
     def _handle_admin_camera_settings(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.ADMIN_CAMERA_SETTINGS_READY:
             payload = event.payload
-            ui = replace(
-                model.ui,
-                admin_camera_available=bool(payload.get("available", False)),
+            available = bool(payload.get("available", False))
+            changes: dict = dict(
+                admin_camera_available=available,
                 admin_camera_error=payload.get("error"),
                 admin_camera_iso=str(payload.get("iso", "")),
                 admin_camera_iso_choices=tuple(payload.get("iso_choices", ())),
                 admin_camera_aperture=str(payload.get("aperture", "")),
                 admin_camera_aperture_choices=tuple(payload.get("aperture_choices", ())),
+                admin_camera_shutter=str(payload.get("shutter", "")),
+                admin_camera_expcomp=str(payload.get("expcomp", "")),
+                admin_camera_expcomp_choices=tuple(payload.get("expcomp_choices", ())),
+                admin_camera_metering=str(payload.get("metering", "")),
+                admin_camera_metering_choices=tuple(payload.get("metering_choices", ())),
+                admin_camera_wb=str(payload.get("white_balance", "")),
+                admin_camera_wb_choices=tuple(payload.get("white_balance_choices", ())),
+                admin_camera_quality=str(payload.get("quality", "")),
+                admin_camera_quality_choices=tuple(payload.get("quality_choices", ())),
+                admin_camera_imagesize=str(payload.get("image_size", "")),
+                admin_camera_imagesize_choices=tuple(payload.get("image_size_choices", ())),
+                admin_camera_drive=str(payload.get("drive_mode", "")),
+                admin_camera_drive_choices=tuple(payload.get("drive_mode_choices", ())),
             )
+            # NEU (Kamera-Menue 2.0): die Momentaufnahme fuer "Abbrechen" wird
+            # NUR beim ersten READY nach dem Betreten des Screens gesetzt -
+            # jeder weitere READY (nach jedem +/--Tastendruck, zum Aktualisieren
+            # der Anzeige) darf sie nicht mehr ueberschreiben, sonst wuerde
+            # "Abbrechen" wirkungslos (siehe models.UiState.admin_camera_entry_captured).
+            if available and not model.ui.admin_camera_entry_captured:
+                changes.update(
+                    admin_camera_entry_captured=True,
+                    admin_camera_entry_iso=changes["admin_camera_iso"],
+                    admin_camera_entry_aperture=changes["admin_camera_aperture"],
+                    admin_camera_entry_expcomp=changes["admin_camera_expcomp"],
+                    admin_camera_entry_metering=changes["admin_camera_metering"],
+                    admin_camera_entry_wb=changes["admin_camera_wb"],
+                    admin_camera_entry_quality=changes["admin_camera_quality"],
+                    admin_camera_entry_imagesize=changes["admin_camera_imagesize"],
+                    admin_camera_entry_drive=changes["admin_camera_drive"],
+                )
+            ui = replace(model.ui, **changes)
             return TransitionResult(model=model.evolve(ui=ui))
         if event.type == EventType.TAP_ADMIN_CAMERA_ISO_UP and model.ui.admin_camera_iso_choices:
-            return self._step_admin_camera_iso(model, +1)
+            return self._step_admin_camera_field(model, "admin_camera_iso", "admin_camera_iso_choices", "set_admin_camera_iso", +1, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_ISO_DOWN and model.ui.admin_camera_iso_choices:
-            return self._step_admin_camera_iso(model, -1)
+            return self._step_admin_camera_field(model, "admin_camera_iso", "admin_camera_iso_choices", "set_admin_camera_iso", -1, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_APERTURE_UP and model.ui.admin_camera_aperture_choices:
-            return self._step_admin_camera_aperture(model, +1)
+            return self._step_admin_camera_field(model, "admin_camera_aperture", "admin_camera_aperture_choices", "set_admin_camera_aperture", +1, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN and model.ui.admin_camera_aperture_choices:
-            return self._step_admin_camera_aperture(model, -1)
-        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._step_admin_camera_field(model, "admin_camera_aperture", "admin_camera_aperture_choices", "set_admin_camera_aperture", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_EXPCOMP_UP and model.ui.admin_camera_expcomp_choices:
+            return self._step_admin_camera_field(model, "admin_camera_expcomp", "admin_camera_expcomp_choices", "set_admin_camera_expcomp", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_EXPCOMP_DOWN and model.ui.admin_camera_expcomp_choices:
+            return self._step_admin_camera_field(model, "admin_camera_expcomp", "admin_camera_expcomp_choices", "set_admin_camera_expcomp", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_METERING_UP and model.ui.admin_camera_metering_choices:
+            return self._step_admin_camera_field(model, "admin_camera_metering", "admin_camera_metering_choices", "set_admin_camera_metering", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_METERING_DOWN and model.ui.admin_camera_metering_choices:
+            return self._step_admin_camera_field(model, "admin_camera_metering", "admin_camera_metering_choices", "set_admin_camera_metering", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_WB_UP and model.ui.admin_camera_wb_choices:
+            return self._step_admin_camera_field(model, "admin_camera_wb", "admin_camera_wb_choices", "set_admin_camera_wb", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_WB_DOWN and model.ui.admin_camera_wb_choices:
+            return self._step_admin_camera_field(model, "admin_camera_wb", "admin_camera_wb_choices", "set_admin_camera_wb", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_QUALITY_UP and model.ui.admin_camera_quality_choices:
+            return self._step_admin_camera_field(model, "admin_camera_quality", "admin_camera_quality_choices", "set_admin_camera_quality", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_QUALITY_DOWN and model.ui.admin_camera_quality_choices:
+            return self._step_admin_camera_field(model, "admin_camera_quality", "admin_camera_quality_choices", "set_admin_camera_quality", -1, now)
+        # BUGFIX (Nutzer-Feedback nach Live-Test): die Kamera liefert die
+        # Bildgroessen-Auswahlliste in absteigender Reihenfolge (gross...
+        # klein) statt wie ISO/Blende aufsteigend - mit Richtung +1 auf
+        # "+" wanderte die Anzeige dadurch entgegen der Erwartung zu KLEINEN
+        # Werten. Richtung deshalb (nur hier) vertauscht: "+" = -1 (Richtung
+        # "Anfang der Liste" = grosse Werte), "-" = +1.
+        if event.type == EventType.TAP_ADMIN_CAMERA_IMAGESIZE_UP and model.ui.admin_camera_imagesize_choices:
+            return self._step_admin_camera_field(model, "admin_camera_imagesize", "admin_camera_imagesize_choices", "set_admin_camera_imagesize", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_IMAGESIZE_DOWN and model.ui.admin_camera_imagesize_choices:
+            return self._step_admin_camera_field(model, "admin_camera_imagesize", "admin_camera_imagesize_choices", "set_admin_camera_imagesize", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_DRIVE_UP and model.ui.admin_camera_drive_choices:
+            return self._step_admin_camera_field(model, "admin_camera_drive", "admin_camera_drive_choices", "set_admin_camera_drive", +1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_DRIVE_DOWN and model.ui.admin_camera_drive_choices:
+            return self._step_admin_camera_field(model, "admin_camera_drive", "admin_camera_drive_choices", "set_admin_camera_drive", -1, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_PAGE_NEXT:
+            # BUGFIX (Nutzer-Feedback nach Live-Test): Seitenwechsel ist
+            # ebenfalls Bedienung - haengt die Idle-Deadline mit ein,
+            # gleicher Grund wie bei _step_admin_camera_field.
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=replace(model.ui, admin_camera_page=1), timers=timers))
+        if event.type == EventType.TAP_ADMIN_CAMERA_PAGE_PREV:
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=replace(model.ui, admin_camera_page=0), timers=timers))
+        if event.type == EventType.TAP_ADMIN_CAMERA_SAVE:
+            # "Speichern" = "ist gut so" - die Werte sind bereits live auf der
+            # Kamera gesetzt (jeder +/--Tastendruck wirkt sofort), es ist also
+            # nichts weiter zu tun ausser zurueck ins Menue (stop_preview
+            # kommt automatisch mit, siehe _go_admin_menu).
             return self._go_admin_menu(model, now)
+        if event.type == EventType.TAP_ADMIN_CAMERA_CANCEL:
+            # "Abbrechen" sendet die Werte zurueck, mit denen der Screen
+            # betreten wurde (siehe app_with_hw._revert_admin_camera_settings).
+            menu_result = self._go_admin_menu(model, now)
+            return TransitionResult(
+                model=menu_result.model,
+                actions=("revert_admin_camera_settings",) + menu_result.actions,
+            )
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            # GEAENDERT (Kamera-Menue 2.0): ein "Zurueck" oder Untaetigkeit
+            # ohne ausdrueckliches "Speichern" soll keine live gesetzten
+            # Aenderungen hinterlassen - verhaelt sich deshalb wie "Abbrechen".
+            menu_result = self._go_admin_menu(model, now)
+            return TransitionResult(
+                model=menu_result.model,
+                actions=("revert_admin_camera_settings",) + menu_result.actions,
+            )
         return TransitionResult(model=model)
+
+    def _step_admin_camera_field(
+        self, model: AppModel, value_field: str, choices_field: str, action: str, direction: int, now: float,
+    ) -> TransitionResult:
+        """Generalisierte Fassung von (ehemals) _step_admin_camera_iso/
+        _step_admin_camera_aperture - dasselbe Prinzip fuer alle acht
+        einstellbaren Kamera-Werte: einen Schritt in der von der Kamera
+        gelieferten choices-Liste wandern, optimistisch in model.ui
+        vormerken, `action` loest den eigentlichen gphoto2-set_config()-
+        Aufruf aus (siehe app_with_hw._set_admin_camera_setting).
+        BUGFIX (Nutzer-Feedback nach Live-Test): idle_deadline wurde bisher
+        NUR beim Betreten des Screens gesetzt, nie bei tatsaechlicher
+        Bedienung - dadurch konnte man mitten in der Einstellungsaenderung
+        unerwartet ins Service-Menue zurueckgereicht werden. Jede Betaetigung
+        haengt die Idle-Deadline jetzt neu ein (`now` deshalb neuer Parameter)."""
+        choices = getattr(model.ui, choices_field)
+        current = getattr(model.ui, value_field)
+        new_value = self._step_choice(choices, current, direction)
+        ui = replace(model.ui, **{value_field: new_value})
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
+        return TransitionResult(model=model.evolve(ui=ui, timers=timers), actions=(action,))
 
     @staticmethod
     def _step_choice(choices: tuple[str, ...], current: str, direction: int) -> str:
@@ -444,21 +584,256 @@ class StateMachine:
         index = max(0, min(len(choices) - 1, index + direction))
         return choices[index]
 
-    def _step_admin_camera_iso(self, model: AppModel, direction: int) -> TransitionResult:
-        new_value = self._step_choice(model.ui.admin_camera_iso_choices, model.ui.admin_camera_iso, direction)
-        ui = replace(model.ui, admin_camera_iso=new_value)
-        return TransitionResult(model=model.evolve(ui=ui), actions=("set_admin_camera_iso",))
+    # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
+    # Uebersichts-/Bearbeiten-Screen. Entry-Snapshot + Revert-Muster wie bei
+    # ADMIN_CAMERA_SETTINGS: der ERSTE ADMIN_EVENT_SETTINGS_READY nach dem
+    # Betreten befuellt sowohl die Entwurfs- als auch die Snapshot-Felder
+    # (hier gibt es - anders als bei den Kamera-Einstellungen - kein
+    # wiederholtes READY waehrend des Bearbeitens, das READY kommt genau
+    # einmal synchron nach dem Betreten, siehe
+    # app_with_hw._collect_admin_event_settings). "Abbrechen"/TAP_BACK/
+    # Idle-Timeout stellen den Snapshot wieder her, OHNE zu speichern - erst
+    # "Speichern" schreibt tatsaechlich auf Platte (Action "save_event_config").
+    def _handle_admin_event_settings(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_EVENT_SETTINGS_READY:
+            payload = event.payload
+            changes: dict = dict(
+                admin_event_title=str(payload.get("title", "")),
+                admin_event_prefix=str(payload.get("prefix", "")),
+                admin_event_wifi_ssid=str(payload.get("wifi_ssid", "")),
+                admin_event_wifi_password=str(payload.get("wifi_password", "")),
+                admin_event_qr_enabled=bool(payload.get("qr_enabled", True)),
+                admin_event_gallery_enabled=bool(payload.get("gallery_enabled", True)),
+            )
+            changes.update(
+                admin_event_entry_title=changes["admin_event_title"],
+                admin_event_entry_prefix=changes["admin_event_prefix"],
+                admin_event_entry_wifi_ssid=changes["admin_event_wifi_ssid"],
+                admin_event_entry_wifi_password=changes["admin_event_wifi_password"],
+                admin_event_entry_qr_enabled=changes["admin_event_qr_enabled"],
+                admin_event_entry_gallery_enabled=changes["admin_event_gallery_enabled"],
+            )
+            ui = replace(model.ui, **changes)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_EVENT_FIELD_EDIT:
+            field = str(event.payload.get("field", ""))
+            if field in _ADMIN_EVENT_TEXT_FIELDS:
+                return self._go_admin_event_text_entry(model, now, field)
+            return TransitionResult(model=model)
+        if event.type == EventType.TAP_ADMIN_EVENT_TOGGLE:
+            field = event.payload.get("field")
+            if field == "qr":
+                ui = replace(model.ui, admin_event_qr_enabled=not model.ui.admin_event_qr_enabled)
+            elif field == "gallery":
+                ui = replace(model.ui, admin_event_gallery_enabled=not model.ui.admin_event_gallery_enabled)
+            else:
+                return TransitionResult(model=model)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE:
+            ui = replace(model.ui, admin_event_wifi_password_visible=not model.ui.admin_event_wifi_password_visible)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT:
+            return self._go_admin_event_wallpaper_import(model, now)
+        if event.type == EventType.TAP_ADMIN_EVENT_SAVE:
+            # Schreibt noch nicht selbst - das Ergebnis kommt synchron als
+            # ADMIN_EVENT_SAVE_RESULT zurueck (siehe
+            # app_with_hw._save_admin_event_settings).
+            return TransitionResult(model=model, actions=("save_event_config",))
+        if event.type == EventType.ADMIN_EVENT_SAVE_RESULT:
+            ui = replace(
+                model.ui,
+                status_text="Veranstaltungsdaten gespeichert" if event.payload.get("ok") else "Speichern fehlgeschlagen",
+                admin_event_save_ok=bool(event.payload.get("ok", False)),
+                admin_event_save_message=str(event.payload.get("message", "")),
+            )
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SAVED, ui=ui, timers=timers))
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            # "Abbrechen"/Zurueck/Untaetigkeit verwirft alle Aenderungen und
+            # stellt den beim Betreten gesicherten Snapshot wieder her.
+            ui = replace(
+                model.ui,
+                admin_event_title=model.ui.admin_event_entry_title,
+                admin_event_prefix=model.ui.admin_event_entry_prefix,
+                admin_event_wifi_ssid=model.ui.admin_event_entry_wifi_ssid,
+                admin_event_wifi_password=model.ui.admin_event_entry_wifi_password,
+                admin_event_qr_enabled=model.ui.admin_event_entry_qr_enabled,
+                admin_event_gallery_enabled=model.ui.admin_event_entry_gallery_enabled,
+            )
+            return self._go_admin_menu(model.evolve(ui=ui), now)
+        return TransitionResult(model=model)
 
-    def _step_admin_camera_aperture(self, model: AppModel, direction: int) -> TransitionResult:
-        new_value = self._step_choice(model.ui.admin_camera_aperture_choices, model.ui.admin_camera_aperture, direction)
-        ui = replace(model.ui, admin_camera_aperture=new_value)
-        return TransitionResult(model=model.evolve(ui=ui), actions=("set_admin_camera_aperture",))
+    def _go_admin_event_settings(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Veranstaltungsdaten",
+            error_text=None,
+            admin_event_title="",
+            admin_event_prefix="",
+            admin_event_wifi_ssid="",
+            admin_event_wifi_password="",
+            admin_event_qr_enabled=True,
+            admin_event_gallery_enabled=True,
+            admin_event_entry_title="",
+            admin_event_entry_prefix="",
+            admin_event_entry_wifi_ssid="",
+            admin_event_entry_wifi_password="",
+            admin_event_entry_qr_enabled=True,
+            admin_event_entry_gallery_enabled=True,
+            admin_event_edit_field="",
+            admin_event_text_buffer="",
+            admin_event_keyboard_shift=False,
+            admin_event_wifi_password_visible=False,
+            admin_event_save_ok=False,
+            admin_event_save_message="",
+            admin_event_wallpaper_lines=(),
+            admin_event_wallpaper_ok=False,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_EVENT_SETTINGS, ui=ui, timers=timers),
+            actions=("collect_admin_event_settings",),
+        )
+
+    def _return_to_admin_event_settings(self, model: AppModel, now: float) -> TransitionResult:
+        """Rueckkehr aus einem Unter-Screen (Tastatur, Wallpaper-Ergebnis) -
+        anders als _go_admin_event_settings OHNE Reset/Snapshot-Neubefuellung
+        und OHNE die "collect_admin_event_settings"-Action, damit der noch
+        offene Bearbeitungsstand erhalten bleibt."""
+        ui = replace(model.ui, status_text="Veranstaltungsdaten", error_text=None)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SETTINGS, ui=ui, timers=timers))
+
+    # Bildschirmtastatur fuer GENAU EIN Textfeld - welches, steht in
+    # ui.admin_event_edit_field (gesetzt beim Betreten, siehe
+    # _go_admin_event_text_entry).
+    def _go_admin_event_text_entry(self, model: AppModel, now: float, field: str) -> TransitionResult:
+        current = getattr(model.ui, f"admin_event_{field}")
+        ui = replace(
+            model.ui,
+            status_text=_ADMIN_EVENT_FIELD_LABELS.get(field, "Veranstaltungsdaten"),
+            admin_event_edit_field=field,
+            admin_event_text_buffer=current,
+            admin_event_keyboard_shift=False,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_TEXT_ENTRY, ui=ui, timers=timers))
+
+    def _handle_admin_event_text_entry(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        field = model.ui.admin_event_edit_field
+        if event.type == EventType.TEXT_ENTRY_CHAR:
+            char = str(event.payload.get("char", ""))
+            if not char:
+                return TransitionResult(model=model)
+            # Datei-Praefix: unsicheres Zeichen wird stillschweigend
+            # ignoriert (gleiche knappe Art wie die PIN-Ziffernpruefung
+            # oben) statt mit einer Fehlermeldung zu blockieren.
+            if field == "prefix" and char not in _ADMIN_EVENT_PREFIX_CHARS:
+                return TransitionResult(model=model)
+            max_length = _ADMIN_EVENT_FIELD_MAX_LENGTH.get(field, 40)
+            buffer = model.ui.admin_event_text_buffer
+            if len(buffer) >= max_length:
+                return TransitionResult(model=model)
+            ui = replace(model.ui, admin_event_text_buffer=buffer + char)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TEXT_ENTRY_BACKSPACE:
+            ui = replace(model.ui, admin_event_text_buffer=model.ui.admin_event_text_buffer[:-1])
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TEXT_ENTRY_SHIFT:
+            ui = replace(model.ui, admin_event_keyboard_shift=not model.ui.admin_event_keyboard_shift)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE:
+            ui = replace(model.ui, admin_event_wifi_password_visible=not model.ui.admin_event_wifi_password_visible)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TEXT_ENTRY_SUBMIT:
+            value = model.ui.admin_event_text_buffer.strip()
+            result_model = model
+            # Ein leerer Puffer wird stillschweigend verworfen (der bisherige
+            # Wert bleibt stehen) statt einen leeren Titel/Praefix/... zu
+            # uebernehmen - kein Blockieren mit Fehlermeldung noetig, da das
+            # Feld dafuer einfach erneut geoeffnet werden kann.
+            if value and field:
+                ui = replace(model.ui, **{f"admin_event_{field}": value})
+                result_model = model.evolve(ui=ui)
+            return self._return_to_admin_event_settings(result_model, now)
+        if event.type in {EventType.TEXT_ENTRY_CANCEL, EventType.IDLE_TIMEOUT}:
+            return self._return_to_admin_event_settings(model, now)
+        return TransitionResult(model=model)
+
+    # Wallpaper-Import: Hintergrund-Thread (Stick suchen/mounten/Bild
+    # kopieren/aushaengen, siehe app_with_hw._wallpaper_start_import) -
+    # bewusst nicht abbrechbar, analog ADMIN_USB_CHECK.
+    def _go_admin_event_wallpaper_import(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(model.ui, status_text="Wallpaper wird von USB-Stick geladen ...", error_text=None)
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_EVENT_WALLPAPER_IMPORT, ui=ui, timers=timers),
+            actions=("wallpaper_import",),
+        )
+
+    def _handle_admin_event_wallpaper_import(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED:
+            ok = bool(event.payload.get("ok", False))
+            lines = tuple(event.payload.get("lines", ()))
+            return self._go_admin_event_wallpaper_result(model, now, ok, lines)
+        return TransitionResult(model=model)
+
+    def _go_admin_event_wallpaper_result(
+        self, model: AppModel, now: float, ok: bool, lines: tuple[str, ...],
+    ) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Wallpaper übernommen" if ok else "Wallpaper-Import fehlgeschlagen",
+            admin_event_wallpaper_ok=ok,
+            admin_event_wallpaper_lines=lines,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_WALLPAPER_RESULT, ui=ui, timers=timers))
+
+    def _handle_admin_event_wallpaper_result(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        # GEAENDERT: "Zurueck" fuehrt bewusst zurueck in die noch offene
+        # Bearbeitung (_return_to_admin_event_settings), NICHT ins
+        # Service-Menue - sonst wuerden bereits getippte, noch nicht
+        # gespeicherte Aenderungen an anderen Feldern verworfen.
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._return_to_admin_event_settings(model, now)
+        return TransitionResult(model=model)
+
+    def _handle_admin_event_saved(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_EVENT_RESTART_NOW:
+            # Exakt derselbe Ablauf wie der bestehende Menuepunkt
+            # "App neu starten" - kein eigener Neustart-Mechanismus.
+            return self._go_admin_restart_pending(model, now)
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
 
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen vor dem
     # eigentlichen Neustart (analog zu SHUTDOWN_GOODBYE).
     def _handle_admin_restart_pending(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.ADMIN_RESTART_TIMEOUT:
             return TransitionResult(model=model, actions=("restart_app",))
+        return TransitionResult(model=model)
+
+    # NEU (Sprint-11-Nachbesserung, Nutzer-Feedback): Sicherheitsabfrage vor
+    # dem Herunterfahren - gleiches Prinzip wie _handle_admin_delete_confirm.
+    def _handle_admin_shutdown_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_SHUTDOWN_CONFIRM:
+            return self._go_shutdown_goodbye(model, now)
+        # Jeder andere Ausstieg (Nein, Zurueck, Untaetigkeit) fuehrt zurueck
+        # ins Menue, OHNE herunterzufahren - Idle-Timeout ist hier bewusst
+        # erlaubt: bleibt die Abfrage unbeantwortet stehen, ist "nicht
+        # herunterfahren" die richtige Annahme (gleiche Begruendung wie bei
+        # der Loesch-Sicherheitsabfrage).
+        if event.type in {
+            EventType.TAP_ADMIN_SHUTDOWN_ABORT,
+            EventType.TAP_BACK,
+            EventType.IDLE_TIMEOUT,
+        }:
+            return self._go_admin_menu(model, now)
         return TransitionResult(model=model)
 
     # NEU (4.4): Sicherheitsabfrage vor dem Loeschen des Gesamtbestands.
@@ -655,7 +1030,16 @@ class StateMachine:
             idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds,
             pin_error_deadline=None,
         )
-        return TransitionResult(model=model.evolve(state=AppState.ADMIN_MENU, ui=ui, timers=timers))
+        # NEU (Kamera-Menue 2.0): stop_preview immer mit dabei - harmlos
+        # (No-Op), wenn gerade keine Vorschau laeuft (siehe
+        # CameraPreviewService.stop()), stellt aber sicher, dass die vom
+        # Kamera-Einstellungen-Screen gestartete Live-Vorschau beim
+        # Verlassen (Speichern/Abbrechen/Zurueck/Idle) zuverlaessig endet,
+        # egal ueber welchen der vielen _go_admin_menu()-Aufrufer.
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_MENU, ui=ui, timers=timers),
+            actions=("stop_preview",),
+        )
 
     # NEU (4.3): Diagnose-Unterseite - Idle-Timer wie im Menue selbst,
     # admin_status_lines wird geleert; die Zeilen kommen etwas spaeter per
@@ -672,6 +1056,11 @@ class StateMachine:
     # NEU (Sprint 11, Feature 2): Kamera-Einstellungen-Unterseite - gleiches
     # Muster wie _go_admin_status (Idle-Timer wie im Menue, Werte kommen kurz
     # darauf synchron per ADMIN_CAMERA_SETTINGS_READY).
+    # GEAENDERT (Kamera-Menue 2.0, Nutzer-Feedback): alle Auswahl-/Info-
+    # Felder werden geleert, admin_camera_page/entry_captured zurueckgesetzt
+    # (neuer Eintritt = neue Momentaufnahme fuer "Abbrechen"). start_preview
+    # laeuft ab jetzt mit, damit die Blenden-/ISO-Wirkung sichtbar ist
+    # (Kamera steckt im Gehaeuse, weder zu hoeren noch zu sehen).
     def _go_admin_camera_settings(self, model: AppModel, now: float) -> TransitionResult:
         ui = replace(
             model.ui,
@@ -683,17 +1072,46 @@ class StateMachine:
             admin_camera_iso_choices=(),
             admin_camera_aperture="",
             admin_camera_aperture_choices=(),
+            admin_camera_shutter="",
+            admin_camera_expcomp="",
+            admin_camera_expcomp_choices=(),
+            admin_camera_metering="",
+            admin_camera_metering_choices=(),
+            admin_camera_wb="",
+            admin_camera_wb_choices=(),
+            admin_camera_quality="",
+            admin_camera_quality_choices=(),
+            admin_camera_imagesize="",
+            admin_camera_imagesize_choices=(),
+            admin_camera_drive="",
+            admin_camera_drive_choices=(),
+            admin_camera_page=0,
+            admin_camera_entry_captured=False,
         )
-        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        # GEAENDERT (Nutzer-Feedback nach Live-Test): eigener, laengerer
+        # Idle-Timeout statt admin_menu_idle_seconds - siehe config.py.
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
         return TransitionResult(
             model=model.evolve(state=AppState.ADMIN_CAMERA_SETTINGS, ui=ui, timers=timers),
-            actions=("read_admin_camera_settings",),
+            actions=("start_preview", "read_admin_camera_settings"),
         )
 
     # NEU (4.3): kurzer Zwischenscreen vor dem eigentlichen App-Neustart.
     # Bewusst NICHT abbrechbar (wie SHUTDOWN_GOODBYE) - "App neu starten"
     # ist bereits die bestaetigte Handlung, ein zweiter Tap sollte nichts
     # mehr aendern koennen.
+    # NEU (Sprint-11-Nachbesserung, Nutzer-Feedback): Sicherheitsabfrage vor
+    # dem Herunterfahren - ein Fehltipp im Service-Menue fuehrte bisher
+    # sofort und unabbrechbar zu SHUTDOWN_GOODBYE.
+    def _go_admin_shutdown_confirm(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Fotobox wirklich herunterfahren?",
+            error_text=None,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_SHUTDOWN_CONFIRM, ui=ui, timers=timers))
+
     def _go_admin_delete_confirm(self, model: AppModel, now: float) -> TransitionResult:
         ui = replace(
             model.ui,

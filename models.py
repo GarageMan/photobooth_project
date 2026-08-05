@@ -109,6 +109,71 @@ class UiState:
     admin_camera_iso_choices: tuple[str, ...] = ()
     admin_camera_aperture: str = ""
     admin_camera_aperture_choices: tuple[str, ...] = ()
+    # NEU (Kamera-Menue 2.0, Nutzer-Feedback nach Sprint 11): weitere per USB
+    # einstellbare/auslesbare Werte. Verschlusszeit ist reiner Info-Wert
+    # (kein *_choices/keine +/--Buttons) - im Modus A berechnet die Kamera
+    # sie automatisch, siehe hw_camera_settings_provider.py.
+    admin_camera_shutter: str = ""
+    admin_camera_expcomp: str = ""
+    admin_camera_expcomp_choices: tuple[str, ...] = ()
+    admin_camera_metering: str = ""
+    admin_camera_metering_choices: tuple[str, ...] = ()
+    admin_camera_wb: str = ""
+    admin_camera_wb_choices: tuple[str, ...] = ()
+    admin_camera_quality: str = ""
+    admin_camera_quality_choices: tuple[str, ...] = ()
+    admin_camera_imagesize: str = ""
+    admin_camera_imagesize_choices: tuple[str, ...] = ()
+    admin_camera_drive: str = ""
+    admin_camera_drive_choices: tuple[str, ...] = ()
+    # NEU (Kamera-Menue 2.0): 0 = Seite "Belichtung", 1 = Seite "Sonstiges".
+    admin_camera_page: int = 0
+    # NEU (Kamera-Menue 2.0): Momentaufnahme der Werte, mit denen der Screen
+    # betreten wurde - fuer "Abbrechen" (siehe _handle_admin_camera_settings).
+    # entry_captured wird beim Betreten auf False gesetzt und beim ERSTEN
+    # ADMIN_CAMERA_SETTINGS_READY auf True - alle SPAETEREN READY-Events
+    # (nach jedem +/--Tastendruck, zum Aktualisieren der Anzeige) duerfen
+    # die entry_*-Werte nicht mehr ueberschreiben.
+    admin_camera_entry_captured: bool = False
+    admin_camera_entry_iso: str = ""
+    admin_camera_entry_aperture: str = ""
+    admin_camera_entry_expcomp: str = ""
+    admin_camera_entry_metering: str = ""
+    admin_camera_entry_wb: str = ""
+    admin_camera_entry_quality: str = ""
+    admin_camera_entry_imagesize: str = ""
+    admin_camera_entry_drive: str = ""
+    # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
+    # Entwurfswerte, waehrend der Screen offen ist - erst "Speichern"
+    # schreibt sie tatsaechlich in event_config.json (siehe
+    # event_config_service.py).
+    admin_event_title: str = ""
+    admin_event_prefix: str = ""
+    admin_event_wifi_ssid: str = ""
+    admin_event_wifi_password: str = ""
+    admin_event_qr_enabled: bool = True
+    admin_event_gallery_enabled: bool = True
+    # Momentaufnahme beim Betreten aus ADMIN_MENU - fuer "Abbrechen"/Idle-
+    # Timeout (gleiches Prinzip wie admin_camera_entry_* oben).
+    admin_event_entry_title: str = ""
+    admin_event_entry_prefix: str = ""
+    admin_event_entry_wifi_ssid: str = ""
+    admin_event_entry_wifi_password: str = ""
+    admin_event_entry_qr_enabled: bool = True
+    admin_event_entry_gallery_enabled: bool = True
+    # Tastatur-Screen: welches Feld wird gerade bearbeitet ("" = keins),
+    # der noch nicht bestaetigte Eingabepuffer, Umschalt-Zustand.
+    admin_event_edit_field: str = ""
+    admin_event_text_buffer: str = ""
+    admin_event_keyboard_shift: bool = False
+    # Gilt fuer Uebersicht UND Tastatur-Screen gemeinsam (derselbe Wert).
+    admin_event_wifi_password_visible: bool = False
+    # Ergebnis von "Speichern".
+    admin_event_save_ok: bool = False
+    admin_event_save_message: str = ""
+    # Ergebnis des Wallpaper-Imports.
+    admin_event_wallpaper_lines: tuple[str, ...] = ()
+    admin_event_wallpaper_ok: bool = False
 
 
 @dataclass(slots=True, frozen=True)

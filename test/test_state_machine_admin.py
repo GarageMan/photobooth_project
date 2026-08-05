@@ -67,10 +67,14 @@ class AdminMenuTestCase(unittest.TestCase):
 
     # -- Menuepunkte -------------------------------------------------------
 
-    def test_shutdown_item_starts_goodbye(self) -> None:
+    def test_shutdown_item_starts_confirm(self) -> None:
+        # GEAENDERT (Sprint-11-Nachbesserung): fuehrt nicht mehr direkt zu
+        # SHUTDOWN_GOODBYE, sondern zur Sicherheitsabfrage - siehe
+        # test_state_machine_shutdown.AdminShutdownConfirmTestCase fuer deren
+        # Verhalten (Ja/Nein/Zurueck/Idle).
         self._go_to_admin_menu()
         self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=10.0)
-        self.assertEqual(self.model.state, AppState.SHUTDOWN_GOODBYE)
+        self.assertEqual(self.model.state, AppState.ADMIN_SHUTDOWN_CONFIRM)
 
     def test_back_returns_to_main_menu(self) -> None:
         self._go_to_admin_menu()
@@ -215,18 +219,37 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
         self.assertIn("read_admin_camera_settings", result.actions)
 
-    def _fill_ready(self, now_offset: float = 10.0):
+    def _fill_ready(self, now_offset: float = 10.0, **overrides):
+        # NEU (Kamera-Menue 2.0): vollstaendige Werte fuer beide Seiten
+        # (Belichtung + Sonstiges), damit Save/Cancel/Entry-Snapshot-Tests
+        # realistische Payloads verwenden - einzelne Felder koennen ueber
+        # **overrides pro Test angepasst werden.
+        payload = {
+            "available": True,
+            "error": None,
+            "iso": "400",
+            "iso_choices": ("100", "200", "400", "800", "1600"),
+            "aperture": "5.6",
+            "aperture_choices": ("2.8", "4", "5.6", "8", "11"),
+            "shutter": "1/125",
+            "expcomp": "0.0",
+            "expcomp_choices": ("-1.0", "-0.5", "0.0", "0.5", "1.0"),
+            "metering": "Matrix",
+            "metering_choices": ("Matrix", "Mittelbetont", "Spot"),
+            "white_balance": "Auto",
+            "white_balance_choices": ("Auto", "Sonne", "Wolken"),
+            "quality": "Fine",
+            "quality_choices": ("Fine", "Normal", "Basic"),
+            "image_size": "Large",
+            "image_size_choices": ("Large", "Medium", "Small"),
+            "drive_mode": "Single",
+            "drive_mode_choices": ("Single", "Continuous"),
+        }
+        payload.update(overrides)
         return self.transition(
             EventType.ADMIN_CAMERA_SETTINGS_READY,
             now_offset=now_offset,
-            payload={
-                "available": True,
-                "error": None,
-                "iso": "400",
-                "iso_choices": ("100", "200", "400", "800", "1600"),
-                "aperture": "5.6",
-                "aperture_choices": ("2.8", "4", "5.6", "8", "11"),
-            },
+            payload=payload,
         )
 
     def test_tap_camera_settings_enters_state_and_requests_read(self) -> None:
@@ -285,6 +308,23 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
             self.transition(EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN, now_offset=float(offset))
         self.assertEqual(self.model.ui.admin_camera_aperture, "2.8")
 
+    # BUGFIX (Nutzer-Feedback nach Live-Test): "+" muss die Bildgroesse
+    # VERGROESSERN, "-" verkleinern - die Kamera liefert die Auswahlliste
+    # aber absteigend (gross...klein), weshalb die Richtung hier (anders als
+    # bei ISO/Blende) umgekehrt sein muss.
+    def test_imagesize_plus_makes_it_bigger(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready(image_size="Medium", image_size_choices=("Large", "Medium", "Small"))
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_IMAGESIZE_UP, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_imagesize, "Large")
+        self.assertIn("set_admin_camera_imagesize", result.actions)
+
+    def test_imagesize_minus_makes_it_smaller(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready(image_size="Medium", image_size_choices=("Large", "Medium", "Small"))
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_IMAGESIZE_DOWN, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_imagesize, "Small")
+
     def test_iso_up_without_choices_is_ignored(self) -> None:
         self._go_to_admin_camera_settings()
         result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
@@ -300,6 +340,380 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
     def test_idle_timeout_returns_to_admin_menu(self) -> None:
         self._go_to_admin_camera_settings()
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=40.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    # BUGFIX (Nutzer-Feedback nach Live-Test): Betreten nutzt den eigenen,
+    # laengeren admin_camera_settings_idle_seconds (60s) statt des kuerzeren
+    # admin_menu_idle_seconds (30s) - und jede Bedienung (+/-/</>, Seiten-
+    # wechsel) haengt die Deadline neu ein, statt sie ab Betreten einfach
+    # weiterlaufen zu lassen (das fuehrte dazu, dass man auch waehrend
+    # aktiver Bedienung unerwartet ins Service-Menue zurueckgereicht wurde).
+
+    def test_entering_uses_camera_settings_idle_seconds_not_admin_menu(self) -> None:
+        self._go_to_admin_camera_settings(now_offset=5.2)
+        expected = self.now + 5.2 + 2.0 + self.config.timeouts.admin_camera_settings_idle_seconds
+        self.assertAlmostEqual(self.model.timers.idle_deadline, expected)
+        self.assertNotAlmostEqual(self.model.timers.idle_deadline, self.now + 5.2 + 2.0 + self.config.timeouts.admin_menu_idle_seconds)
+
+    def test_stepping_a_value_refreshes_idle_deadline(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready(now_offset=10.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=50.0)
+        expected = self.now + 50.0 + self.config.timeouts.admin_camera_settings_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected)
+
+    def test_page_navigation_refreshes_idle_deadline(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready(now_offset=10.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_PAGE_NEXT, now_offset=50.0)
+        expected = self.now + 50.0 + self.config.timeouts.admin_camera_settings_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected)
+
+    # NEU (Kamera-Menue 2.0): Seiten-Navigation ("Weiter"/"Zurueck" zwischen
+    # "Belichtung" und "Sonstiges").
+
+    def test_page_next_switches_to_page_1(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_PAGE_NEXT, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertEqual(result.model.ui.admin_camera_page, 1)
+
+    def test_page_prev_switches_back_to_page_0(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_CAMERA_PAGE_NEXT, now_offset=11.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_PAGE_PREV, now_offset=12.0)
+        self.assertEqual(result.model.ui.admin_camera_page, 0)
+
+    # NEU (Kamera-Menue 2.0): Speichern/Abbrechen statt "Zurueck".
+
+    def test_save_returns_to_admin_menu_without_revert_action(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_SAVE, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertNotIn("revert_admin_camera_settings", result.actions)
+        # "stop_preview" kommt ueber _go_admin_menu automatisch mit (siehe
+        # dessen Docstring/Kommentar) - hier nur als Regressionsschutz.
+        self.assertIn("stop_preview", result.actions)
+
+    def test_cancel_returns_to_admin_menu_with_revert_action(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_CANCEL, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertIn("revert_admin_camera_settings", result.actions)
+
+    def test_back_emits_revert_action_like_cancel(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
+        self.assertIn("revert_admin_camera_settings", result.actions)
+
+    def test_idle_timeout_emits_revert_action_like_cancel(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=40.0)
+        self.assertIn("revert_admin_camera_settings", result.actions)
+
+    # NEU (Kamera-Menue 2.0): Einstiegs-Momentaufnahme fuer "Abbrechen" -
+    # wird NUR beim ersten READY nach dem Betreten des Screens gesetzt.
+
+    def test_entry_snapshot_captured_on_first_ready(self) -> None:
+        self._go_to_admin_camera_settings()
+        result = self._fill_ready(iso="400", aperture="5.6")
+        self.assertTrue(result.model.ui.admin_camera_entry_captured)
+        self.assertEqual(result.model.ui.admin_camera_entry_iso, "400")
+        self.assertEqual(result.model.ui.admin_camera_entry_aperture, "5.6")
+
+    def test_entry_snapshot_not_overwritten_by_later_ready(self) -> None:
+        self._go_to_admin_camera_settings()
+        self._fill_ready(iso="400", aperture="5.6")
+        # +/--Tastendruck loest hardwareseitig ein weiteres READY aus (zur
+        # Aktualisierung der Anzeige) - die urspruengliche Momentaufnahme
+        # (400/5.6) darf dadurch NICHT auf den neuen Wert (800) ueberschrieben
+        # werden, sonst waere "Abbrechen" wirkungslos.
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self._fill_ready(now_offset=11.5, iso="800", aperture="5.6")
+        self.assertEqual(result.model.ui.admin_camera_iso, "800")
+        self.assertEqual(result.model.ui.admin_camera_entry_iso, "400")
+
+    def test_cancel_reverts_ui_values_are_irrelevant_only_action_matters(self) -> None:
+        # Das eigentliche Zuruecksenden an die Kamera passiert ausserhalb der
+        # State-Machine (siehe app_with_hw._revert_admin_camera_settings,
+        # liest model.ui.admin_camera_entry_* aus) - hier wird nur
+        # sichergestellt, dass die Entry-Werte zum Zeitpunkt des Abbrechens
+        # noch unveraendert im Modell stehen, damit dieser Aufrufer sie lesen
+        # kann.
+        self._go_to_admin_camera_settings()
+        self._fill_ready(iso="400", aperture="5.6")
+        self.transition(EventType.TAP_ADMIN_CAMERA_ISO_UP, now_offset=11.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_CANCEL, now_offset=12.0)
+        self.assertIn("revert_admin_camera_settings", result.actions)
+        # model bleibt (bis auf state/menu-relevante Felder) unveraendert -
+        # die Entry-Werte sind im Modell weiterhin vorhanden.
+        self.assertEqual(self.model.ui.admin_camera_entry_iso, "400")
+
+
+class AdminEventSettingsTestCase(unittest.TestCase):
+    """Tests fuer 'Veranstaltungsdaten' (letzte Sprint-11-Aufgabe): Betreten
+    fordert synchron die aktuellen Werte an, Textfelder werden ueber die
+    Bildschirmtastatur bearbeitet, Speichern schreibt (Action), Abbrechen/
+    Idle stellen den Snapshot wieder her, der Wallpaper-Import kehrt in die
+    noch offene Bearbeitung zurueck statt ins Service-Menue."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_event_settings(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_SETTINGS, now_offset=now_offset + 2.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertIn("collect_admin_event_settings", result.actions)
+
+    def _fill_ready(self, now_offset: float = 10.0, **overrides):
+        payload = {
+            "title": "Testfest",
+            "prefix": "test_",
+            "wifi_ssid": "Fotobox_Gast",
+            "wifi_password": "geheim123",
+            "qr_enabled": True,
+            "gallery_enabled": True,
+        }
+        payload.update(overrides)
+        return self.transition(EventType.ADMIN_EVENT_SETTINGS_READY, now_offset=now_offset, payload=payload)
+
+    # -- Betreten / Snapshot -------------------------------------------------
+
+    def test_ready_fills_draft_and_snapshot(self) -> None:
+        self._go_to_admin_event_settings()
+        result = self._fill_ready()
+        self.assertEqual(result.model.ui.admin_event_title, "Testfest")
+        self.assertEqual(result.model.ui.admin_event_entry_title, "Testfest")
+        self.assertEqual(result.model.ui.admin_event_wifi_password, "geheim123")
+        self.assertEqual(result.model.ui.admin_event_entry_wifi_password, "geheim123")
+
+    # -- Feld bearbeiten (Textfelder) ----------------------------------------
+
+    def test_field_edit_opens_text_entry_with_current_value_preset(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(
+            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_TEXT_ENTRY)
+        self.assertEqual(result.model.ui.admin_event_edit_field, "title")
+        self.assertEqual(result.model.ui.admin_event_text_buffer, "Testfest")
+
+    def test_text_entry_char_and_submit_writes_field(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
+        self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=12.0)  # "Testfest" -> "Testfes"
+        for char in "!!":
+            self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.1, payload={"char": char})
+        result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_title, "Testfes!!")
+
+    def test_text_entry_cancel_discards_buffer(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "X"})
+        result = self.transition(EventType.TEXT_ENTRY_CANCEL, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_title, "Testfest")
+
+    def test_empty_submit_keeps_previous_value(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=12.0)
+        result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
+        self.assertEqual(result.model.ui.admin_event_title, "Testfest")
+
+    def test_prefix_rejects_disallowed_characters(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "prefix"})
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": " "})
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "ä"})
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "/"})
+        self.assertEqual(self.model.ui.admin_event_text_buffer, "")
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.1, payload={"char": "_"})
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.1, payload={"char": "a"})
+        self.assertEqual(self.model.ui.admin_event_text_buffer, "_a")
+
+    def test_field_length_limit_is_enforced(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "prefix"})
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        for offset in range(30):
+            self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0 + offset, payload={"char": "a"})
+        self.assertEqual(len(self.model.ui.admin_event_text_buffer), 20)
+
+    def test_text_entry_uses_dedicated_longer_idle_timeout(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(
+            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"},
+        )
+        expected = self.now + 11.0 + self.config.timeouts.admin_event_text_entry_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected)
+
+    # -- Schalter -------------------------------------------------------------
+
+    def test_toggle_qr_flips_value(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready(qr_enabled=True)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE, now_offset=11.0, payload={"field": "qr"})
+        self.assertFalse(result.model.ui.admin_event_qr_enabled)
+
+    def test_toggle_gallery_flips_value(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready(gallery_enabled=True)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE, now_offset=11.0, payload={"field": "gallery"})
+        self.assertFalse(result.model.ui.admin_event_gallery_enabled)
+
+    def test_toggle_password_visible_flips_flag(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE, now_offset=11.0)
+        self.assertTrue(result.model.ui.admin_event_wifi_password_visible)
+
+    # -- Speichern / Abbrechen -------------------------------------------------
+
+    def test_save_triggers_action_and_stays_in_state(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_SAVE, now_offset=11.0)
+        self.assertIn("save_event_config", result.actions)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+
+    def test_save_result_ok_transitions_to_saved(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_SAVE, now_offset=11.0)
+        result = self.transition(
+            EventType.ADMIN_EVENT_SAVE_RESULT, now_offset=11.5,
+            payload={"ok": True, "message": "event_config.json gespeichert."},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SAVED)
+        self.assertTrue(result.model.ui.admin_event_save_ok)
+        self.assertEqual(result.model.ui.admin_event_save_message, "event_config.json gespeichert.")
+
+    def test_cancel_reverts_draft_and_does_not_save(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready(title="Altes Fest")
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "X"})
+        self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=12.5)
+        self.assertEqual(self.model.ui.admin_event_title, "X")
+        result = self.transition(EventType.TAP_BACK, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertNotIn("save_event_config", result.actions)
+        self.assertEqual(result.model.ui.admin_event_title, "Altes Fest")
+
+    def test_idle_timeout_reverts_like_cancel(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready(title="Altes Fest")
+        self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE, now_offset=11.0, payload={"field": "qr"})
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=90.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertTrue(result.model.ui.admin_event_qr_enabled)
+
+    # -- Wallpaper-Import -------------------------------------------------------
+
+    def test_wallpaper_import_starts_action_and_is_not_idle_abortable(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_IMPORT)
+        self.assertIn("wallpaper_import", result.actions)
+        self.assertIsNone(result.model.timers.idle_deadline)
+
+    def test_wallpaper_finished_shows_result(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
+        result = self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, now_offset=13.0,
+            payload={"ok": True, "lines": ("Wallpaper übernommen.",)},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_RESULT)
+        self.assertTrue(result.model.ui.admin_event_wallpaper_ok)
+        self.assertEqual(result.model.ui.admin_event_wallpaper_lines, ("Wallpaper übernommen.",))
+
+    def test_back_from_wallpaper_result_returns_to_editing_not_admin_menu(self) -> None:
+        # Regressionsschutz fuer die bewusste Unterscheidung zwischen "ganz
+        # verlassen" (verwirft) und "aus Unter-Screen zurueckkehren" (behaelt
+        # den Bearbeitungsstand) - siehe state_machine._return_to_admin_event_settings.
+        self._go_to_admin_event_settings()
+        self._fill_ready(title="Altes Fest")
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "X"})
+        self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=12.5)
+        self.assertEqual(self.model.ui.admin_event_title, "X")
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=13.0)
+        self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, now_offset=14.0,
+            payload={"ok": True, "lines": ("Wallpaper übernommen.",)},
+        )
+        result = self.transition(EventType.TAP_BACK, now_offset=15.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_title, "X")
+
+    # -- Gespeichert-Bestaetigung -----------------------------------------------
+
+    def test_saved_restart_now_leads_to_restart_pending(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_SAVE, now_offset=11.0)
+        self.transition(
+            EventType.ADMIN_EVENT_SAVE_RESULT, now_offset=11.5, payload={"ok": True, "message": "ok"},
+        )
+        result = self.transition(EventType.TAP_ADMIN_EVENT_RESTART_NOW, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_RESTART_PENDING)
+
+    def test_saved_later_returns_to_admin_menu(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_SAVE, now_offset=11.0)
+        self.transition(
+            EventType.ADMIN_EVENT_SAVE_RESULT, now_offset=11.5, payload={"ok": True, "message": "ok"},
+        )
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
 
@@ -493,6 +907,18 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         "ADMIN_USB_WAIT", "ADMIN_USB_READY", "ADMIN_USB_PROBLEM", "ADMIN_USB_REMOVE",
         "ADMIN_USB_EXPORT_DONE",
         "ADMIN_USB_CONFLICTS",
+        # NEU (Sprint 11, Feature 2 / Kamera-Menue 2.0): eigene Zeile, nicht
+        # vergessen worden - beide bekommen eine idle_deadline (siehe
+        # state_machine._go_admin_camera_settings/_go_admin_shutdown_confirm).
+        "ADMIN_CAMERA_SETTINGS",
+        "ADMIN_SHUTDOWN_CONFIRM",
+        # NEU (Veranstaltungsdaten): bewusst OHNE ADMIN_EVENT_WALLPAPER_IMPORT
+        # - der laeuft nicht abbrechbar (analog ADMIN_USB_CHECK), bekommt
+        # deshalb keine idle_deadline.
+        "ADMIN_EVENT_SETTINGS",
+        "ADMIN_EVENT_TEXT_ENTRY",
+        "ADMIN_EVENT_WALLPAPER_RESULT",
+        "ADMIN_EVENT_SAVED",
     )
 
     def test_states_with_idle_deadline_are_emitted_by_the_app(self) -> None:
@@ -526,6 +952,9 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         for event_type, expected in (
             (EventType.TAP_ADMIN_STATUS, AppState.ADMIN_STATUS),
             (EventType.TAP_ADMIN_DELETE_ALL, AppState.ADMIN_DELETE_CONFIRM),
+            (EventType.TAP_ADMIN_CAMERA_SETTINGS, AppState.ADMIN_CAMERA_SETTINGS),
+            (EventType.TAP_ADMIN_SHUTDOWN, AppState.ADMIN_SHUTDOWN_CONFIRM),
+            (EventType.TAP_ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_SETTINGS),
         ):
             result = machine.transition(model, AppEvent(event_type), now + 13.0)
             self.assertEqual(result.model.state, expected)

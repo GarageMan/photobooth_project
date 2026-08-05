@@ -125,7 +125,11 @@ class ShutdownFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
         self.assertEqual(result.model.ui.pin_entry, "")
 
-    def test_admin_shutdown_leads_to_goodbye(self) -> None:
+    def test_admin_shutdown_leads_to_confirm_not_directly_to_goodbye(self) -> None:
+        # GEAENDERT (Sprint-11-Nachbesserung, Nutzer-Feedback): ein Fehltipp
+        # auf "Herunterfahren" fuehrte bisher SOFORT und unabbrechbar zu
+        # SHUTDOWN_GOODBYE - jetzt kommt zuerst eine Sicherheitsabfrage,
+        # siehe AdminShutdownConfirmTestCase unten fuer deren Verhalten.
         self._enter_pin_entry()
         self._type("1234", base_offset=5.3)
         self.transition(
@@ -134,8 +138,21 @@ class ShutdownFlowTestCase(unittest.TestCase):
         )
         self.assertEqual(self.model.state, AppState.ADMIN_MENU)
         result = self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=6.5)
+        self.assertEqual(result.model.state, AppState.ADMIN_SHUTDOWN_CONFIRM)
+        self.assertIsNone(result.model.timers.shutdown_goodbye_deadline)
+
+    def test_admin_shutdown_confirm_leads_to_goodbye(self) -> None:
+        self._enter_pin_entry()
+        self._type("1234", base_offset=5.3)
+        self.transition(
+            EventType.PIN_SUBMIT, now_offset=6.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=6.5)
+        self.assertEqual(self.model.state, AppState.ADMIN_SHUTDOWN_CONFIRM)
+        result = self.transition(EventType.TAP_ADMIN_SHUTDOWN_CONFIRM, now_offset=7.0)
         self.assertEqual(result.model.state, AppState.SHUTDOWN_GOODBYE)
-        expected = self.now + 6.5 + self.config.shutdown.goodbye_seconds
+        expected = self.now + 7.0 + self.config.shutdown.goodbye_seconds
         self.assertAlmostEqual(result.model.timers.shutdown_goodbye_deadline, expected)
 
     def test_rejected_stays_clears_buffer_and_arms_error_flash(self) -> None:
@@ -215,6 +232,8 @@ class ShutdownFlowTestCase(unittest.TestCase):
     def _reach_goodbye(self) -> None:
         # GEAENDERT: fuehrt seit "NEU (4.1)" ueber ADMIN_MENU statt direkt
         # dorthin, siehe Kommentar bei test_accepted_goes_to_admin_menu.
+        # GEAENDERT (Sprint-11-Nachbesserung): zusaetzlich jetzt ueber die
+        # Sicherheitsabfrage ADMIN_SHUTDOWN_CONFIRM (Ja antippen).
         self._enter_pin_entry()
         self.transition(
             EventType.PIN_SUBMIT, now_offset=6.0,
@@ -222,6 +241,8 @@ class ShutdownFlowTestCase(unittest.TestCase):
         )
         self.assertEqual(self.model.state, AppState.ADMIN_MENU)
         self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=6.5)
+        self.assertEqual(self.model.state, AppState.ADMIN_SHUTDOWN_CONFIRM)
+        self.transition(EventType.TAP_ADMIN_SHUTDOWN_CONFIRM, now_offset=6.7)
         self.assertEqual(self.model.state, AppState.SHUTDOWN_GOODBYE)
 
     def test_goodbye_timeout_emits_power_off(self) -> None:
@@ -237,6 +258,58 @@ class ShutdownFlowTestCase(unittest.TestCase):
             result = self.transition(ev, now_offset=7.0)
             self.assertEqual(result.model.state, AppState.SHUTDOWN_GOODBYE)
             self.assertEqual(result.actions, ())
+
+
+class AdminShutdownConfirmTestCase(unittest.TestCase):
+    """Tests fuer die Sicherheitsabfrage vor dem Herunterfahren (Sprint-11-
+    Nachbesserung, Nutzer-Feedback: ein Fehltipp im Service-Menue hatte
+    bisher SOFORT und unabbrechbar heruntergefahren). "Ja" fuehrt zu
+    SHUTDOWN_GOODBYE (siehe ShutdownFlowTestCase), jeder andere Ausstieg
+    (Nein/Zurueck/Idle) zurueck ins Menue, OHNE herunterzufahren."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_shutdown_confirm(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        result = self.transition(EventType.TAP_ADMIN_SHUTDOWN, now_offset=now_offset + 2.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_SHUTDOWN_CONFIRM)
+
+    def test_confirm_leads_to_shutdown_goodbye(self) -> None:
+        self._go_to_admin_shutdown_confirm()
+        result = self.transition(EventType.TAP_ADMIN_SHUTDOWN_CONFIRM, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.SHUTDOWN_GOODBYE)
+
+    def test_abort_returns_to_admin_menu_without_shutting_down(self) -> None:
+        self._go_to_admin_shutdown_confirm()
+        result = self.transition(EventType.TAP_ADMIN_SHUTDOWN_ABORT, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    def test_back_returns_to_admin_menu_without_shutting_down(self) -> None:
+        self._go_to_admin_shutdown_confirm()
+        result = self.transition(EventType.TAP_BACK, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    def test_idle_timeout_returns_to_admin_menu_without_shutting_down(self) -> None:
+        self._go_to_admin_shutdown_confirm()
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=40.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
 
 if __name__ == "__main__":

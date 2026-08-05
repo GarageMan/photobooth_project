@@ -37,6 +37,12 @@ class AppState(Enum):
     # Hauptmenue (siehe admin_service.SecretGestureDetector, umbenannt
     # Sprint 11, vormals shutdown_service.py).
     PIN_ENTRY = auto()
+    # NEU (Sprint-11-Nachbesserung, Nutzer-Feedback): Sicherheitsabfrage vor
+    # dem eigentlichen Herunterfahren - ein Fehltipp auf "Herunterfahren" im
+    # Service-Menue fuehrte bisher SOFORT und unabbrechbar in SHUTDOWN_GOODBYE
+    # (siehe dort: "Bewusst NICHT abbrechbar"). Gleiches Sicherheitsprinzip
+    # wie ADMIN_DELETE_CONFIRM, nur fuer's Herunterfahren statt Loeschen.
+    ADMIN_SHUTDOWN_CONFIRM = auto()
     # SHUTDOWN_GOODBYE: Abschieds-Animation (Wallpaper shutdown_wallpaper.png
     # + LED-Sonnenuntergang led_shutdown.py); danach faehrt der Pi herunter.
     SHUTDOWN_GOODBYE = auto()
@@ -55,6 +61,31 @@ class AppState(Enum):
     # gphoto2-Config-Calls sind ueblicherweise deutlich unter einer
     # Sekunde), +/- wandert in der von der Kamera gelieferten choices-Liste.
     ADMIN_CAMERA_SETTINGS = auto()
+    # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
+    # Titel/Datei-Praefix/QR-/Galerie-Schalter/Gaeste-WLAN-SSID+Passwort
+    # direkt am Touchscreen pflegen statt event_config.json von Hand zu
+    # editieren (siehe event_config_service.py). Wirkt (bis auf das
+    # Wallpaper) erst nach einem Neustart, da AppConfig beim Start
+    # eingefroren wird (siehe config.py::load_event_config).
+    ADMIN_EVENT_SETTINGS = auto()
+    # Bildschirmtastatur fuer GENAU EIN Textfeld - welches, steht in
+    # ui.admin_event_edit_field. Ein gemeinsamer Screen fuer Titel/Praefix/
+    # WLAN-SSID/WLAN-Passwort statt vier fast identischer States.
+    ADMIN_EVENT_TEXT_ENTRY = auto()
+    # Hintergrund-Thread sucht einen USB-Stick, kopiert ein gefundenes Bild
+    # als neues Hauptmenue-Wallpaper - bewusst nicht abbrechbar, analog zu
+    # ADMIN_USB_CHECK.
+    ADMIN_EVENT_WALLPAPER_IMPORT = auto()
+    # Ergebnis-Screen des Wallpaper-Imports (Erfolg/Fehlermeldung). Eigener
+    # State statt Rueckkehr auf ADMIN_EVENT_SETTINGS direkt, damit "Zurueck"
+    # gezielt in die noch offene Bearbeitung zurueckfuehrt, ohne diese wie
+    # ein normales Verlassen des Screens zu behandeln (siehe state_machine.py).
+    ADMIN_EVENT_WALLPAPER_RESULT = auto()
+    # Nach erfolgreichem Speichern: bietet "Jetzt neu starten" (fuehrt in
+    # ADMIN_RESTART_PENDING, exakt derselbe Ablauf wie der bestehende
+    # Menuepunkt "App neu starten") oder "Spaeter" (zurueck ins
+    # Service-Menue, Werte greifen erst beim naechsten Neustart).
+    ADMIN_EVENT_SAVED = auto()
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen nach "App neu
     # starten" - gibt sichtbares Feedback, bevor die App sich beendet
     # (die Auto-Restart-Schleife in start_fotobox.sh startet sie danach

@@ -76,6 +76,61 @@ class EventType(Enum):
     TAP_ADMIN_CAMERA_ISO_DOWN = auto()
     TAP_ADMIN_CAMERA_APERTURE_UP = auto()
     TAP_ADMIN_CAMERA_APERTURE_DOWN = auto()
+    # NEU (Kamera-Menue 2.0, Nutzer-Feedback): weitere per USB einstellbare
+    # Werte, gleiches +/- Prinzip wie ISO/Blende.
+    TAP_ADMIN_CAMERA_EXPCOMP_UP = auto()
+    TAP_ADMIN_CAMERA_EXPCOMP_DOWN = auto()
+    TAP_ADMIN_CAMERA_METERING_UP = auto()
+    TAP_ADMIN_CAMERA_METERING_DOWN = auto()
+    TAP_ADMIN_CAMERA_WB_UP = auto()
+    TAP_ADMIN_CAMERA_WB_DOWN = auto()
+    TAP_ADMIN_CAMERA_QUALITY_UP = auto()
+    TAP_ADMIN_CAMERA_QUALITY_DOWN = auto()
+    TAP_ADMIN_CAMERA_IMAGESIZE_UP = auto()
+    TAP_ADMIN_CAMERA_IMAGESIZE_DOWN = auto()
+    TAP_ADMIN_CAMERA_DRIVE_UP = auto()
+    TAP_ADMIN_CAMERA_DRIVE_DOWN = auto()
+    # NEU (Kamera-Menue 2.0): Seite 1 (Belichtung: ISO/Blende/Verschlusszeit/
+    # Belichtungskorrektur/Messfeld) <-> Seite 2 (Sonstiges: Weissabgleich/
+    # Bildqualitaet/Bildgroesse/Aufnahmebetrieb).
+    TAP_ADMIN_CAMERA_PAGE_NEXT = auto()
+    TAP_ADMIN_CAMERA_PAGE_PREV = auto()
+    # NEU (Kamera-Menue 2.0): ersetzt das bisherige "Zurueck" (TAP_BACK) auf
+    # diesem Screen - Speichern bestaetigt den aktuellen (schon live
+    # gesetzten) Stand, Abbrechen sendet die Werte zurueck, mit denen der
+    # Screen betreten wurde (siehe state_machine._handle_admin_camera_settings).
+    TAP_ADMIN_CAMERA_SAVE = auto()
+    TAP_ADMIN_CAMERA_CANCEL = auto()
+    # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
+    TAP_ADMIN_EVENT_SETTINGS = auto()          # Menuepunkt in ADMIN_MENU
+    # Aktuelle Werte sind synchron ermittelt (siehe
+    # app_with_hw._collect_admin_event_settings); payload: title, prefix,
+    # wifi_ssid, wifi_password, qr_enabled, gallery_enabled.
+    ADMIN_EVENT_SETTINGS_READY = auto()
+    # payload: {"field": "title"|"prefix"|"wifi_ssid"|"wifi_password"} -
+    # oeffnet ADMIN_EVENT_TEXT_ENTRY fuer genau dieses Feld.
+    TAP_ADMIN_EVENT_FIELD_EDIT = auto()
+    # payload: {"field": "qr"|"gallery"} - kippt den jeweiligen Schalter.
+    TAP_ADMIN_EVENT_TOGGLE = auto()
+    # Zeigt/verbirgt das Gaeste-WLAN-Passwort im Klartext - gilt fuer die
+    # Uebersicht UND den Tastatur-Screen (ein gemeinsames Flag).
+    TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE = auto()
+    TAP_ADMIN_EVENT_WALLPAPER_IMPORT = auto()
+    # Hintergrund-Thread (Stick suchen/einbinden/Bild kopieren/aushaengen)
+    # ist fertig; payload: ok, lines.
+    ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED = auto()
+    TAP_ADMIN_EVENT_SAVE = auto()
+    # Ergebnis des synchronen JSON-Schreibens; payload: ok, message.
+    ADMIN_EVENT_SAVE_RESULT = auto()
+    TAP_ADMIN_EVENT_RESTART_NOW = auto()
+    # Tastatur-Eingaben - gleiches Prinzip wie PIN_DIGIT/PIN_BACKSPACE/
+    # PIN_SUBMIT/PIN_ENTRY_CANCEL, aber fuer beliebigen Text statt nur
+    # Ziffern, dazu eine Umschalt-Taste fuer Gross-/Kleinschreibung.
+    TEXT_ENTRY_CHAR = auto()        # payload: {"char": "a"}
+    TEXT_ENTRY_BACKSPACE = auto()
+    TEXT_ENTRY_SHIFT = auto()
+    TEXT_ENTRY_SUBMIT = auto()      # "OK" - schreibt den Puffer ins Zielfeld
+    TEXT_ENTRY_CANCEL = auto()      # verwirft den Puffer
     # NEU (4.3): Diagnosezeilen sind fertig ermittelt (app_with_hw sammelt
     # sie synchron nach TAP_ADMIN_STATUS und liefert sie im payload zurueck).
     ADMIN_STATUS_READY = auto()
@@ -91,6 +146,12 @@ class EventType(Enum):
     # NEU (4.4): Hintergrund-Thread ist fertig; payload enthaelt unter
     # "lines" die Zusammenfassung fuer den Abschluss-Screen.
     ADMIN_DELETE_FINISHED = auto()
+    # NEU (Sprint-11-Nachbesserung, Nutzer-Feedback): Ja/Nein der
+    # Sicherheitsabfrage vor dem Herunterfahren - gleiches Prinzip wie
+    # TAP_ADMIN_DELETE_CONFIRM/_ABORT, eigene Events statt Wiederverwendung,
+    # damit sich die beiden Sicherheitsabfragen nicht vermischen.
+    TAP_ADMIN_SHUTDOWN_CONFIRM = auto()
+    TAP_ADMIN_SHUTDOWN_ABORT = auto()
     # --- USB-Export (Etappe 4a) ---
     # Platzbedarf ist berechnet; payload["lines"] enthaelt die Anzeige.
     ADMIN_USB_INFO_READY = auto()

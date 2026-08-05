@@ -173,7 +173,11 @@ class Renderer:
         if model.state == AppState.BOOT:
             self._draw_boot_background()
 
-        if preview_frame is not None:
+        # GEAENDERT (Kamera-Menue 2.0): auf ADMIN_CAMERA_SETTINGS wird das
+        # Live-Bild NICHT vollflaechig gezeichnet (dort wuerde es die
+        # Einstell-Zeilen ueberdecken), sondern in einem kleineren Panel
+        # innerhalb von _draw_admin_camera_settings() weiter unten.
+        if preview_frame is not None and model.state != AppState.ADMIN_CAMERA_SETTINGS:
             self._draw_preview_frame(preview_frame)
 
         if model.state == AppState.COUNTDOWN:
@@ -228,10 +232,28 @@ class Renderer:
             self._draw_admin_status(model)
 
         if model.state == AppState.ADMIN_CAMERA_SETTINGS:  # NEU (Sprint 11, Feature 2)
-            self._draw_admin_camera_settings(model)
+            self._draw_admin_camera_settings(model, preview_frame)
+
+        if model.state == AppState.ADMIN_EVENT_SETTINGS:      # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_settings(model)
+
+        if model.state == AppState.ADMIN_EVENT_TEXT_ENTRY:    # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_text_entry(model)
+
+        if model.state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:  # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_wallpaper_import(model)
+
+        if model.state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:  # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_wallpaper_result(model)
+
+        if model.state == AppState.ADMIN_EVENT_SAVED:         # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_saved(model)
 
         if model.state == AppState.ADMIN_RESTART_PENDING:  # NEU (4.3)
             self._draw_admin_restart_pending(model)
+
+        if model.state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)
+            self._draw_admin_shutdown_confirm(model)
 
         if model.state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
             self._draw_admin_delete_confirm(model)
@@ -294,13 +316,26 @@ class Renderer:
             # Foto").
             AppState.GALLERY_PHOTO_QR,
             AppState.ADMIN_MENU, AppState.ADMIN_STATUS, AppState.ADMIN_RESTART_PENDING,  # NEU (4.3)
-            AppState.ADMIN_CAMERA_SETTINGS,  # NEU (Sprint 11, Feature 2)
+            # GEAENDERT (Kamera-Menue 2.0): zeichnet die Ueberschrift
+            # komplett selbst (siehe _draw_admin_camera_settings, gleiches
+            # Prinzip wie GALLERY_PHOTO_QR oben) - der generische Titel
+            # "Kamera-Einstellungen" hier ueberlappte sonst mit dem neuen
+            # Live-Vorschau-Panel und der Seiten-Ueberschrift (per
+            # Screenshot-Eigenpruefung gefunden).
+            AppState.ADMIN_CAMERA_SETTINGS,
+            AppState.ADMIN_SHUTDOWN_CONFIRM,  # NEU (Sprint-11-Nachbesserung)
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,                # NEU (4.4)
             AppState.ADMIN_DELETE_DONE,                                                  # NEU (4.4)
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY, # NEU (4.6)
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_EJECT, AppState.ADMIN_USB_REMOVE,
             AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
             AppState.ADMIN_USB_CONFLICTS, AppState.ADMIN_USB_RESOLVE,  # NEU (6c)
+            # NEU (Veranstaltungsdaten): zeichnen ihre Ueberschrift ueber den
+            # generischen status_text-Mechanismus weiter unten (gleiches
+            # Prinzip wie die USB-Screens) statt eines eigenen Titel-Blocks.
+            AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_SAVED,
         }
 
         if model.state not in text_screens and not hide_all_text:
@@ -313,9 +348,6 @@ class Renderer:
         elif model.state == AppState.ADMIN_STATUS:
             # NEU (4.3): eigener Titel statt des Fotobox-Titels, wie ADMIN_MENU.
             self._draw_shadowed_text("Status / Diagnose", self.font_title, (255, 255, 255), (60, 60))
-        elif model.state == AppState.ADMIN_CAMERA_SETTINGS:
-            # NEU (Sprint 11, Feature 2): eigener Titel, wie ADMIN_STATUS.
-            self._draw_shadowed_text("Kamera-Einstellungen", self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_DELETE_DONE:
             # NEU (4.4): Ergebnis der Loeschung.
             self._draw_shadowed_text("Löschen abgeschlossen", self.font_title, (255, 255, 255), (60, 60))
@@ -326,6 +358,14 @@ class Renderer:
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_READY,
             AppState.ADMIN_USB_PROBLEM, AppState.ADMIN_USB_REMOVE,
             AppState.ADMIN_USB_CONFLICTS,   # NEU (6c): "Dateien mit abweichendem Inhalt gefunden"
+            # NEU (Veranstaltungsdaten): der jeweilige Schrittname steht in
+            # ui.status_text (siehe state_machine._go_admin_event_settings/
+            # _go_admin_event_text_entry/_go_admin_event_wallpaper_result/
+            # ADMIN_EVENT_SAVE_RESULT) - gleiches Prinzip wie bei den
+            # USB-Screens oben.
+            AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_SAVED,
         }:
             # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
             # eine Ueberschrift fuer alle Screens, kein Sonderfall je Zustand.
@@ -804,6 +844,18 @@ class Renderer:
         canvas.blit(scaled, (offset_x, offset_y))
         self._main_menu_background = canvas
         return canvas
+
+    def invalidate_main_menu_background(self) -> None:
+        """NEU (Veranstaltungsdaten): wirft den gecachten Hauptmenue-
+        Hintergrund weg, damit ein frisch von USB importiertes Wallpaper
+        ohne Neustart der App erscheint (naechster _draw_main_menu_background-
+        Aufruf laedt automatisch neu von Platte, siehe
+        _get_main_menu_background). Wird von app_with_hw._emit_due_timers
+        nach einem erfolgreichen Wallpaper-Import aufgerufen. Alle anderen
+        Veranstaltungsdaten (Titel/Praefix/WLAN/Schalter) wirken bewusst
+        erst nach einem Neustart - AppConfig ist ein frozen Dataclass ohne
+        Live-Reload, siehe config.py."""
+        self._main_menu_background = None
 
     def _draw_boot_background(self) -> None:
         """Wallpaper waehrend des Systemstarts (AppState.BOOT).
@@ -1528,7 +1580,9 @@ class Renderer:
             if self.config.qr_codes_enabled:
                 gallery_point_text += (
                     " und die Möglichkeit den QR-Code zum Download anzeigen "
-                    "zu lassen."
+                    "zu lassen. Alternativ verbindest du dich direkt mit dem "
+                    f"WLAN \"{self.config.network.guest_wifi_ssid}\" "
+                    f"(Passwort: {self.config.network.guest_wifi_password})."
                 )
             else:
                 gallery_point_text += "."
@@ -1627,7 +1681,8 @@ class Renderer:
         qr_download_section = [
             self._heading("Lokaler Download (WLAN)"),
             "",
-            "Über das WLAN \"Fotobox_Gast\" kannst du dein Foto",
+            f"Über das WLAN \"{self.config.network.guest_wifi_ssid}\" (Passwort:",
+            f"{self.config.network.guest_wifi_password}) kannst du dein Foto",
             "nach der Aufnahme per QR-Code herunterladen.",
             "Da es sich um ein Veranstaltungsnetzwerk handelt",
             "sind die Bilddateien dabei theoretisch für andere",
@@ -1798,21 +1853,82 @@ class Renderer:
         elif state == AppState.ADMIN_STATUS:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.ADMIN_CAMERA_SETTINGS:
-            # NEU (Sprint 11, Feature 2): +/- nur zeichnen, wenn die Kamera
-            # tatsaechlich erreichbar ist - sonst zeigt
-            # _draw_admin_camera_settings() bereits die Fehlermeldung, und
-            # funktionslose Buttons wuerden nur verwirren.
-            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
-            if self._admin_camera_available:
-                # NEU (Sprint-11-Nachbesserung): Beschriftung "+"/"-" um
-                # 100% vergroessert (Standard waere 50) - besser lesbar/
+            # GEAENDERT (Kamera-Menue 2.0): "Zurück" ersetzt durch Speichern/
+            # Abbrechen (siehe state_machine._handle_admin_camera_settings);
+            # dazwischen die Seiten-Navigation (nur die jeweils passende
+            # Richtung wird gezeichnet). +/- nur, wenn die Kamera tatsaechlich
+            # erreichbar ist - sonst zeigt _draw_admin_camera_settings()
+            # bereits die Fehlermeldung, funktionslose Buttons wuerden nur
+            # verwirren.
+            self._draw_button("Abbrechen", self.layout.admin_camera_cancel, (120, 60, 60))
+            self._draw_button("Speichern", self.layout.admin_camera_save, (60, 120, 70))
+            # GEAENDERT (Nutzer-Feedback nach Live-Test): Button jetzt genau
+            # so gross wie Abbrechen/Speichern (siehe layout.py), rechts
+            # daneben statt in einer schmalen Luecke - dadurch reicht die
+            # normale automatische Schriftverkleinerung von _draw_button
+            # (kein fester font_size=32 mehr noetig, der zusammen mit dem
+            # frueher zu kleinen Rect fuer das "kaputte" Pfeil-Icon sorgte).
+            # Einfache ASCII-Pfeile "<"/">" statt Unicode-Pfeilen, die in der
+            # Pi-Schriftart als Kaestchen dargestellt wurden.
+            if self._admin_camera_page == 0:
+                self._draw_button("Seite 2 >", self.layout.admin_camera_page_next, (70, 70, 90))
+            else:
+                self._draw_button("< Seite 1", self.layout.admin_camera_page_prev, (70, 70, 90))
+            if self._admin_camera_available and self._admin_camera_loaded:
+                # NEU (Sprint-11-Nachbesserung): Beschriftung "+"/"-"/"<"/">"
+                # um 100% vergroessert (Standard waere 50) - besser lesbar/
                 # treffsicherer auf den jetzt quadratischen, groesseren
                 # Buttons (siehe layout.py).
                 camera_btn_font_size = 100
-                self._draw_button("-", self.layout.admin_camera_iso_minus, (70, 70, 75), font_size=camera_btn_font_size)
-                self._draw_button("+", self.layout.admin_camera_iso_plus, (70, 70, 75), font_size=camera_btn_font_size)
-                self._draw_button("-", self.layout.admin_camera_aperture_minus, (70, 70, 75), font_size=camera_btn_font_size)
-                self._draw_button("+", self.layout.admin_camera_aperture_plus, (70, 70, 75), font_size=camera_btn_font_size)
+                # GEAENDERT (Nutzer-Feedback nach Live-Test): "+"/"-" passt
+                # nur bei echten Zahlenwerten (ISO, Blende, Belichtungs-
+                # korrektur, Bildgroesse - dort ist eine Richtung "mehr"/
+                # "weniger"). Bei Auswahl aus benannten Kategorien ohne
+                # Groessenordnung (Messfeld, Weissabgleich, Bildqualitaet,
+                # Aufnahmebetrieb) sind "<"/">" (durchblaettern) passender.
+                if self._admin_camera_page == 0:
+                    row_pairs = (
+                        (self.layout.admin_camera_iso_minus, self.layout.admin_camera_iso_plus, "-", "+"),
+                        (self.layout.admin_camera_aperture_minus, self.layout.admin_camera_aperture_plus, "-", "+"),
+                        # Verschlusszeit (Zeile 2) ist reiner Info-Wert, keine Buttons.
+                        (self.layout.admin_camera_expcomp_minus, self.layout.admin_camera_expcomp_plus, "-", "+"),
+                        (self.layout.admin_camera_metering_minus, self.layout.admin_camera_metering_plus, "<", ">"),
+                    )
+                else:
+                    row_pairs = (
+                        (self.layout.admin_camera_wb_minus, self.layout.admin_camera_wb_plus, "<", ">"),
+                        (self.layout.admin_camera_quality_minus, self.layout.admin_camera_quality_plus, "<", ">"),
+                        (self.layout.admin_camera_imagesize_minus, self.layout.admin_camera_imagesize_plus, "-", "+"),
+                        (self.layout.admin_camera_drive_minus, self.layout.admin_camera_drive_plus, "<", ">"),
+                    )
+                for minus_rect, plus_rect, minus_label, plus_label in row_pairs:
+                    self._draw_button(minus_label, minus_rect, (70, 70, 75), font_size=camera_btn_font_size)
+                    self._draw_button(plus_label, plus_rect, (70, 70, 75), font_size=camera_btn_font_size)
+        elif state == AppState.ADMIN_EVENT_SETTINGS:
+            self._draw_button("Speichern", self.layout.left, (0, 150, 0))
+            self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
+            self._draw_button("Wallpaper von USB laden", self.layout.admin_event_wallpaper_button, (0, 90, 130))
+            # NEU (Veranstaltungsdaten): kleiner "Anzeigen"/"Verbergen"-Button
+            # neben der Passwortzeile - Wert selbst wird in
+            # _draw_admin_event_settings gezeichnet, dies ist nur der Umschalter.
+            eye_label = "Verbergen" if self._admin_event_wifi_password_visible else "Anzeigen"
+            self._draw_button(
+                eye_label, self.layout.admin_event_wifi_password_toggle_visibility, (70, 70, 75), font_size=28,
+            )
+        elif state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_EVENT_SAVED:
+            self._draw_button("Jetzt neu starten", self.layout.left, (0, 150, 0))
+            self._draw_button("Später", self.layout.right, (100, 100, 100))
+        # ADMIN_EVENT_TEXT_ENTRY zeichnet die Tastatur komplett selbst (siehe
+        # _draw_admin_event_text_entry, analog zu PIN_ENTRY).
+        # ADMIN_EVENT_WALLPAPER_IMPORT: bewusst kein Button - laeuft, nicht
+        # abbrechbar (analog ADMIN_USB_CHECK).
+        elif state == AppState.ADMIN_SHUTDOWN_CONFIRM:
+            # NEU (Sprint-11-Nachbesserung): gleiche Farbgebung/Anordnung wie
+            # ADMIN_DELETE_CONFIRM - "Nein" links neutral, "Ja" rechts rot.
+            self._draw_button("Nein, abbrechen", self.layout.left, (70, 70, 75))
+            self._draw_button("Ja, herunterfahren", self.layout.right, (160, 0, 0))
         elif state == AppState.ADMIN_DELETE_CONFIRM:
             # NEU (4.4): "Nein" links neutral-grau, "Ja" rechts deutlich rot -
             # die gefaehrliche Wahl soll nicht wie die naheliegende aussehen.
@@ -1879,19 +1995,34 @@ class Renderer:
             self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
 
-    def _draw_admin_camera_settings(self, model: AppModel) -> None:
-        """NEU (Sprint 11, Feature 2): zeigt ISO/Blende zwischen den
-        jeweiligen "-"/"+"-Buttons (die zeichnet _draw_buttons(), wie bei
-        allen anderen Screens - hier nur die Werte/Texte). Zeichnet
-        stattdessen eine Fehlermeldung, falls die Kamera nicht erreichbar
-        ist oder weder ISO noch Blende liefert (siehe
-        hw_camera_settings_provider.read_current)."""
+    def _draw_admin_camera_settings(self, model: AppModel, preview_frame: pygame.Surface | None) -> None:
+        """GEAENDERT (Kamera-Menue 2.0, Nutzer-Feedback nach Sprint 11):
+        2-Seiten-Layout - Live-Vorschau-Panel links (Blende ist bei
+        eingebauter Kamera weder zu hoeren noch zu sehen), rechts eine
+        Spalte von bis zu 5 Zeilen "Label: Wert" zwischen "-"/"+"-Buttons
+        (die zeichnet _draw_buttons(), wie bei allen anderen Screens - hier
+        nur die Werte/Texte + das Live-Bild). Seite 1 "Belichtung": ISO,
+        Blende, Verschlusszeit (Info), Belichtungskorrektur, Messfeld.
+        Seite 2 "Sonstiges": Weissabgleich, Bildqualitaet, Bildgroesse,
+        Aufnahmebetrieb. Zeichnet stattdessen eine Fehlermeldung, falls die
+        Kamera nicht erreichbar ist oder weder ISO noch Blende liefert
+        (siehe hw_camera_settings_provider.read_current)."""
         ui = model.ui
+        width = self.config.screen.width
         height = self.config.screen.height
         # NEU (Sprint 11, Feature 2): merkt sich fuer _draw_buttons (wird
         # danach aufgerufen, siehe render()), ob die +/- Buttons ueberhaupt
         # sinnvoll sind - gleiches Prinzip wie _usb_continue_enabled.
         self._admin_camera_available = ui.admin_camera_available
+        # NEU (Kamera-Menue 2.0): merkt sich fuer _draw_buttons, welche Seite
+        # gerade sichtbar ist (0=Belichtung, 1=Sonstiges).
+        self._admin_camera_page = ui.admin_camera_page
+        # BUGFIX (Kamera-Menue 2.0, Eigenpruefung): bis zum Beweis des
+        # Gegenteils (Werte tatsaechlich eingetroffen, siehe unten) gilt der
+        # Screen als "noch nicht geladen" - verhindert, dass _draw_buttons()
+        # waehrend "Lese Kamera-Einstellungen ..." bereits funktionslose +/-
+        # Buttons ohne zugehoerigen Text zeichnet.
+        self._admin_camera_loaded = False
 
         if not ui.admin_camera_available:
             message = ui.admin_camera_error or "Kamera-Einstellungen nicht verfügbar."
@@ -1905,31 +2036,270 @@ class Renderer:
             self._draw_text("Lese Kamera-Einstellungen ...", self.font_body_admin, (200, 200, 200), (60, round(0.35 * height)))
             return
 
-        iso_label = f"ISO: {ui.admin_camera_iso}" if ui.admin_camera_iso else "ISO: -"
-        self._blit_center(iso_label, self.font_status_admin, (230, 230, 230), self.layout.admin_camera_iso_minus.centery)
+        self._admin_camera_loaded = True
+        self._draw_admin_camera_preview_panel(preview_frame)
 
-        # BUGFIX (Sprint-11-Nachbesserung): der von der Kamera gelieferte
-        # Rohwert enthaelt je nach Modell/libgphoto2-Version teils schon ein
-        # "f/"-Praefix (z.B. "f/8") und teils nicht (nur "8") - bisher wurde
-        # hier IMMER zusaetzlich "f/" davorgesetzt, was bei Kameras mit
-        # eigenem Praefix zu "f/f/8" fuehrte. Ein evtl. vorhandenes Praefix
-        # wird deshalb zuerst abgeschnitten, danach genau EIN "f/" ergaenzt.
+        # BUGFIX (Sprint-11-Nachbesserung, weiterhin gueltig): der von der
+        # Kamera gelieferte Blenden-Rohwert enthaelt je nach Modell/
+        # libgphoto2-Version teils schon ein "f/"-Praefix und teils nicht -
+        # ein evtl. vorhandenes Praefix wird zuerst abgeschnitten, danach
+        # genau EIN "f/" ergaenzt.
         raw_aperture = ui.admin_camera_aperture
         aperture_value = raw_aperture[2:] if raw_aperture.lower().startswith("f/") else raw_aperture
-        aperture_label = f"Blende: f/{aperture_value}" if aperture_value else "Blende: -"
-        self._blit_center(aperture_label, self.font_status_admin, (230, 230, 230), self.layout.admin_camera_aperture_minus.centery)
 
-        # GEAENDERT (Sprint-11-Nachbesserung): "Kamera muss im Modus M
-        # stehen" entfernt - Lutz nutzt eine Zeitautomatik (Blende wird
-        # vorgegeben, die Kamera berechnet die Belichtungszeit selbst), das
-        # entspricht Nikons Modus A, nicht M. Ausserdem neu positioniert
-        # (0.76 statt vorher 0.75 der Bildschirmhoehe, mittig in der Luecke
-        # zwischen dem Ende der Blenden-Buttonreihe und dem Beginn von
-        # "Zurück"), damit die Zeile nicht mehr mit den jetzt groesseren,
-        # quadratischen Buttons ueberlappt (siehe layout.py,
-        # camera_btn_side/camera_aperture_y).
-        hint = "Blende hängt vom montierten Objektiv ab. Kamera sollte im Modus A (Zeitautomatik) stehen."
-        self._blit_center(hint, self.font_small, (170, 170, 170), round(height * 0.76))
+        row_font = self.font_body_admin
+        row_color = (230, 230, 230)
+        x0 = self.layout.admin_camera_iso_minus.right + 14
+        x1 = self.layout.admin_camera_iso_plus.left - 14
+
+        if ui.admin_camera_page == 0:
+            rows = (
+                (f"ISO: {ui.admin_camera_iso}" if ui.admin_camera_iso else "ISO: -", self.layout.admin_camera_iso_minus.centery),
+                (
+                    f"Blende: f/{aperture_value}" if aperture_value else "Blende: -",
+                    self.layout.admin_camera_aperture_minus.centery,
+                ),
+                (
+                    f"Verschlusszeit: {ui.admin_camera_shutter} (automatisch)" if ui.admin_camera_shutter else "Verschlusszeit: -",
+                    self.layout.admin_camera_expcomp_minus.centery - round(0.105 * height),
+                ),
+                (
+                    f"Belichtungskorrektur: {ui.admin_camera_expcomp} EV" if ui.admin_camera_expcomp else "Belichtungskorrektur: -",
+                    self.layout.admin_camera_expcomp_minus.centery,
+                ),
+                (
+                    f"Messfeld: {ui.admin_camera_metering}" if ui.admin_camera_metering else "Messfeld: -",
+                    self.layout.admin_camera_metering_minus.centery,
+                ),
+            )
+        else:
+            rows = (
+                (f"Weißabgleich: {ui.admin_camera_wb}" if ui.admin_camera_wb else "Weißabgleich: -", self.layout.admin_camera_wb_minus.centery),
+                (
+                    f"Bildqualität: {ui.admin_camera_quality}" if ui.admin_camera_quality else "Bildqualität: -",
+                    self.layout.admin_camera_quality_minus.centery,
+                ),
+                (
+                    f"Bildgröße: {ui.admin_camera_imagesize}" if ui.admin_camera_imagesize else "Bildgröße: -",
+                    self.layout.admin_camera_imagesize_minus.centery,
+                ),
+                (
+                    f"Aufnahmebetrieb: {ui.admin_camera_drive}" if ui.admin_camera_drive else "Aufnahmebetrieb: -",
+                    self.layout.admin_camera_drive_minus.centery,
+                ),
+            )
+
+        # GEAENDERT (Nutzer-Feedback nach Live-Test): nur noch der einfache
+        # Bildschirmname statt "- Seite x/y - <Name>" (steht bereits in den
+        # Zeilen selbst, war als Titel redundant/unklar) - dafuer deutlich
+        # groesser (font_body_admin statt font_small) und damit besser lesbar.
+        self._blit_center("Kamera-Einstellungen", self.font_body_admin, (150, 190, 220), round(0.07 * height))
+        for label, cy in rows:
+            self._draw_centered_in_range(label, row_font, row_color, x0, x1, cy)
+
+        # BUGFIX (Kamera-Menue 2.0, Eigenpruefung): Hinweis bezieht sich nur
+        # auf die Blende (Seite 1 "Belichtung") - erschien vorher faelschlich
+        # auch auf Seite 2 "Sonstiges", wo es keinen Bezug zum Inhalt hatte.
+        # GEAENDERT (Nutzer-Feedback nach Live-Test): weiter nach oben
+        # gerueckt, in die Mitte der Luecke zwischen Live-Bild/unterster
+        # Einstell-Zeile (enden beide bei ca. 0.65) und der Buttonreihe
+        # (beginnt bei lower_y=0.80) - vorher sass er zu dicht an den Buttons.
+        if ui.admin_camera_page == 0:
+            hint = "Blende hängt vom montierten Objektiv ab. Kamera sollte im Modus A (Zeitautomatik) stehen."
+            self._blit_center(hint, self.font_small, (170, 170, 170), round(height * 0.725))
+
+    def _draw_admin_event_settings(self, model: AppModel) -> None:
+        """NEU (Veranstaltungsdaten): Uebersichts-/Bearbeitungs-Screen fuer
+        Titel/Praefix/WLAN-SSID/WLAN-Passwort (je ein eigenes Tap-Ziel, siehe
+        layout.admin_event_*_row/app_with_hw._map_click_to_event - oeffnet
+        die Tastatur fuer genau dieses Feld) sowie QR-/Galerie-Schalter (Tap
+        kippt direkt, kein Tastatur-Umweg). Die Rects sind reine Tap-Ziele
+        ohne eigene Optik aus layout.py - die sichtbare "Karte" je Zeile wird
+        hier gezeichnet, analog zu _draw_button() aber links ausgerichtet
+        (Label+Wert passen sonst nicht nebeneinander). Der Button "Wallpaper
+        von USB laden" sowie "Speichern"/"Abbrechen"/"Anzeigen"/"Verbergen"
+        werden bereits von _draw_buttons() gezeichnet, hier nicht nochmal."""
+        ui = model.ui
+        height = self.config.screen.height
+        # NEU: merkt sich fuer _draw_buttons (wird danach aufgerufen, siehe
+        # render()), ob der Passwort-Sichtbarkeits-Button "Anzeigen" oder
+        # "Verbergen" beschriftet werden muss - gleiches Prinzip wie
+        # self._admin_camera_page in _draw_admin_camera_settings.
+        self._admin_event_wifi_password_visible = ui.admin_event_wifi_password_visible
+
+        password_display = (
+            ui.admin_event_wifi_password if ui.admin_event_wifi_password_visible
+            else "•" * len(ui.admin_event_wifi_password)
+        )
+        rows = (
+            (self.layout.admin_event_title_row, "Titel", ui.admin_event_title or "-"),
+            (self.layout.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix or "-"),
+            (self.layout.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid or "-"),
+            (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", password_display or "-"),
+        )
+        for rect, label, value in rows:
+            pygame.draw.rect(self.screen, (45, 50, 60), rect, border_radius=10)
+            pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=10)
+            text = self._truncate_text(f"{label}: {value}", self.font_body_admin, rect.width - 24)
+            self._draw_text(
+                text, self.font_body_admin, (230, 230, 230),
+                (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
+            )
+
+        toggles = (
+            (self.layout.admin_event_qr_toggle, "QR-Code", ui.admin_event_qr_enabled),
+            (self.layout.admin_event_gallery_toggle, "Galerie", ui.admin_event_gallery_enabled),
+        )
+        for rect, label, enabled in toggles:
+            color = (20, 90, 30) if enabled else (75, 30, 30)
+            pygame.draw.rect(self.screen, color, rect, border_radius=10)
+            pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=10)
+            text = f"{label}: {'an' if enabled else 'aus'}"
+            self._draw_text(
+                text, self.font_body_admin, (230, 230, 230),
+                (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
+            )
+
+        # Hinweis: nur das Wallpaper (Button darunter, siehe _draw_buttons)
+        # wirkt sofort - alle uebrigen Felder erst nach einem Neustart der
+        # App (AppConfig ist ein frozen Dataclass, siehe config.py).
+        self._blit_center(
+            "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
+            self.font_small, (170, 170, 170), round(0.745 * height),
+        )
+
+    def _draw_admin_event_text_entry(self, model: AppModel) -> None:
+        """NEU (Veranstaltungsdaten): eine gemeinsame QWERTZ-Tastatur fuer
+        alle vier Textfelder (Titel/Praefix/WLAN-SSID/WLAN-Passwort) - welches
+        Feld gerade bearbeitet wird, steht in ui.admin_event_edit_field (die
+        Kopfzeile mit dem Feldnamen kommt bereits ueber status_text, siehe
+        render()). Analog zu _draw_pin_entry(), aber mit freiem Text statt
+        maskierten Ziffern. Bewusst vereinfacht: "Umschalt" wirkt nur auf
+        Buchstaben a-z, kein volles Sonderzeichen-Layer (siehe layout.py)."""
+        ui = model.ui
+        width, height = self.config.screen.width, self.config.screen.height
+
+        buffer = ui.admin_event_text_buffer
+        masked = ui.admin_event_edit_field == "wifi_password" and not ui.admin_event_wifi_password_visible
+        display_text = ("•" * len(buffer)) if masked else buffer
+        text_cy = round(0.075 * height)
+        self._blit_center(display_text or " ", self.font_body_admin, (255, 255, 255), text_cy)
+        line_y = text_cy + self.font_body_admin.get_linesize() // 2 + 10
+        pygame.draw.line(
+            self.screen, (120, 120, 130), (round(0.15 * width), line_y), (round(0.85 * width), line_y), 2,
+        )
+
+        if model.ui.error_text:
+            self._blit_center(model.ui.error_text, self.font_small, (255, 120, 120), round(0.105 * height))
+
+        labels = {"backspace": "DEL", "submit": "OK", "cancel": "Abbrechen", "shift": "Umschalt", "space": "Leertaste"}
+        colors = {
+            "backspace": (120, 90, 0),
+            "submit": (0, 130, 0),
+            "cancel": (100, 100, 100),
+            # NEU: aktiver Umschalt-Zustand optisch hervorgehoben, analog zu
+            # den QR-/Galerie-Schaltern auf der Uebersicht.
+            "shift": (0, 90, 130) if ui.admin_event_keyboard_shift else (70, 70, 75),
+            "space": (70, 70, 75),
+        }
+        key_font_size = 34
+        for name, rect in self.layout.keyboard_keys.items():
+            if name in labels:
+                label = labels[name]
+            elif ui.admin_event_keyboard_shift and name.isalpha() and name.isascii():
+                # Umschalt wirkt bewusst nur auf a-z (siehe Docstring/Plan) -
+                # ä/ö/ü bleiben unveraendert klein.
+                label = name.upper()
+            else:
+                label = name
+            self._draw_button(label, rect, colors.get(name, (55, 65, 85)), font_size=key_font_size)
+
+    def _draw_admin_event_wallpaper_import(self, model: AppModel) -> None:
+        """NEU (Veranstaltungsdaten): Hintergrund-Thread laeuft (Stick suchen/
+        mounten/Bild kopieren/aushaengen), nicht abbrechbar - analog zu
+        _draw_admin_usb_busy()."""
+        self._blit_center(
+            model.ui.status_text or "Wallpaper wird von USB-Stick geladen ...",
+            self.font_status_admin, (200, 235, 225),
+            round(0.45 * self.config.screen.height),
+        )
+
+    def _draw_admin_event_wallpaper_result(self, model: AppModel) -> None:
+        """NEU (Veranstaltungsdaten): Ergebnis-Zeilen nach dem Wallpaper-
+        Import, gruen/rot je nach admin_event_wallpaper_ok - analog zu
+        _draw_admin_usb_lines(), hier zusaetzlich farblich nach Erfolg/
+        Fehler statt einheitlichem Grau (der Erfolg/Fehler steht bereits als
+        Kopfzeile ueber status_text, siehe render())."""
+        ui = model.ui
+        height = self.config.screen.height
+        color = (150, 230, 170) if ui.admin_event_wallpaper_ok else (255, 150, 150)
+        y = round(0.30 * height)
+        line_height = self.font_body_admin.get_linesize() + 14
+        for line in ui.admin_event_wallpaper_lines:
+            self._blit_center(line, self.font_body_admin, color, y)
+            y += line_height
+
+    def _draw_admin_event_saved(self, model: AppModel) -> None:
+        """NEU (Veranstaltungsdaten): Bestaetigung nach "Speichern" - Erfolg/
+        Fehler-Meldung (gruen/rot) plus Hinweis auf den noetigen Neustart
+        (ausser beim Wallpaper, das schon vorher sofort uebernommen wurde,
+        siehe _draw_admin_event_settings). "Jetzt neu starten"/"Später"
+        werden bereits von _draw_buttons() gezeichnet."""
+        ui = model.ui
+        height = self.config.screen.height
+        color = (150, 230, 170) if ui.admin_event_save_ok else (255, 150, 150)
+        self._blit_center(
+            ui.admin_event_save_message or "Gespeichert.", self.font_body_admin, color, round(0.35 * height),
+        )
+        if ui.admin_event_save_ok:
+            self._blit_center(
+                "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
+                self.font_small, (200, 200, 200), round(0.45 * height),
+            )
+
+    def _draw_centered_in_range(
+        self, text: str, font: pygame.font.Font, color: tuple[int, int, int], x0: int, x1: int, cy: int
+    ) -> None:
+        """Wie _blit_center(), aber horizontal zentriert innerhalb [x0, x1]
+        statt ueber die gesamte Bildschirmbreite - noetig, seit die
+        Einstell-Zeilen (Kamera-Menue 2.0) nur die rechte Bildschirmhaelfte
+        belegen (links: Live-Vorschau-Panel, siehe
+        _draw_admin_camera_preview_panel)."""
+        max_width = max(10, x1 - x0)
+        fitted_font = self._fit_text_font(text, font, max_width, floor=22)
+        surface = fitted_font.render(text, True, color)
+        rect = surface.get_rect(center=((x0 + x1) // 2, cy))
+        self.screen.blit(surface, rect)
+
+    def _draw_admin_camera_preview_panel(self, preview_frame: pygame.Surface | None) -> None:
+        """NEU (Kamera-Menue 2.0, Nutzer-Feedback): Live-Bild in einem
+        Panel links im Kamera-Einstellungen-Screen (statt wie bei
+        PHOTO_PREVIEW/COUNTDOWN vollflaechig, siehe render()) - Blenden-
+        Aenderungen sind bei eingebauter Kamera sonst weder zu hoeren noch
+        zu sehen. Erhaelt das Seitenverhaeltnis des Kamerabilds per
+        Letterboxing (grauer Rahmen bleibt sichtbar, kein Verzerren)."""
+        panel = self.layout.admin_camera_preview
+        pygame.draw.rect(self.screen, (10, 12, 16), panel, border_radius=10)
+        if preview_frame is not None:
+            frame_w, frame_h = preview_frame.get_size()
+            if frame_w and frame_h:
+                scale = min(panel.width / frame_w, panel.height / frame_h)
+                target_w = max(1, round(frame_w * scale))
+                target_h = max(1, round(frame_h * scale))
+                scaled = pygame.transform.smoothscale(preview_frame, (target_w, target_h))
+                dest = scaled.get_rect(center=panel.center)
+                self.screen.blit(scaled, dest)
+        else:
+            # BUGFIX (Kamera-Menue 2.0, Eigenpruefung): _blit_center()
+            # zentriert ueber die GESAMTE Bildschirmbreite, nicht nur das
+            # Panel - der Platzhaltertext ueberlappte dadurch die rechte
+            # Werte-Spalte (z.B. "Verschlusszeit"). Wie die Werte-Zeilen
+            # jetzt auf den Panel-Bereich beschraenkt via
+            # _draw_centered_in_range().
+            self._draw_centered_in_range(
+                "Live-Bild wird geladen …", self.font_small, (150, 150, 150), panel.left + 10, panel.right - 10, panel.centery,
+            )
+        pygame.draw.rect(self.screen, (90, 90, 95), panel, width=2, border_radius=10)
 
     # NEU (4.6): merkt sich fuer _draw_buttons, ob "Weiter" aktiv sein
     # darf. Wird in render() aus dem Modell gesetzt - _draw_buttons
@@ -1942,6 +2312,15 @@ class Renderer:
     # NEU (Sprint 11, Feature 2): merkt sich, ob die +/- Buttons fuer ISO/
     # Blende gezeichnet werden duerfen (Kamera erreichbar).
     _admin_camera_available: bool = True
+    # NEU (Kamera-Menue 2.0, Eigenpruefung): merkt sich, ob die Werte schon
+    # eingetroffen sind (ADMIN_CAMERA_SETTINGS_READY) - waehrend des kurzen
+    # "Lese Kamera-Einstellungen ..."-Zwischenzustands wurden vorher bereits
+    # funktionslose +/- Buttons ohne zugehoerigen Text gezeichnet.
+    _admin_camera_loaded: bool = True
+    # NEU (Kamera-Menue 2.0): merkt sich, welche der beiden Seiten gerade
+    # sichtbar ist (0=Belichtung, 1=Sonstiges) - _draw_buttons() braucht das,
+    # um nur die Buttons der aktuellen Seite zu zeichnen.
+    _admin_camera_page: int = 0
 
     def _draw_admin_usb_copy(self, model: AppModel) -> None:
         # GEAENDERT (4.8): Fortschrittsbalken statt durchlaufender
@@ -2427,6 +2806,16 @@ class Renderer:
         )
         self._blit_center(hint, self.font_body_admin, (230, 170, 170), y + 16)
 
+    def _draw_admin_shutdown_confirm(self, model: AppModel) -> None:
+        # NEU (Sprint-11-Nachbesserung, Nutzer-Feedback): gleiche Gestaltung
+        # wie _draw_admin_delete_confirm - grosser, zentrierter Warntext,
+        # etwas weiter oben begonnen, damit zu den Ja/Nein-Buttons darunter
+        # genug Luft bleibt.
+        height = self.config.screen.height
+        self._blit_center(model.ui.status_text or "Wirklich herunterfahren?", self.font_status_admin, (255, 210, 210), round(0.30 * height))
+        hint = "Die Fotobox kann danach nur direkt am Gehäuse wieder gestartet werden."
+        self._blit_center(hint, self.font_body_admin, (230, 170, 170), round(0.30 * height) + self.font_status_admin.get_linesize() + 16)
+
     def _draw_admin_delete_running(self, model: AppModel) -> None:
         # GEAENDERT (4.9): Fortschrittsbalken wie beim Export, aber in Rot.
         # Kein Button - die Loeschung ist nicht abbrechbar.
@@ -2616,8 +3005,22 @@ class Renderer:
             size -= 4
             font = pygame.font.Font(None, size)
             text_surface = font.render(label, True, (255, 255, 255))
-        text_rect = text_surface.get_rect(center=rect.center)
-        self.screen.blit(text_surface, text_rect)
+        # BUGFIX (Nutzer-Feedback nach Live-Test, Screenshot-Vergleich): bei
+        # diesem Font sitzt das sichtbare Zeichen von "+"/"<"/">" spuerbar
+        # UNTERHALB der Flaechenmitte ihrer Render-Oberflaeche (anders als
+        # bei "-", das schon nahezu mittig sitzt) - eine reine
+        # Flaechen-Zentrierung (wie sonst ueberall) wirkt bei diesen drei
+        # Zeichen dadurch sichtbar zu tief. Nur fuer genau diese drei
+        # Ein-Zeichen-Labels (ausschliesslich als +/-/</>-Tasten im Kamera-
+        # Menue verwendet) wird deshalb die tatsaechliche Tinte (sichtbare
+        # Pixel, nicht die Render-Flaeche) auf die Button-Mitte ausgerichtet.
+        if label in ("+", "<", ">"):
+            ink_rect = text_surface.get_bounding_rect()
+            topleft = (rect.centerx - ink_rect.centerx, rect.centery - ink_rect.centery)
+            self.screen.blit(text_surface, topleft)
+        else:
+            text_rect = text_surface.get_rect(center=rect.center)
+            self.screen.blit(text_surface, text_rect)
 
     def _draw_text(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], pos: tuple[int, int]) -> None:
         """Rendert Text; unterstuetzt mehrzeilige Strings ueber "\\n"-Trennung
@@ -2802,6 +3205,9 @@ class Renderer:
             AppState.ADMIN_STATUS: (18, 22, 30),       # NEU (4.3) - wie ADMIN_MENU
             AppState.ADMIN_CAMERA_SETTINGS: (18, 22, 30),  # NEU (Sprint 11, Feature 2) - wie ADMIN_STATUS
             AppState.ADMIN_RESTART_PENDING: (20, 40, 20),  # NEU (4.3) - wie CAPTURE_PENDING
+            # NEU (Sprint-11-Nachbesserung): gleiches Warnrot wie
+            # ADMIN_DELETE_CONFIRM - beide sind "gefaehrliche" Sicherheitsabfragen.
+            AppState.ADMIN_SHUTDOWN_CONFIRM: (55, 8, 8),
             # NEU (4.4): kraeftiges Dunkelrot als unuebersehbares Warnsignal,
             # deutlich abgesetzt vom ruhigen Blaugrau der uebrigen Admin-Screens.
             AppState.ADMIN_DELETE_CONFIRM: (55, 8, 8),
@@ -2824,4 +3230,15 @@ class Renderer:
             # NEU (6c): gleiches Blaugruen wie der eigentliche Kopierlauf -
             # aus Sicht des Gastes/Betreibers "es wird weiter geschrieben".
             AppState.ADMIN_USB_RESOLVE: (12, 28, 28),
+            # NEU (Veranstaltungsdaten): wie PIN_ENTRY/ADMIN_STATUS - ruhiges
+            # Blaugrau fuer normale Service-Menue-Bildschirme.
+            AppState.ADMIN_EVENT_SETTINGS: (18, 22, 30),
+            AppState.ADMIN_EVENT_TEXT_ENTRY: (18, 22, 30),
+            AppState.ADMIN_EVENT_SAVED: (18, 22, 30),
+            # NEU (Veranstaltungsdaten): gleiches Blaugruen wie die
+            # USB-Vorgaenge (ADMIN_USB_CHECK) - laeuft, nicht abbrechbar.
+            AppState.ADMIN_EVENT_WALLPAPER_IMPORT: (12, 28, 28),
+            # NEU (Veranstaltungsdaten): gleiches Gruen wie ADMIN_USB_READY -
+            # Ergebnis-Screen.
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT: (10, 32, 26),
         }[state]

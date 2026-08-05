@@ -92,7 +92,13 @@ ASSETS_DIR = BASE_DIR / "assets"
 # dagegen wie local_secrets.py von Hand vor jedem Event angepasst - beide
 # "Setup-Dateien" liegen daher konsistent am selben Ort (nicht versioniert,
 # siehe .gitignore und event_config_example.json).
-_EVENT_CONFIG_PATH = BASE_DIR / "event_config.json"
+#
+# GEAENDERT (Veranstaltungsdaten): oeffentlich (kein fuehrender Unterstrich)
+# - app_with_hw.py braucht den Pfad, um nach einer Aenderung im neuen
+# Admin-Screen "Veranstaltungsdaten" tatsaechlich zurueckzuschreiben (siehe
+# event_config_service.save_event_config). Vorher wurde diese Datei nur
+# gelesen, nie geschrieben.
+EVENT_CONFIG_PATH = BASE_DIR / "event_config.json"
 
 
 def load_event_config(path: Path) -> dict:
@@ -121,26 +127,30 @@ def load_event_config(path: Path) -> dict:
     return data
 
 
-_event_config = load_event_config(_EVENT_CONFIG_PATH)
+_event_config = load_event_config(EVENT_CONFIG_PATH)
 
 # "Fotobox" als generischer Fallback - die App hat keine Versionsbezeichnung
 # und keinen Namen, solange kein Event-Titel konfiguriert ist.
 EVENT_TITLE = str(_event_config.get("event_title") or "Fotobox")
 PHOTO_PREFIX = str(_event_config.get("photo_prefix") or "foto_")
 
-# NEU (Etappe 8): das Gaeste-WLAN-Passwort zieht von local_secrets.py in
-# diese Event-Konfiguration um - es ist kein Geraete-Geheimnis wie der
-# Shutdown-PIN, sondern aendert sich mit jeder Veranstaltung. UEBERGANGS-
-# WEISE (fuer bestehende Installationen, die event_config.json noch nicht
-# angelegt haben) faellt der Wert, falls in der JSON nicht gesetzt, noch auf
-# ein eventuell vorhandenes local_secrets.GUEST_WIFI_PASSWORD zurueck, bevor
-# der generische Platzhalter greift. Neu eingerichtete Installationen tragen
-# das Passwort nur noch in event_config.json ein.
-_event_wifi_password = _event_config.get("guest_wifi_password")
-if _event_wifi_password:
-    GUEST_WIFI_PASSWORD = str(_event_wifi_password)
-else:
-    GUEST_WIFI_PASSWORD = getattr(_secrets, "GUEST_WIFI_PASSWORD", _PLACEHOLDER)
+# GEAENDERT (Veranstaltungsdaten): der Fallback auf ein eventuell noch
+# vorhandenes local_secrets.GUEST_WIFI_PASSWORD ist entfallen - auf
+# ausdruecklichen Wunsch, da das Gaeste-WLAN-Passwort kein Geraete-Geheimnis
+# ist, sondern sich mit jeder Veranstaltung aendert (anders als der
+# Service-Menue-PIN). Es wird ab jetzt AUSSCHLIESSLICH ueber
+# event_config.json bzw. den Admin-Screen "Veranstaltungsdaten" gepflegt
+# (siehe event_config_service.py). ACHTUNG bei bestehenden Installationen:
+# ein bisher nur in local_secrets.py gepflegtes Passwort wird nach diesem
+# Update NICHT mehr gelesen - einmalig ueber "Veranstaltungsdaten" (oder
+# direkt in event_config.json) neu eintragen.
+GUEST_WIFI_PASSWORD = str(_event_config.get("guest_wifi_password") or _PLACEHOLDER)
+
+# NEU (Veranstaltungsdaten): bisher hart als "Fotobox_Gast" in
+# renderer._draw_terms verdrahtet - jetzt konfigurierbar. Der Fallback
+# bleibt derselbe Text, damit bestehende Installationen ohne diesen
+# Schluessel in event_config.json unveraendert weiterlaufen.
+GUEST_WIFI_SSID = str(_event_config.get("guest_wifi_ssid") or "Fotobox_Gast")
 
 # NEU (Sprint-11-Nachbesserung): ob QR-Codes fuer diese Veranstaltung
 # ueberhaupt erzeugt/angezeigt werden sollen - Speicher-Bestaetigung
@@ -181,6 +191,10 @@ GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 # renderer.py) und in der Diagnose (ADMIN_STATUS, siehe app_with_hw.py)
 # nicht. Verschwindet automatisch, sobald echte Werte eingetragen sind -
 # kein manuelles Wegklicken noetig.
+#
+# GUEST_WIFI_SSID bewusst NICHT Teil dieser Pruefung: sie hat mit
+# "Fotobox_Gast" einen sinnvollen, oft schon zutreffenden Default - anders
+# als Titel/Passwort, deren Platzhalter nie als echter Wert taugen.
 NEEDS_EVENT_SETUP = (
     EVENT_TITLE == "Fotobox"
     or GUEST_WIFI_PASSWORD in ("BITTE_ANPASSEN", _PLACEHOLDER)
@@ -257,6 +271,16 @@ class TimeoutConfig:
     # Dateien einzeln durchgegangen werden - reissen 30s zu leicht mitten
     # in der Bedienung ab.
     admin_usb_idle_seconds: float = 120.0
+    # NEU (Nutzer-Feedback nach Live-Test, Kamera-Menue 2.0): eigener,
+    # deutlich laengerer Idle-Timeout fuer die Kamera-Einstellungen -
+    # bewusst GETRENNT von admin_menu_idle_seconds (30s, fuer die schnellen
+    # Admin-Bestaetigungen gedacht). Auf diesem Screen wird oft laenger
+    # gelesen/verglichen (mehrere Werte, Live-Bild-Beurteilung), bevor
+    # ueberhaupt eine Taste gedrueckt wird - wird zusaetzlich bei JEDER
+    # +/--/</>-Betaetigung UND Seitenwechsel neu gestartet (siehe
+    # state_machine._step_admin_camera_field/_handle_admin_camera_settings),
+    # nicht nur beim Betreten des Screens.
+    admin_camera_settings_idle_seconds: float = 60.0
     # NEU (Sprint 11, Feature 4): so lange bleibt der QR-Code eines einzelnen
     # Galerie-Fotos eingeblendet (Doppeltap/Icon in GALLERY_FULLSCREEN),
     # bevor automatisch zurueck zur Fotoansicht gewechselt wird - wie vom
@@ -269,6 +293,13 @@ class TimeoutConfig:
     # Uebertragungs-Animation (Datei-Symbol + LED-Punkt), damit beide
     # halbwegs synchron zur tatsaechlichen Uebertragung laufen.
     capture_transfer_estimate_seconds: float = 4.0
+    # NEU (Veranstaltungsdaten): eigene, laengere Idle-Timeouts, gleiches
+    # Prinzip wie admin_camera_settings_idle_seconds oben - bewusst GETRENNT
+    # von admin_menu_idle_seconds (30s), da hier laenger gelesen/verglichen
+    # bzw. ueber die Bildschirmtastatur getippt wird, was spuerbar mehr Zeit
+    # braucht als eine schnelle Admin-Bestaetigung.
+    admin_event_settings_idle_seconds: float = 90.0
+    admin_event_text_entry_idle_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -304,6 +335,8 @@ class NetworkConfig:
     raspi_ip: str = "192.168.0.10"
     photo_url_prefix: str = "http://192.168.0.10/fotos"
     guest_wifi_password: str = GUEST_WIFI_PASSWORD
+    # NEU (Veranstaltungsdaten): siehe GUEST_WIFI_SSID oben.
+    guest_wifi_ssid: str = GUEST_WIFI_SSID
 
 
 @dataclass(frozen=True)

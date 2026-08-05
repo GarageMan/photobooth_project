@@ -49,6 +49,53 @@ class LayoutRects:
     admin_camera_iso_plus: pygame.Rect
     admin_camera_aperture_minus: pygame.Rect
     admin_camera_aperture_plus: pygame.Rect
+    # NEU (Kamera-Menue 2.0, Nutzer-Feedback nach Sprint 11): 2-Seiten-
+    # Layout mit Live-Vorschau-Panel links (admin_camera_preview) und einer
+    # Spalte von +/--Zeilen rechts. Seite 1 "Belichtung": ISO/Blende (s.o.),
+    # Verschlusszeit (reiner Info-Wert, keine Buttons), Belichtungskorrektur,
+    # Messfeld. Seite 2 "Sonstiges": Weissabgleich, Bildqualitaet,
+    # Bildgroesse, Aufnahmebetrieb. Beide Seiten nutzen dieselben vier
+    # Zeilenpositionen (0-3) - der Renderer zeichnet je Frame immer nur die
+    # zur aktuellen Seite (model.ui.admin_camera_page) gehoerenden Buttons.
+    admin_camera_preview: pygame.Rect
+    admin_camera_expcomp_minus: pygame.Rect
+    admin_camera_expcomp_plus: pygame.Rect
+    admin_camera_metering_minus: pygame.Rect
+    admin_camera_metering_plus: pygame.Rect
+    admin_camera_wb_minus: pygame.Rect
+    admin_camera_wb_plus: pygame.Rect
+    admin_camera_quality_minus: pygame.Rect
+    admin_camera_quality_plus: pygame.Rect
+    admin_camera_imagesize_minus: pygame.Rect
+    admin_camera_imagesize_plus: pygame.Rect
+    admin_camera_drive_minus: pygame.Rect
+    admin_camera_drive_plus: pygame.Rect
+    # Ersetzen "Zurueck" auf diesem Screen; page_prev/page_next sind je nach
+    # aktueller Seite nur einer davon wirklich erreichbar (siehe
+    # app_with_hw._map_click_to_event).
+    admin_camera_save: pygame.Rect
+    admin_camera_cancel: pygame.Rect
+    admin_camera_page_prev: pygame.Rect
+    admin_camera_page_next: pygame.Rect
+    # NEU (Veranstaltungsdaten): je eine Zeile pro Feld auf der Uebersicht
+    # (ADMIN_EVENT_SETTINGS) - Tap auf eine Textzeile oeffnet die
+    # Bildschirmtastatur fuer genau dieses Feld, Tap auf eine Schalter-Zeile
+    # kippt den Wert direkt. "Speichern"/"Abbrechen" nutzen die vorhandenen
+    # rects.left/rects.right.
+    admin_event_title_row: pygame.Rect
+    admin_event_prefix_row: pygame.Rect
+    admin_event_wifi_ssid_row: pygame.Rect
+    admin_event_wifi_password_row: pygame.Rect
+    admin_event_wifi_password_toggle_visibility: pygame.Rect
+    admin_event_qr_toggle: pygame.Rect
+    admin_event_gallery_toggle: pygame.Rect
+    admin_event_wallpaper_button: pygame.Rect
+    # NEU (Veranstaltungsdaten): Bildschirmtastatur (QWERTZ) fuer
+    # ADMIN_EVENT_TEXT_ENTRY - gemeinsam fuer alle vier Textfelder, analog
+    # zu pin_keys, aber mit beliebigem Text statt nur Ziffern. Schluessel:
+    # jedes Zeichen der vier Buchstaben-/Ziffernreihen sowie "shift",
+    # "backspace", "space", "cancel", "submit".
+    keyboard_keys: dict[str, pygame.Rect]
 
 
 def build_layout(width: int, height: int) -> LayoutRects:
@@ -180,30 +227,143 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # eigenen kleineren Rects.
     gallery_qr_icon = rect(1 - margin_x - button_w, lower_y, button_w, button_h)
 
-    # NEU (Sprint 11, Feature 2): ISO-Zeile oben, Blenden-Zeile darunter -
-    # "-" aussen links, "+" aussen rechts, der Wert dazwischen (Renderer
-    # zeichnet ihn zentriert in die Luecke, siehe
-    # renderer._draw_admin_camera_settings).
-    #
-    # GEAENDERT (Sprint-11-Nachbesserung): Buttons sollen (a) quadratisch
-    # sein und (b) weiter vom Bildschirmrand abgerueckt werden. Die
-    # Seitenlaenge wird deshalb NICHT wie sonst ueblich getrennt in Breiten-/
-    # Hoehenprozentsatz ausgedrueckt (die haben bei einem nicht quadratischen
-    # Bildschirm - hier 1280x720 - unterschiedliche Basis und ergaeben ein
-    # verzerrtes Rechteck), sondern einmalig in Pixeln aus der Bildschirm-
-    # hoehe abgeleitet und fuer x/y gleichermassen verwendet.
-    camera_btn_side = round(0.12 * height)
-    camera_margin_x = round(0.15 * width)
-    camera_iso_y = round(0.40 * height)
-    camera_aperture_y = round(0.60 * height)
-    admin_camera_iso_minus = pygame.Rect(camera_margin_x, camera_iso_y, camera_btn_side, camera_btn_side)
-    admin_camera_iso_plus = pygame.Rect(
-        width - camera_margin_x - camera_btn_side, camera_iso_y, camera_btn_side, camera_btn_side,
+    # NEU (Kamera-Menue 2.0): alle Zeilen (ISO/Blende eingeschlossen) nutzen
+    # dieselbe quadratische Pixel-Logik, gestaffelt auf der rechten
+    # Bildschirmhaelfte, damit links Platz fuer das Live-Vorschau-Panel
+    # bleibt (Nutzer-Feedback: Blende ist bei eingebauter Kamera weder zu
+    # hoeren noch zu sehen). Seitenlaenge/Position bewusst einmalig in
+    # Pixeln aus der Bildschirmhoehe abgeleitet (nicht getrennt in Breiten-/
+    # Hoehenprozentsatz, da das bei einem nicht quadratischen Bildschirm -
+    # hier 1280x720 - ein verzerrtes Rechteck ergaebe).
+    camera_row_btn_side = round(0.085 * height)
+    camera_row_x_minus = round(0.50 * width)
+    camera_row_x_plus = round(0.955 * width) - camera_row_btn_side
+    camera_row_y0 = round(0.14 * height)
+    camera_row_step = round(0.105 * height)
+
+    def _camera_row(index: int) -> tuple[pygame.Rect, pygame.Rect]:
+        y = camera_row_y0 + index * camera_row_step
+        minus = pygame.Rect(camera_row_x_minus, y, camera_row_btn_side, camera_row_btn_side)
+        plus = pygame.Rect(camera_row_x_plus, y, camera_row_btn_side, camera_row_btn_side)
+        return minus, plus
+
+    # Seite 1 "Belichtung": ISO (0), Blende (1), Verschlusszeit (2, reiner
+    # Info-Wert ohne Buttons, siehe renderer._draw_admin_camera_settings),
+    # Belichtungskorrektur (3), Messfeld (4).
+    admin_camera_iso_minus, admin_camera_iso_plus = _camera_row(0)
+    admin_camera_aperture_minus, admin_camera_aperture_plus = _camera_row(1)
+    admin_camera_expcomp_minus, admin_camera_expcomp_plus = _camera_row(3)
+    admin_camera_metering_minus, admin_camera_metering_plus = _camera_row(4)
+    # Seite 2 "Sonstiges" - nutzt dieselben vier Zeilenpositionen wie Seite 1
+    # (immer nur eine Seite gleichzeitig sichtbar).
+    admin_camera_wb_minus, admin_camera_wb_plus = _camera_row(0)
+    admin_camera_quality_minus, admin_camera_quality_plus = _camera_row(1)
+    admin_camera_imagesize_minus, admin_camera_imagesize_plus = _camera_row(2)
+    admin_camera_drive_minus, admin_camera_drive_plus = _camera_row(3)
+
+    # Live-Vorschau-Panel links - Seitenverhaeltnis grob an die gphoto2-
+    # Vorschau (ca. 640x424) angenaehert, exaktes Andocken (Letterboxing)
+    # uebernimmt der Renderer.
+    admin_camera_preview = pygame.Rect(
+        round(0.03 * width), round(0.13 * height), round(0.44 * width), round(0.52 * height),
     )
-    admin_camera_aperture_minus = pygame.Rect(camera_margin_x, camera_aperture_y, camera_btn_side, camera_btn_side)
-    admin_camera_aperture_plus = pygame.Rect(
-        width - camera_margin_x - camera_btn_side, camera_aperture_y, camera_btn_side, camera_btn_side,
+
+    # GEAENDERT (Nutzer-Feedback nach Live-Test auf dem Pi): "Seite 2"-Button
+    # war zu klein und ausserdem an einer Stelle (0.385/0.530), die keinen
+    # Bezug zu Abbrechen/Speichern hatte. Jetzt eine Reihe aus DREI
+    # gleichgrossen Buttons (Abbrechen/Speichern/Seiten-Navigation), analog
+    # zur sonst ueblichen Zwei-Button-Reihe (margin_x/button_h), nur mit
+    # eigener, schmalerer Breite, damit alle drei nebeneinander passen:
+    # 3 * admin_camera_row_btn_w + 2 * admin_camera_row_gap ergibt genau die
+    # Strecke von margin_x bis (1 - margin_x), wie bei "left"/"right".
+    # admin_camera_page_prev/_next teilen sich bewusst dasselbe Rect (immer
+    # nur eine Richtung gleichzeitig sichtbar, siehe renderer._draw_buttons).
+    admin_camera_row_gap = 0.025
+    admin_camera_row_btn_w = (1 - 2 * margin_x - 2 * admin_camera_row_gap) / 3
+    admin_camera_cancel = rect(margin_x, lower_y, admin_camera_row_btn_w, button_h)
+    admin_camera_save = rect(
+        margin_x + admin_camera_row_btn_w + admin_camera_row_gap, lower_y, admin_camera_row_btn_w, button_h,
     )
+    admin_camera_page_prev = rect(
+        margin_x + 2 * (admin_camera_row_btn_w + admin_camera_row_gap), lower_y, admin_camera_row_btn_w, button_h,
+    )
+    admin_camera_page_next = admin_camera_page_prev
+
+    # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Sieben Zeilen (vier
+    # Textfelder, zwei Schalter, ein Wallpaper-Button) uebereinander -
+    # eigene, schmalere Randbreite als margin_x (0.10), damit auf einer
+    # Zeile spuerbar mehr Platz fuer Label+Wert bleibt (Sichtpruefung auf
+    # echter Hardware empfohlen, wie beim Kamera-Menue).
+    event_margin_x = 0.06
+    event_row_w = 1 - 2 * event_margin_x
+    event_row_h = 0.075
+    event_row_y0 = 0.10
+    event_row_step = 0.088
+
+    def _event_row(index: int) -> pygame.Rect:
+        return rect(event_margin_x, event_row_y0 + index * event_row_step, event_row_w, event_row_h)
+
+    admin_event_title_row = _event_row(0)
+    admin_event_prefix_row = _event_row(1)
+    admin_event_wifi_ssid_row = _event_row(2)
+    admin_event_wifi_password_row = _event_row(3)
+    admin_event_qr_toggle = _event_row(4)
+    admin_event_gallery_toggle = _event_row(5)
+    admin_event_wallpaper_button = _event_row(6)
+    # Kleines Rect am rechten Rand der Passwortzeile - eigenes Tap-Ziel statt
+    # das Aufklappen der Tastatur zu ueberlagern (siehe app_with_hw.py).
+    admin_event_wifi_password_toggle_visibility = pygame.Rect(
+        admin_event_wifi_password_row.right - round(0.06 * width),
+        admin_event_wifi_password_row.y,
+        round(0.06 * width),
+        admin_event_wifi_password_row.height,
+    )
+
+    # NEU (Veranstaltungsdaten): QWERTZ-Bildschirmtastatur (deutsche
+    # Tastenanordnung inkl. ae/oe/ue) fuer ADMIN_EVENT_TEXT_ENTRY. Bewusst
+    # vereinfacht: kein volles Sonderzeichen-Layer, "shift" wirkt nur auf
+    # Buchstaben a-z (siehe state_machine._map_admin_event_text_entry_click
+    # in app_with_hw.py) - reicht fuer Titel/Praefix/SSID/Passwort, ohne die
+    # Tastenflaeche auf dem 1280x720-Panel unbedienbar klein zu machen.
+    kb_key_h = 0.10
+    kb_key_w = (kb_key_h * height) / width
+    kb_gap_y = 0.012
+    kb_gap_x = (kb_gap_y * height) / width
+    kb_y0 = 0.12
+    _KEYBOARD_ROWS: tuple[tuple[str, ...], ...] = (
+        ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
+        ("q", "w", "e", "r", "t", "z", "u", "i", "o", "p", "ü"),
+        ("a", "s", "d", "f", "g", "h", "j", "k", "l", "ö", "ä"),
+        ("y", "x", "c", "v", "b", "n", "m", ",", ".", "-"),
+    )
+
+    def _kb_key_rect(row_index: int, col_index: int, row_len: int) -> pygame.Rect:
+        row_w = row_len * kb_key_w + (row_len - 1) * kb_gap_x
+        x0 = (1.0 - row_w) / 2.0
+        y = kb_y0 + row_index * (kb_key_h + kb_gap_y)
+        return rect(x0 + col_index * (kb_key_w + kb_gap_x), y, kb_key_w, kb_key_h)
+
+    keyboard_keys: dict[str, pygame.Rect] = {}
+    for row_index, row_chars in enumerate(_KEYBOARD_ROWS):
+        for col_index, char in enumerate(row_chars):
+            keyboard_keys[char] = _kb_key_rect(row_index, col_index, len(row_chars))
+
+    # Untere Reihe: Umschalt/Loeschen/Leerzeichen/Abbrechen/OK als fuenf
+    # gleich breite Tasten - gleiche margin_x-Logik wie die Zwei-Button-Reihe
+    # oben (event_margin_x bis 1-event_margin_x).
+    kb_bottom_y = kb_y0 + len(_KEYBOARD_ROWS) * (kb_key_h + kb_gap_y)
+    kb_bottom_gap = 0.015
+    kb_bottom_w = (1 - 2 * event_margin_x - 4 * kb_bottom_gap) / 5
+
+    def _kb_bottom_rect(index: int) -> pygame.Rect:
+        x = event_margin_x + index * (kb_bottom_w + kb_bottom_gap)
+        return rect(x, kb_bottom_y, kb_bottom_w, kb_key_h)
+
+    keyboard_keys["shift"] = _kb_bottom_rect(0)
+    keyboard_keys["backspace"] = _kb_bottom_rect(1)
+    keyboard_keys["space"] = _kb_bottom_rect(2)
+    keyboard_keys["cancel"] = _kb_bottom_rect(3)
+    keyboard_keys["submit"] = _kb_bottom_rect(4)
 
     return LayoutRects(
         main_photo=main_photo,
@@ -222,6 +382,32 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_camera_iso_plus=admin_camera_iso_plus,
         admin_camera_aperture_minus=admin_camera_aperture_minus,
         admin_camera_aperture_plus=admin_camera_aperture_plus,
+        admin_camera_preview=admin_camera_preview,
+        admin_camera_expcomp_minus=admin_camera_expcomp_minus,
+        admin_camera_expcomp_plus=admin_camera_expcomp_plus,
+        admin_camera_metering_minus=admin_camera_metering_minus,
+        admin_camera_metering_plus=admin_camera_metering_plus,
+        admin_camera_wb_minus=admin_camera_wb_minus,
+        admin_camera_wb_plus=admin_camera_wb_plus,
+        admin_camera_quality_minus=admin_camera_quality_minus,
+        admin_camera_quality_plus=admin_camera_quality_plus,
+        admin_camera_imagesize_minus=admin_camera_imagesize_minus,
+        admin_camera_imagesize_plus=admin_camera_imagesize_plus,
+        admin_camera_drive_minus=admin_camera_drive_minus,
+        admin_camera_drive_plus=admin_camera_drive_plus,
+        admin_camera_save=admin_camera_save,
+        admin_camera_cancel=admin_camera_cancel,
+        admin_camera_page_prev=admin_camera_page_prev,
+        admin_camera_page_next=admin_camera_page_next,
+        admin_event_title_row=admin_event_title_row,
+        admin_event_prefix_row=admin_event_prefix_row,
+        admin_event_wifi_ssid_row=admin_event_wifi_ssid_row,
+        admin_event_wifi_password_row=admin_event_wifi_password_row,
+        admin_event_wifi_password_toggle_visibility=admin_event_wifi_password_toggle_visibility,
+        admin_event_qr_toggle=admin_event_qr_toggle,
+        admin_event_gallery_toggle=admin_event_gallery_toggle,
+        admin_event_wallpaper_button=admin_event_wallpaper_button,
+        keyboard_keys=keyboard_keys,
     )
 
 
@@ -284,14 +470,63 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return rects.pin_keys
     if state == AppState.ADMIN_STATUS:       # NEU (4.3)
         return {"back": rects.back}
-    if state == AppState.ADMIN_CAMERA_SETTINGS:   # NEU (Sprint 11, Feature 2)
+    if state == AppState.ADMIN_CAMERA_SETTINGS:
+        # GEAENDERT (Kamera-Menue 2.0): "back" entfaellt (Speichern/Abbrechen
+        # ersetzen es). Enthaelt bewusst die Buttons BEIDER Seiten - welche
+        # davon auf der aktuell sichtbaren Seite tatsaechlich Sinn ergeben
+        # (model.ui.admin_camera_page), filtert app_with_hw._map_click_to_event
+        # heraus (gleiches Prinzip wie beim gallery_enabled-Filter).
         return {
-            "back": rects.back,
             "admin_camera_iso_minus": rects.admin_camera_iso_minus,
             "admin_camera_iso_plus": rects.admin_camera_iso_plus,
             "admin_camera_aperture_minus": rects.admin_camera_aperture_minus,
             "admin_camera_aperture_plus": rects.admin_camera_aperture_plus,
+            "admin_camera_expcomp_minus": rects.admin_camera_expcomp_minus,
+            "admin_camera_expcomp_plus": rects.admin_camera_expcomp_plus,
+            "admin_camera_metering_minus": rects.admin_camera_metering_minus,
+            "admin_camera_metering_plus": rects.admin_camera_metering_plus,
+            "admin_camera_wb_minus": rects.admin_camera_wb_minus,
+            "admin_camera_wb_plus": rects.admin_camera_wb_plus,
+            "admin_camera_quality_minus": rects.admin_camera_quality_minus,
+            "admin_camera_quality_plus": rects.admin_camera_quality_plus,
+            "admin_camera_imagesize_minus": rects.admin_camera_imagesize_minus,
+            "admin_camera_imagesize_plus": rects.admin_camera_imagesize_plus,
+            "admin_camera_drive_minus": rects.admin_camera_drive_minus,
+            "admin_camera_drive_plus": rects.admin_camera_drive_plus,
+            "admin_camera_save": rects.admin_camera_save,
+            "admin_camera_cancel": rects.admin_camera_cancel,
+            "admin_camera_page_prev": rects.admin_camera_page_prev,
+            "admin_camera_page_next": rects.admin_camera_page_next,
         }
+    if state == AppState.ADMIN_EVENT_SETTINGS:
+        return {
+            "admin_event_edit_title": rects.admin_event_title_row,
+            "admin_event_edit_prefix": rects.admin_event_prefix_row,
+            "admin_event_edit_wifi_ssid": rects.admin_event_wifi_ssid_row,
+            "admin_event_edit_wifi_password": rects.admin_event_wifi_password_row,
+            "admin_event_wifi_password_toggle_visibility": rects.admin_event_wifi_password_toggle_visibility,
+            "admin_event_toggle_qr": rects.admin_event_qr_toggle,
+            "admin_event_toggle_gallery": rects.admin_event_gallery_toggle,
+            "admin_event_wallpaper": rects.admin_event_wallpaper_button,
+            "admin_event_save": rects.left,
+            "back": rects.right,
+        }
+    if state == AppState.ADMIN_EVENT_TEXT_ENTRY:
+        # Wird technisch nicht ueber diese generische Tabelle abgefragt
+        # (app_with_hw._map_click_to_event special-cased diesen State,
+        # analog zu PIN_ENTRY) - nur der Vollstaendigkeit halber mitgefuehrt.
+        return rects.keyboard_keys
+    if state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
+        # Laeuft, nicht abbrechbar - bewusst kein Button (analog
+        # ADMIN_USB_CHECK).
+        return {}
+    if state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:
+        return {"back": rects.back}
+    if state == AppState.ADMIN_EVENT_SAVED:
+        return {"admin_event_restart_now": rects.left, "back": rects.right}
+    if state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)
+        # Gleiches Prinzip wie ADMIN_DELETE_CONFIRM: "Nein" bewusst LINKS.
+        return {"admin_shutdown_abort": rects.left, "admin_shutdown_confirm": rects.right}
     if state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
         # "Nein" bewusst LINKS (die harmlose Wahl an der Stelle, an der
         # sonst die Standardaktion liegt), "Ja, loeschen" rechts.

@@ -45,7 +45,8 @@ from camera_preview import CameraPreviewService
 import capture_timing  # NEU (Sprint 11, Feature 1)
 from hw_capture_provider import CaptureProgress  # NEU (Sprint 11, Feature 1)
 import hw_camera_settings_provider  # NEU (Sprint 11, Feature 2)
-from config import DEFAULT_CONFIG, AppConfig
+import event_config_service  # NEU (Veranstaltungsdaten)
+from config import DEFAULT_CONFIG, AppConfig, EVENT_CONFIG_PATH
 from events import AppEvent, EventType
 from gallery_service import GalleryService
 from led_service import LedEffect, LedService
@@ -243,6 +244,12 @@ class PhotoboothApp:
         # Objekt - der Nutzer kann sie auf dem Konflikt-Screen jederzeit
         # noch aendern, bevor "Ausfuehren" getippt wird.
         self._usb_export_pending_result = None
+
+        # NEU (Veranstaltungsdaten): Wallpaper-Import von USB - gleiches
+        # Einzelwert-Poll-Muster wie bei _usb_job_result oben (Thread setzt
+        # genau einmal, _emit_due_timers pollt).
+        self._wallpaper_thread: threading.Thread | None = None
+        self._wallpaper_job_result = None
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -470,6 +477,9 @@ class PhotoboothApp:
         if state == AppState.PIN_ENTRY:                       # NEU (3.4)
             return self._map_pin_entry_click(pos)
 
+        if state == AppState.ADMIN_EVENT_TEXT_ENTRY:          # NEU (Veranstaltungsdaten)
+            return self._map_admin_event_text_entry_click(pos)
+
         # NEU (4.1): Service-Menue - Treffererkennung gegen exakt dieselben
         # Rechtecke, die der Renderer zeichnet (admin_menu.build_admin_rects).
         if state == AppState.ADMIN_MENU:
@@ -489,6 +499,34 @@ class PhotoboothApp:
         # antippbarer Button waere trotzdem verwirrend.
         if not self.config.gallery_enabled:
             rects = {name: rect for name, rect in rects.items() if name != "gallery"}
+        # NEU (Kamera-Menue 2.0): button_rects_for_state() liefert bewusst
+        # die Buttons BEIDER Seiten (siehe layout.py) - hier wird auf die
+        # aktuell sichtbare Seite eingeschraenkt, sonst waeren z.B. die
+        # Weissabgleich-Buttons der Seite 2 schon auf Seite 1 unsichtbar
+        # antippbar.
+        if state == AppState.ADMIN_CAMERA_SETTINGS:
+            page1_only = {
+                "admin_camera_iso_minus", "admin_camera_iso_plus",
+                "admin_camera_aperture_minus", "admin_camera_aperture_plus",
+                "admin_camera_expcomp_minus", "admin_camera_expcomp_plus",
+                "admin_camera_metering_minus", "admin_camera_metering_plus",
+            }
+            page2_only = {
+                "admin_camera_wb_minus", "admin_camera_wb_plus",
+                "admin_camera_quality_minus", "admin_camera_quality_plus",
+                "admin_camera_imagesize_minus", "admin_camera_imagesize_plus",
+                "admin_camera_drive_minus", "admin_camera_drive_plus",
+            }
+            if self.model.ui.admin_camera_page == 0:
+                rects = {
+                    name: r for name, r in rects.items()
+                    if name not in page2_only and name != "admin_camera_page_prev"
+                }
+            else:
+                rects = {
+                    name: r for name, r in rects.items()
+                    if name not in page1_only and name != "admin_camera_page_next"
+                }
 
         mapping = {
             "photo":          AppEvent(EventType.TAP_PHOTO, source="touch"),
@@ -505,6 +543,10 @@ class PhotoboothApp:
             # nicht die des Einzelfoto-Loeschens im Review-Ablauf.
             "admin_delete_confirm": AppEvent(EventType.TAP_ADMIN_DELETE_CONFIRM, source="touch"),
             "admin_delete_abort":   AppEvent(EventType.TAP_ADMIN_DELETE_ABORT, source="touch"),
+            # NEU (Sprint-11-Nachbesserung): Sicherheitsabfrage vor dem
+            # Herunterfahren - gleiches Prinzip wie admin_delete_confirm/_abort.
+            "admin_shutdown_confirm": AppEvent(EventType.TAP_ADMIN_SHUTDOWN_CONFIRM, source="touch"),
+            "admin_shutdown_abort":   AppEvent(EventType.TAP_ADMIN_SHUTDOWN_ABORT, source="touch"),
             # NEU (4.6): "Weiter" der USB-Bildschirme.
             "usb_continue":   AppEvent(EventType.TAP_ADMIN_USB_CONTINUE, source="touch"),
             "usb_clear":      AppEvent(EventType.TAP_ADMIN_USB_CLEAR, source="touch"),    # NEU (4.7)
@@ -521,6 +563,52 @@ class PhotoboothApp:
             "admin_camera_iso_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_ISO_UP, source="touch"),
             "admin_camera_aperture_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_APERTURE_DOWN, source="touch"),
             "admin_camera_aperture_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_APERTURE_UP, source="touch"),
+            # NEU (Kamera-Menue 2.0): weitere +/--Paare (Seite 1: Belichtung),
+            # Seiten-Navigation, Speichern/Abbrechen statt Zurueck.
+            "admin_camera_expcomp_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_EXPCOMP_DOWN, source="touch"),
+            "admin_camera_expcomp_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_EXPCOMP_UP, source="touch"),
+            "admin_camera_metering_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_METERING_DOWN, source="touch"),
+            "admin_camera_metering_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_METERING_UP, source="touch"),
+            # Seite 2: Sonstiges.
+            "admin_camera_wb_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_WB_DOWN, source="touch"),
+            "admin_camera_wb_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_WB_UP, source="touch"),
+            "admin_camera_quality_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_QUALITY_DOWN, source="touch"),
+            "admin_camera_quality_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_QUALITY_UP, source="touch"),
+            "admin_camera_imagesize_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_IMAGESIZE_DOWN, source="touch"),
+            "admin_camera_imagesize_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_IMAGESIZE_UP, source="touch"),
+            "admin_camera_drive_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_DRIVE_DOWN, source="touch"),
+            "admin_camera_drive_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_DRIVE_UP, source="touch"),
+            "admin_camera_page_next": AppEvent(EventType.TAP_ADMIN_CAMERA_PAGE_NEXT, source="touch"),
+            "admin_camera_page_prev": AppEvent(EventType.TAP_ADMIN_CAMERA_PAGE_PREV, source="touch"),
+            "admin_camera_save": AppEvent(EventType.TAP_ADMIN_CAMERA_SAVE, source="touch"),
+            "admin_camera_cancel": AppEvent(EventType.TAP_ADMIN_CAMERA_CANCEL, source="touch"),
+            # NEU (Veranstaltungsdaten): Uebersichts-Zeilen (oeffnen die
+            # Tastatur fuer das jeweilige Feld bzw. kippen einen Schalter
+            # direkt) sowie die Bestaetigungs-Screens.
+            "admin_event_edit_title": AppEvent(
+                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "title"}, source="touch",
+            ),
+            "admin_event_edit_prefix": AppEvent(
+                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "prefix"}, source="touch",
+            ),
+            "admin_event_edit_wifi_ssid": AppEvent(
+                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "wifi_ssid"}, source="touch",
+            ),
+            "admin_event_edit_wifi_password": AppEvent(
+                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "wifi_password"}, source="touch",
+            ),
+            "admin_event_wifi_password_toggle_visibility": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE, source="touch",
+            ),
+            "admin_event_toggle_qr": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "qr"}, source="touch",
+            ),
+            "admin_event_toggle_gallery": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "gallery"}, source="touch",
+            ),
+            "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
+            "admin_event_save": AppEvent(EventType.TAP_ADMIN_EVENT_SAVE, source="touch"),
+            "admin_event_restart_now": AppEvent(EventType.TAP_ADMIN_EVENT_RESTART_NOW, source="touch"),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -565,6 +653,31 @@ class PhotoboothApp:
                 )
             if name.isdigit():
                 return AppEvent(EventType.PIN_DIGIT, payload={"digit": name}, source="touch")
+        return None
+
+    def _map_admin_event_text_entry_click(self, pos: tuple[int, int]) -> AppEvent | None:
+        # Bildschirmtastatur: Treffer gegen layout.keyboard_keys pruefen und
+        # in das passende Event uebersetzen - gleiches Prinzip wie
+        # _map_pin_entry_click oben, nur fuer beliebigen Text statt nur
+        # Ziffern.
+        for name, rect in self.layout.keyboard_keys.items():
+            if not rect.collidepoint(pos):
+                continue
+            if name == "cancel":
+                return AppEvent(EventType.TEXT_ENTRY_CANCEL, source="touch")
+            if name == "submit":
+                return AppEvent(EventType.TEXT_ENTRY_SUBMIT, source="touch")
+            if name == "backspace":
+                return AppEvent(EventType.TEXT_ENTRY_BACKSPACE, source="touch")
+            if name == "shift":
+                return AppEvent(EventType.TEXT_ENTRY_SHIFT, source="touch")
+            if name == "space":
+                return AppEvent(EventType.TEXT_ENTRY_CHAR, payload={"char": " "}, source="touch")
+            # Umschalt-Taste wirkt bewusst nur auf a-z (siehe layout.py-
+            # Kommentar zur vereinfachten Tastatur) - Ziffern/Umlaute/
+            # Satzzeichen bleiben davon unberuehrt.
+            char = name.upper() if (self.model.ui.admin_event_keyboard_shift and name.isalpha() and name.isascii()) else name
+            return AppEvent(EventType.TEXT_ENTRY_CHAR, payload={"char": char}, source="touch")
         return None
 
 
@@ -702,6 +815,25 @@ class PhotoboothApp:
                 self.dispatch(AppEvent(event_type, payload=job, source="usb"), now)
             return
 
+        # NEU (Veranstaltungsdaten): Wallpaper-Import-Job (Stick suchen/
+        # mounten/Bild kopieren/aushaengen) - bewusst nicht abbrechbar,
+        # gleiches Einzelwert-Poll-Muster wie ADMIN_USB_CHECK/_EJECT oben.
+        if state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
+            job = self._wallpaper_job_result
+            if job is not None:
+                self._wallpaper_job_result = None
+                self._wallpaper_thread = None
+                if job.get("ok"):
+                    # Neues Wallpaper wirkt SOFORT, ohne App-Neustart - anders
+                    # als alle uebrigen Veranstaltungsdaten-Felder (siehe
+                    # renderer.invalidate_main_menu_background).
+                    self.renderer.invalidate_main_menu_background()
+                self.dispatch(
+                    AppEvent(EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, payload=job, source="wallpaper"),
+                    now,
+                )
+            return
+
         # NEU (4.6): Wartebildschirm - alle 1.5s nach einem Stick suchen.
         # KEIN return: der Wartebildschirm braucht zusaetzlich den
         # Idle-Timeout weiter unten.
@@ -778,6 +910,9 @@ class PhotoboothApp:
             # admin_menu_idle_seconds automatisch, siehe
             # state_machine._go_admin_camera_settings).
             AppState.ADMIN_CAMERA_SETTINGS,
+            # NEU (Sprint-11-Nachbesserung): Sicherheitsabfrage vor dem
+            # Herunterfahren - gleiche Begruendung wie ADMIN_DELETE_CONFIRM.
+            AppState.ADMIN_SHUTDOWN_CONFIRM,
             # NEU (4.4): Sicherheitsabfrage vor dem Loeschen - bleibt sie
             # unbeantwortet stehen, ist "nicht loeschen" die richtige
             # Annahme. (Bewusst OHNE ADMIN_DELETE_RUNNING/_DONE: dort ist
@@ -798,6 +933,13 @@ class PhotoboothApp:
             AppState.ADMIN_USB_CONFLICTS,
             # NEU (4.5): Ergebnis-Screen - nach 30s zurueck ins Hauptmenue.
             AppState.ADMIN_DELETE_DONE,
+            # NEU (Veranstaltungsdaten): Uebersicht/Tastatur/Wallpaper-
+            # Ergebnis/Gespeichert-Bestaetigung - bewusst OHNE
+            # ADMIN_EVENT_WALLPAPER_IMPORT (dort laeuft ein Hintergrund-
+            # Thread, nicht unterbrechbar, idle_deadline ist dort ohnehin
+            # None).
+            AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
         }
 
         if state == AppState.BOOT and self._due(timers.boot_deadline, now):
@@ -999,6 +1141,26 @@ class PhotoboothApp:
                 self._set_admin_camera_setting(iso=self.model.ui.admin_camera_iso)
             elif action == "set_admin_camera_aperture":        # NEU (Sprint 11, Feature 2)
                 self._set_admin_camera_setting(aperture=self.model.ui.admin_camera_aperture)
+            elif action == "set_admin_camera_expcomp":         # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(expcomp=self.model.ui.admin_camera_expcomp)
+            elif action == "set_admin_camera_metering":        # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(metering=self.model.ui.admin_camera_metering)
+            elif action == "set_admin_camera_wb":              # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(white_balance=self.model.ui.admin_camera_wb)
+            elif action == "set_admin_camera_quality":         # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(quality=self.model.ui.admin_camera_quality)
+            elif action == "set_admin_camera_imagesize":       # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(image_size=self.model.ui.admin_camera_imagesize)
+            elif action == "set_admin_camera_drive":           # NEU (Kamera-Menue 2.0)
+                self._set_admin_camera_setting(drive_mode=self.model.ui.admin_camera_drive)
+            elif action == "revert_admin_camera_settings":     # NEU (Kamera-Menue 2.0)
+                self._revert_admin_camera_settings()
+            elif action == "collect_admin_event_settings":     # NEU (Veranstaltungsdaten)
+                self._collect_admin_event_settings()
+            elif action == "save_event_config":                # NEU (Veranstaltungsdaten)
+                self._save_admin_event_settings()
+            elif action == "wallpaper_import":                 # NEU (Veranstaltungsdaten)
+                self._wallpaper_start_import()
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -1520,7 +1682,96 @@ class PhotoboothApp:
             lines = lines + (
                 "Event-Konfiguration: Standardwerte aktiv (data/event_config.json anpassen)",
             )
+        # NEU (Veranstaltungsdaten): Gaeste-WLAN im Klartext, damit Lutz es
+        # vor Ort nachschlagen kann, ohne die JSON-Datei oeffnen zu muessen -
+        # nur auf diesem Admin-Screen, NICHT gaeste-sichtbar.
+        lines = lines + (
+            f"Gäste-WLAN: {self.config.network.guest_wifi_ssid} "
+            f"(Passwort: {self.config.network.guest_wifi_password})",
+        )
         self.dispatch(AppEvent(EventType.ADMIN_STATUS_READY, payload={"lines": lines}, source="diagnostics"))
+
+    def _collect_admin_event_settings(self) -> None:
+        # NEU (Veranstaltungsdaten): synchron ermittelt (reines Auslesen der
+        # bereits geladenen AppConfig, kein Datei-/Hardwarezugriff) - gleiches
+        # Prinzip wie _collect_admin_status. Bewusst die WERTE DER LAUFENDEN
+        # AppConfig, nicht ein frischer load_event_config()-Aufruf: das
+        # spiegelt korrekt wider, was die App gerade tatsaechlich verwendet
+        # (und damit auch, dass Aenderungen erst nach einem Neustart wirken).
+        self.dispatch(
+            AppEvent(
+                EventType.ADMIN_EVENT_SETTINGS_READY,
+                payload={
+                    "title": self.config.screen.title,
+                    "prefix": self.config.photo_prefix,
+                    "wifi_ssid": self.config.network.guest_wifi_ssid,
+                    "wifi_password": self.config.network.guest_wifi_password,
+                    "qr_enabled": self.config.qr_codes_enabled,
+                    "gallery_enabled": self.config.gallery_enabled,
+                },
+                source="event_settings",
+            )
+        )
+
+    def _save_admin_event_settings(self) -> None:
+        # NEU (Veranstaltungsdaten): schreibt die im Screen bearbeiteten
+        # Entwurfswerte nach event_config.json - synchron (ein kleiner JSON-
+        # Schreibvorgang, kein Hintergrund-Thread noetig, gleiches Prinzip
+        # wie _usb_prepare).
+        ui = self.model.ui
+        data = {
+            "event_title": ui.admin_event_title,
+            "photo_prefix": ui.admin_event_prefix,
+            "guest_wifi_ssid": ui.admin_event_wifi_ssid,
+            "guest_wifi_password": ui.admin_event_wifi_password,
+            "qr_codes_enabled": ui.admin_event_qr_enabled,
+            "gallery_enabled": ui.admin_event_gallery_enabled,
+        }
+        ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
+        self.dispatch(
+            AppEvent(EventType.ADMIN_EVENT_SAVE_RESULT, payload={"ok": ok, "message": message}, source="event_settings")
+        )
+
+    def _wallpaper_start_import(self) -> None:
+        # NEU (Veranstaltungsdaten): Hintergrund-Thread nach demselben
+        # Einzelwert-Poll-Muster wie _usb_start_check - Stick suchen,
+        # einbinden, EIN Bild suchen und kopieren, wieder aushaengen. Setzt
+        # NIE self.dispatch() aus dem Thread heraus auf (siehe
+        # _emit_due_timers, das den Job pollt), sondern nur
+        # self._wallpaper_job_result.
+        def worker() -> None:
+            try:
+                partition = admin_usb_service.pick_best_partition(admin_usb_service.find_usb_partitions())
+                if partition is None:
+                    self._wallpaper_job_result = {"ok": False, "lines": ("Kein USB-Stick gefunden.",)}
+                    return
+                stick, mount_message = admin_usb_service.mount_partition(partition)
+                if stick is None:
+                    self._wallpaper_job_result = {"ok": False, "lines": (mount_message,)}
+                    return
+                try:
+                    source = event_config_service.find_wallpaper_on_stick(stick.mountpoint)
+                    if source is None:
+                        self._wallpaper_job_result = {
+                            "ok": False,
+                            "lines": ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",),
+                        }
+                        return
+                    target = self.config.assets_dir / "hauptmenu_wallpaper.png"
+                    ok, message = event_config_service.import_wallpaper(source, target)
+                    self._wallpaper_job_result = {"ok": ok, "lines": (message,)}
+                finally:
+                    if stick.mounted_by_us:
+                        admin_usb_service.unmount(stick.mountpoint)
+            except Exception as exc:
+                print(f"[App] FEHLER beim Wallpaper-Import: {exc}")
+                self._wallpaper_job_result = {
+                    "ok": False,
+                    "lines": ("Unerwarteter Fehler beim Wallpaper-Import.", str(exc)[:70]),
+                }
+
+        self._wallpaper_thread = threading.Thread(target=worker, name="wallpaper-import", daemon=True)
+        self._wallpaper_thread.start()
 
     def _read_admin_camera_settings(self) -> None:
         # NEU (Sprint 11, Feature 2): synchron ermittelt (ein gphoto2-
@@ -1528,7 +1779,18 @@ class PhotoboothApp:
         # siehe hw_camera_settings_provider.py) - ausgeloest durch einen
         # bewussten Tap im Service-Menue, gleiches Prinzip wie
         # _collect_admin_status.
-        snapshot = hw_camera_settings_provider.read_current(self._camera_lock)
+        # GEAENDERT (Kamera-Menue 2.0): laeuft bereits eine Live-Vorschau fuer
+        # diesen Screen (start_preview beim Betreten, siehe state_machine.
+        # _go_admin_camera_settings), wird deren bereits offene Kamera-
+        # Sitzung mitbenutzt (siehe hw_camera_settings_provider.py-Docstring,
+        # gphoto2-Issue #491) statt einer zweiten, unabhaengigen Sitzung.
+        used_shared, snapshot = self.preview_service.run_with_camera(
+            lambda camera, context: hw_camera_settings_provider.read_current(
+                self._camera_lock, camera=camera, context=context
+            )
+        )
+        if not used_shared:
+            snapshot = hw_camera_settings_provider.read_current(self._camera_lock)
         self.dispatch(AppEvent(
             EventType.ADMIN_CAMERA_SETTINGS_READY,
             payload={
@@ -1538,28 +1800,97 @@ class PhotoboothApp:
                 "iso_choices": snapshot.iso_choices,
                 "aperture": snapshot.aperture,
                 "aperture_choices": snapshot.aperture_choices,
+                "shutter": snapshot.shutter,
+                "expcomp": snapshot.expcomp,
+                "expcomp_choices": snapshot.expcomp_choices,
+                "metering": snapshot.metering,
+                "metering_choices": snapshot.metering_choices,
+                "white_balance": snapshot.white_balance,
+                "white_balance_choices": snapshot.white_balance_choices,
+                "quality": snapshot.quality,
+                "quality_choices": snapshot.quality_choices,
+                "image_size": snapshot.image_size,
+                "image_size_choices": snapshot.image_size_choices,
+                "drive_mode": snapshot.drive_mode,
+                "drive_mode_choices": snapshot.drive_mode_choices,
             },
             source="camera_settings",
         ))
 
-    def _set_admin_camera_setting(self, iso: str | None = None, aperture: str | None = None) -> None:
-        # NEU (Sprint 11, Feature 2): der neue Wert steht bereits optimistisch
-        # in model.ui (state_machine._step_admin_camera_iso/_aperture hat ihn
-        # vor dem Dispatch dieser Aktion gesetzt) - hier wird er nur noch an
-        # die Kamera durchgereicht. Schlaegt das Setzen fehl, wird bewusst
-        # NICHT einfach eine Fehlermeldung angezeigt und der (evtl. falsche)
-        # optimistische Wert stehen gelassen - stattdessen wird sofort neu
-        # von der Kamera gelesen, damit der Screen garantiert den TATSAECHLICH
-        # aktiven Wert zeigt, nicht nur den zuletzt angeforderten.
-        if iso is not None:
-            ok, error = hw_camera_settings_provider.set_iso(self._camera_lock, iso)
-        elif aperture is not None:
-            ok, error = hw_camera_settings_provider.set_aperture(self._camera_lock, aperture)
-        else:
+    # NEU (Kamera-Menue 2.0): Name des jeweiligen set_*-Aufrufs in
+    # hw_camera_settings_provider.py, ueber das UiState-Feld indiziert -
+    # vermeidet eine 8-fache if/elif-Kette in _set_admin_camera_setting().
+    _CAMERA_SETTER_BY_KWARG = {
+        "iso": "set_iso",
+        "aperture": "set_aperture",
+        "expcomp": "set_expcomp",
+        "metering": "set_metering",
+        "white_balance": "set_white_balance",
+        "quality": "set_quality",
+        "image_size": "set_image_size",
+        "drive_mode": "set_drive_mode",
+    }
+
+    def _set_admin_camera_setting(self, **kwargs: str) -> None:
+        # NEU (Sprint 11, Feature 2, erweitert Kamera-Menue 2.0): der neue Wert
+        # steht bereits optimistisch in model.ui (state_machine.
+        # _step_admin_camera_field hat ihn vor dem Dispatch dieser Aktion
+        # gesetzt) - hier wird er nur noch an die Kamera durchgereicht.
+        # Erwartet genau EIN Keyword-Argument (iso=... ODER aperture=...
+        # ODER ...), siehe die Aufrufer unten in _apply_actions().
+        name, value = next(iter(kwargs.items()), (None, None))
+        setter_name = self._CAMERA_SETTER_BY_KWARG.get(name or "")
+        if setter_name is None or value is None:
             return
+        setter = getattr(hw_camera_settings_provider, setter_name)
+        used_shared, result = self.preview_service.run_with_camera(
+            lambda camera, context: setter(self._camera_lock, value, camera=camera, context=context)
+        )
+        ok, error = result if used_shared else setter(self._camera_lock, value)
         if not ok:
-            print(f"[App] Kamera-Einstellung konnte nicht gesetzt werden: {error}")
-            self._read_admin_camera_settings()
+            print(f"[App] Kamera-Einstellung konnte nicht gesetzt werden ({name}): {error}")
+        # BUGFIX (Nutzer-Feedback nach Live-Test): frueher wurde nur im
+        # Fehlerfall neu gelesen - die Verschlusszeit (reiner Info-Wert, von
+        # der Kamera im Modus A automatisch aus ISO/Blende/Belichtungs-
+        # korrektur/Messfeld errechnet) blieb dadurch nach einer
+        # ERFOLGREICHEN Aenderung auf dem zuletzt gelesenen, jetzt veralteten
+        # Stand stehen. Jetzt wird nach JEDER Aenderung (Erfolg oder
+        # Fehlschlag) neu gelesen - stellt ausserdem sicher, dass auch der
+        # geaenderte Wert selbst garantiert den tatsaechlich aktiven
+        # Kamera-Stand zeigt, nicht nur den zuletzt angeforderten.
+        self._read_admin_camera_settings()
+
+    def _revert_admin_camera_settings(self) -> None:
+        """NEU (Kamera-Menue 2.0): 'Abbrechen' - sendet alle Werte zurueck,
+        mit denen der Kamera-Einstellungen-Screen betreten wurde (siehe
+        models.UiState.admin_camera_entry_*). Ohne Momentaufnahme (Kamera
+        beim Betreten nicht erreichbar) gibt es nichts zurueckzusetzen."""
+        ui = self.model.ui
+        if not ui.admin_camera_entry_captured:
+            return
+        entries = (
+            ("iso", ui.admin_camera_entry_iso),
+            ("aperture", ui.admin_camera_entry_aperture),
+            ("expcomp", ui.admin_camera_entry_expcomp),
+            ("metering", ui.admin_camera_entry_metering),
+            ("white_balance", ui.admin_camera_entry_wb),
+            ("quality", ui.admin_camera_entry_quality),
+            ("image_size", ui.admin_camera_entry_imagesize),
+            ("drive_mode", ui.admin_camera_entry_drive),
+        )
+
+        def _apply(camera, context) -> None:
+            for name, value in entries:
+                if not value:
+                    continue
+                setter = getattr(hw_camera_settings_provider, self._CAMERA_SETTER_BY_KWARG[name])
+                ok, error = setter(self._camera_lock, value, camera=camera, context=context)
+                if not ok:
+                    print(f"[App] Abbrechen: {name} konnte nicht zurückgesetzt werden: {error}")
+
+        used_shared, _ = self.preview_service.run_with_camera(lambda camera, context: _apply(camera, context))
+        if not used_shared:
+            _apply(None, None)
 
     # -- LED & Button-LED synchronisieren --------------------------------------
 
@@ -1677,11 +2008,28 @@ class PhotoboothApp:
             # NEU (Sprint 11, Feature 2): gleiche ruhige Welle wie die
             # uebrigen Service-Menue-Unterseiten (ADMIN_STATUS).
             effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state in {
+            AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
+        }:
+            # NEU (Veranstaltungsdaten): gleiche ruhige Welle wie die
+            # uebrigen Service-Menue-Unterseiten.
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
+            # NEU (Veranstaltungsdaten): "es passiert gerade etwas" - wie
+            # beim USB-Pruefen/Neustart.
+            effect = LedEffect.CAPTURE_PROCESSING
         elif state == AppState.ADMIN_RESTART_PENDING:
             # NEU (4.3): gruen wie waehrend der Kamera-Verarbeitung -
             # signalisiert "es passiert gerade etwas", kein neuer Effekt noetig.
             effect = LedEffect.CAPTURE_PROCESSING
-        elif state in {AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING}:
+        elif state in {
+            AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,
+            # NEU (Sprint-11-Nachbesserung): gleiches Warnblinken fuer die
+            # Herunterfahren-Sicherheitsabfrage - beide sind "gefaehrliche"
+            # Bestaetigungen.
+            AppState.ADMIN_SHUTDOWN_CONFIRM,
+        }:
             # NEU (4.4): langsames, kraeftiges rotes Warnblinken - eigener
             # Effekt, damit es sich klar von LedEffect.ERROR (schnelles
             # Blinken bei einer Stoerung) unterscheidet.
@@ -1788,6 +2136,9 @@ class PhotoboothApp:
             # _handle_gallery_photo_qr behandelt BUTTON_PRESS bewusst nicht,
             # das "Bereitschafts"-Blinken waere hier also irrefuehrend.
             AppState.GALLERY_PHOTO_QR,
+            # NEU (Sprint-11-Nachbesserung): waehrend der Herunterfahren-
+            # Sicherheitsabfrage darf der Taster nichts ausloesen.
+            AppState.ADMIN_SHUTDOWN_CONFIRM,
             # NEU (4.4): waehrend Abfrage, Loeschlauf und Ergebnis darf der
             # Taster nichts ausloesen.
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,
@@ -1799,6 +2150,11 @@ class PhotoboothApp:
             AppState.ADMIN_USB_COPY, AppState.ADMIN_USB_EXPORT_DONE,   # NEU (4.7)
             AppState.ADMIN_USB_CONFLICTS, AppState.ADMIN_USB_RESOLVE,  # NEU (6b)
             AppState.SHUTDOWN_GOODBYE,   # (PIN_ENTRY jetzt oben separat, 3.5)
+            # NEU (Veranstaltungsdaten): auch hier darf der Taster nichts
+            # ausloesen (Service-Menue-Unterseite wie ADMIN_STATUS).
+            AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_SAVED,
         }:
             self._button_provider.set_led(False)
             return
@@ -1819,10 +2175,16 @@ class PhotoboothApp:
     def _get_preview_frame(self) -> pygame.Surface | None:
         """Preview-Frame nur holen, wenn der Zustand es erfordert. Waehrend
         des Countdowns nur bis inkl. Ziffer 2 - bei Ziffer 1 ist das
-        Liveview aus (stattdessen "bitte laecheln"-Bild, siehe renderer.py)."""
+        Liveview aus (stattdessen "bitte laecheln"-Bild, siehe renderer.py).
+        GEAENDERT (Kamera-Menue 2.0): auch im Kamera-Einstellungen-Screen
+        wird die Vorschau geholt - dort aber NICHT vollflaechig gezeichnet
+        (siehe render()/_draw_admin_camera_settings), sondern in einem
+        kleineren Panel neben den Einstell-Zeilen."""
         if self.model.state == AppState.PHOTO_PREVIEW:
             return self.preview_service.get_frame()
         if self.model.state == AppState.COUNTDOWN and self.model.ui.countdown_value not in (None, 1):
+            return self.preview_service.get_frame()
+        if self.model.state == AppState.ADMIN_CAMERA_SETTINGS:
             return self.preview_service.get_frame()
         return None
 

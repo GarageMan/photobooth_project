@@ -12,12 +12,13 @@ einen auffaelligen Platzhalter bzw. sinnvolle Standards, falls die Datei
 (oder ein einzelner Wert darin) fehlt (siehe config.py).
 """
 
-# Aktuelles Gast-WLAN-Passwort (SSID "Fotobox_Gast") - wird den Gaesten
-# auf dem Bildschirm angezeigt (renderer.py), damit sie sich verbinden
-# und ihre Fotos herunterladen koennen. Bei jedem Passwort-Wechsel am
-# TP-Link IMMER auch hier nachziehen, sonst zeigt der Screen ein
-# falsches Passwort an.
-GUEST_WIFI_PASSWORD = "CHANGE_ME"
+# GEAENDERT (Veranstaltungsdaten): das Gast-WLAN-Passwort (und die SSID)
+# stehen NICHT mehr hier - sie sind kein Geraete-Geheimnis, sondern ein
+# Event-Parameter, der sich mit jeder Veranstaltung aendert. Pflege beide
+# stattdessen ueber Service-Menue > "Veranstaltungsdaten" (schreibt
+# event_config.json) oder direkt in event_config.json/
+# event_config_example.json. Ein hier noch vorhandenes
+# GUEST_WIFI_PASSWORD wird von config.py nicht mehr gelesen.
 
 # Geheim-PIN fuer den Zugang zum Service-Menue (Status/Diagnose,
 # USB-Export, Bilder loeschen, Kamera-Einstellungen, Herunterfahren, ...)
