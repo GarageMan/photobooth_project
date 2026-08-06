@@ -12,6 +12,8 @@ class EventType(Enum):
     TAP_GALLERY = auto()
     TAP_INSTRUCTIONS = auto()
     TAP_TERMS = auto()
+    # NEU (Nutzer-Feedback): DE/EN-Sprachumschalter auf ANLEITUNG/BEDINGUNGEN.
+    TAP_TOGGLE_LANGUAGE = auto()
     TAP_BACK = auto()
     TAP_CANCEL = auto()
     TAP_SAVE = auto()
@@ -67,7 +69,7 @@ class EventType(Enum):
     # ueber USB, ohne die Kamera aus dem Gehaeuse zu nehmen.
     TAP_ADMIN_CAMERA_SETTINGS = auto()
     # Aktuelle Werte + gueltige Auswahllisten sind ermittelt (synchron
-    # gelesen, siehe app_with_hw._read_admin_camera_settings); payload
+    # gelesen, siehe app._read_admin_camera_settings); payload
     # traegt die Snapshot-Felder (iso, aperture, iso_choices,
     # aperture_choices, available, error).
     ADMIN_CAMERA_SETTINGS_READY = auto()
@@ -104,7 +106,7 @@ class EventType(Enum):
     # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
     TAP_ADMIN_EVENT_SETTINGS = auto()          # Menuepunkt in ADMIN_MENU
     # Aktuelle Werte sind synchron ermittelt (siehe
-    # app_with_hw._collect_admin_event_settings); payload: title, prefix,
+    # app._collect_admin_event_settings); payload: title, prefix,
     # wifi_ssid, wifi_password, qr_enabled, gallery_enabled.
     ADMIN_EVENT_SETTINGS_READY = auto()
     # payload: {"field": "title"|"prefix"|"wifi_ssid"|"wifi_password"} -
@@ -135,7 +137,7 @@ class EventType(Enum):
     # "Speichern" im Auswahl-Screen - kopiert die Auswahl NUR in eine
     # Zwischenablage (event_config_service.WALLPAPER_PENDING_FILENAME),
     # noch NICHT in das echte Hauptmenue-Wallpaper (siehe
-    # app_with_hw._wallpaper_stage_selected).
+    # app._wallpaper_stage_selected).
     TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE = auto()
     # "Abbrechen" im Auswahl-Screen - verwirft die Auswahl, haengt den
     # Stick nur wieder aus (kein Datei-Vorgang).
@@ -155,7 +157,7 @@ class EventType(Enum):
     TEXT_ENTRY_SHIFT = auto()
     TEXT_ENTRY_SUBMIT = auto()      # "OK" - schreibt den Puffer ins Zielfeld
     TEXT_ENTRY_CANCEL = auto()      # verwirft den Puffer
-    # NEU (4.3): Diagnosezeilen sind fertig ermittelt (app_with_hw sammelt
+    # NEU (4.3): Diagnosezeilen sind fertig ermittelt (app sammelt
     # sie synchron nach TAP_ADMIN_STATUS und liefert sie im payload zurueck).
     ADMIN_STATUS_READY = auto()
     # NEU (4.3): der kurze Anzeige-Timer in ADMIN_RESTART_PENDING ist

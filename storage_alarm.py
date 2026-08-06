@@ -9,7 +9,7 @@ noch moeglich sind, und leitet daraus eine Alarmstufe ab:
     1 = Warnung (farbiger Hinweistext im Hauptmenue)
     2 = kritisch (Aufnahmesperre, auffaelliges Blinken von Bildschirm+LED)
 
-Bewusst OHNE Abhaengigkeit zu pygame, config oder app_with_hw: alle
+Bewusst OHNE Abhaengigkeit zu pygame, config oder app: alle
 Eingaben kommen als Pfade/Zahlen herein, disk_usage_fn ist austauschbar -
 dadurch bleibt die Logik offline und ohne eine echte, kuenstlich
 volllaufende Partition testbar (siehe test_storage_alarm.py).

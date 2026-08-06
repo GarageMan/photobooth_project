@@ -10,7 +10,7 @@ class LedEffect(Enum):
     # nur waehrend BOOT, bis das Hauptmenue erscheint.
     BOOT = auto()
     # Amber-Atmen, zusaetzlich synchron zur Taster-LED 3x gelb aufblitzend
-    # (identischer 10s-Zyklus wie app_with_hw.py::_sync_button_led) - genutzt
+    # (identischer 10s-Zyklus wie app.py::_sync_button_led) - genutzt
     # fuer MAIN_MENU, ATTRACT_GALLERY, TERMS.
     MAIN_MENU = auto()
     # Zwei gegenlaeufig rotierende Kometen in Tuerkis - PHOTO_INTRO
@@ -33,11 +33,11 @@ class LedEffect(Enum):
     # GPIO-Ausloeseimpuls: Ring dunkel (keine Reflexionen in Brillen).
     PRE_TRIGGER_DARK = auto()
     # Waehrend des blockierenden gphoto2-Downloads (in _do_capture direkt
-    # gesetzt, siehe app_with_hw.py) bis das Foto in REVIEW angezeigt wird.
+    # gesetzt, siehe app.py) bis das Foto in REVIEW angezeigt wird.
     CAPTURE_PROCESSING = auto()
     # NEU (Sprint 11, Feature 1): ersetzt CAPTURE_PROCESSING waehrend der
     # eigentlichen Bilduebertragung (Ausloesen + gphoto2-Download laeuft
-    # jetzt in einem Hintergrund-Thread, siehe app_with_hw.py). Ein
+    # jetzt in einem Hintergrund-Thread, siehe app.py). Ein
     # einzelner, weich auslaufender Punkt wandert - synchron zur
     # Datei-Symbol-Animation im Renderer - einen Halbkreis von 9 Uhr ueber
     # 12 Uhr nach 3 Uhr, Grundton gruen (Kontinuitaet zur bisherigen

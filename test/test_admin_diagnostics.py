@@ -84,7 +84,7 @@ class CollectStatusLinesTestCase(unittest.TestCase):
     # weitere Zeilen (Foto-Download-Pfad, geschuetzte Dateien) erweitert -
     # dieser Test wurde dabei nie nachgezogen und rief die Funktion seither
     # mit der alten, unvollstaendigen Signatur auf (TypeError). Die
-    # Produktivnutzung in app_with_hw.py war davon nicht betroffen (ruft
+    # Produktivnutzung in app.py war davon nicht betroffen (ruft
     # bereits korrekt mit allen sieben Parametern auf).
     def test_returns_seven_lines(self) -> None:
         with tempfile.TemporaryDirectory() as photo_tmp, tempfile.TemporaryDirectory() as web_tmp:

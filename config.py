@@ -94,7 +94,7 @@ ASSETS_DIR = BASE_DIR / "assets"
 # siehe .gitignore und event_config_example.json).
 #
 # GEAENDERT (Veranstaltungsdaten): oeffentlich (kein fuehrender Unterstrich)
-# - app_with_hw.py braucht den Pfad, um nach einer Aenderung im neuen
+# - app.py braucht den Pfad, um nach einer Aenderung im neuen
 # Admin-Screen "Veranstaltungsdaten" tatsaechlich zurueckzuschreiben (siehe
 # event_config_service.save_event_config). Vorher wurde diese Datei nur
 # gelesen, nie geschrieben.
@@ -156,7 +156,7 @@ GUEST_WIFI_SSID = str(_event_config.get("guest_wifi_ssid") or "Fotobox_Gast")
 # ueberhaupt erzeugt/angezeigt werden sollen - Speicher-Bestaetigung
 # (state_machine._SAVE_CONFIRMATION_TEXT_*), das Icon/der Doppeltap "QR-Code
 # anfordern" in der Galerie-Vollansicht sowie AppState.GALLERY_PHOTO_QR
-# richten sich alle danach (siehe state_machine.py, app_with_hw.py). Manche
+# richten sich alle danach (siehe state_machine.py, app.py). Manche
 # Veranstaltungsorte haben kein Gaeste-WLAN oder der Gastgeber moechte
 # grundsaetzlich keinen digitalen Download anbieten. Default True - das
 # bisherige Verhalten bleibt fuer bestehende Installationen unveraendert,
@@ -188,7 +188,7 @@ GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 # wurde, ohne die Werte anzupassen. Gedacht als Hinweis fuer andere GitHub-
 # Nutzer, die das Projekt frisch aufsetzen: Konsolen-Warnungen beim Start
 # werden leicht uebersehen, ein sichtbarer Hinweis im Hauptmenue (siehe
-# renderer.py) und in der Diagnose (ADMIN_STATUS, siehe app_with_hw.py)
+# renderer.py) und in der Diagnose (ADMIN_STATUS, siehe app.py)
 # nicht. Verschwindet automatisch, sobald echte Werte eingetragen sind -
 # kein manuelles Wegklicken noetig.
 #
@@ -467,7 +467,7 @@ class AppConfig:
     # NEU (Feedback): Loesch- UND Kopierschutz - unabhaengig von
     # gallery.excluded_filenames (das nur die ANZEIGE betrifft), aber
     # inhaltlich ueberschneidend (dieselben vier Dateien). Wird von
-    # app_with_hw.py sowohl an delete_all_photos() als auch an
+    # app.py sowohl an delete_all_photos() als auch an
     # export_photos() als excluded_filenames uebergeben - beide Routinen
     # unterstuetzen das Parameter bereits, keine Aenderung an
     # admin_delete_service.py/admin_usb_export.py noetig. testbild.png

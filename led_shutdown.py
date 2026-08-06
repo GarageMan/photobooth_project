@@ -19,7 +19,7 @@ Aufbau:
     (0..255). Der HW-Provider (hw_led_provider.py) ruft dies pro Frame auf,
     schreibt die Farben auf den Ring und stellt die globale Helligkeit ein.
   - TOTAL_SECONDS gibt die Gesamtdauer an; danach liefert frame_colors nur
-    noch "alles aus". app_with_hw.py nutzt diese Dauer, um nach Ablauf der
+    noch "alles aus". app.py nutzt diese Dauer, um nach Ablauf der
     Animation das eigentliche poweroff auszuloesen.
 
 Eigenstaendiger Sichttest auf dem Pi (App vorher beenden, kein poweroff):

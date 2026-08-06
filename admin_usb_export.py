@@ -16,7 +16,7 @@ wird nach dem Export als eigenstaendiger Schritt angeboten (Uebergang zu
 ADMIN_DELETE_CONFIRM), damit der Nutzer die Ergebnisse auf dem Stick
 zuerst pruefen kann.
 
-Bewusst OHNE Abhaengigkeit zu pygame, config oder app_with_hw: alle
+Bewusst OHNE Abhaengigkeit zu pygame, config oder app: alle
 Eingaben kommen als Pfade/Zahlen herein, damit die Logik offline und
 ohne Hardware testbar bleibt.
 
@@ -111,7 +111,7 @@ class ExportResult:
     # apply_conflict_resolutions() wieder leer).
     conflicts: list[ExportConflict] = field(default_factory=list)
     # NEU (6a): menschenlesbare Protokollzeilen der ausgefuehrten Aktionen
-    # (Kopieren/Ueberschreiben/Umbenennen) - werden von app_with_hw ins
+    # (Kopieren/Ueberschreiben/Umbenennen) - werden von app ins
     # Export-Logfile geschrieben.
     log_actions: list[str] = field(default_factory=list)
 
@@ -266,7 +266,7 @@ def export_photos(
     endet die Funktion in progress.phase == "conflicts", damit der Aufrufer
     die interaktive Auswahl einblenden kann.
 
-    Diese Funktion laeuft im Hintergrund-Thread (siehe app_with_hw.py).
+    Diese Funktion laeuft im Hintergrund-Thread (siehe app.py).
     Fortschritt wird ueber das uebergebene ExportProgress-Objekt
     kommuniziert - der Hauptloop pollt es in _emit_due_timers.
     """

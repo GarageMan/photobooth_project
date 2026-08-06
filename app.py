@@ -1,5 +1,5 @@
 """
-app_with_hw.py  →  Umbenennen zu app.py auf dem Pi
+app.py  →  Umbenennen zu app.py auf dem Pi
 ====================================================
 Hauptschleife der Fotobox.
 Schaltet per Feature-Flag zwischen echten Hardware-Providern
@@ -20,7 +20,7 @@ Feature-Flags in config.py:
 
 Für Windows/PC-Test:
   Alle vier Flags auf True / False belassen (Fake-Modus), dann:
-    python app_with_hw.py
+    python app.py
 
 Für Raspberry Pi (Schritt-für-Schritt):
   1. Fake-Modus: alle Flags False/True wie oben → testen
@@ -466,6 +466,20 @@ class PhotoboothApp:
             # Kleine Toleranz (Zittern beim Antippen soll nicht dazu fuehren,
             # dass der Klick knapp neben dem Button "verloren" geht).
             if abs(dx) < 30 and abs(dy) < 30:
+                # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Scroll-
+                # Buttons (siehe renderer._draw_scroll_indicators) - gleiches
+                # Prinzip wie das Wischen oben: reine Renderer-Anzeigesache,
+                # kein AppEvent/State-Machine-Durchlauf noetig. Generisch fuer
+                # alle 5 scrollbaren Screens ueber den Attributnamen, den der
+                # Renderer beim Zeichnen mit abgelegt hat.
+                if self.renderer.scroll_down_hitbox is not None and self.renderer.scroll_down_hitbox.collidepoint(start_pos):
+                    attr = self.renderer.scroll_down_offset_attr
+                    setattr(self.renderer, attr, getattr(self.renderer, attr) + 150)
+                    return
+                if self.renderer.scroll_up_hitbox is not None and self.renderer.scroll_up_hitbox.collidepoint(start_pos):
+                    attr = self.renderer.scroll_up_offset_attr
+                    setattr(self.renderer, attr, max(0, getattr(self.renderer, attr) - 150))
+                    return
                 mapped = self._map_click_to_event(start_pos)
                 if mapped is not None:
                     self.dispatch(mapped)
@@ -579,6 +593,8 @@ class PhotoboothApp:
             "gallery":        AppEvent(EventType.TAP_GALLERY, source="touch"),
             "instructions":   AppEvent(EventType.TAP_INSTRUCTIONS, source="touch"),
             "terms":          AppEvent(EventType.TAP_TERMS, source="touch"),
+            # NEU (Nutzer-Feedback): DE/EN-Umschalter auf ANLEITUNG/BEDINGUNGEN.
+            "language_toggle": AppEvent(EventType.TAP_TOGGLE_LANGUAGE, source="touch"),
             "back":           AppEvent(EventType.TAP_BACK, source="touch"),
             "cancel":         AppEvent(EventType.TAP_CANCEL, source="touch"),
             "save":           AppEvent(EventType.TAP_SAVE, payload={"filename": None}, source="touch"),
@@ -1331,7 +1347,7 @@ class PhotoboothApp:
         # die App selbst beendet (Exit-Code 0). Die Auto-Restart-Schleife in
         # start_fotobox.sh faengt das ab und startet die App innerhalb
         # weniger Sekunden neu - derselbe Mechanismus wie beim manuellen
-        # "sudo pkill -f app_with_hw.py" aus der Notfallkarte.
+        # "sudo pkill -f app.py" aus der Notfallkarte.
         print("[App] Neustart angefordert - beende App (Exit-Code 0).")
         self.running = False
 

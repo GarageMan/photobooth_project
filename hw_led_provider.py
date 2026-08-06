@@ -74,7 +74,7 @@ _BLOCK_GAP = 2
 _BLOCK_PERIOD = _BLOCK_ON + _BLOCK_GAP  # 7
 
 # Hauptmenue-Sync-Blinken: identischer 10s-Zyklus wie die Taster-LED in
-# app_with_hw.py::_sync_button_led (3x kurz an, dann Pause) - beide lesen
+# app.py::_sync_button_led (3x kurz an, dann Pause) - beide lesen
 # unabhaengig voneinander dieselbe time.monotonic()-Uhr mit derselben Formel,
 # dadurch laufen LED-Ring und Taster-LED garantiert im Gleichtakt, ohne dass
 # Parameter zwischen den Threads uebergeben werden muessen.
@@ -175,7 +175,7 @@ class HwLedProvider:
         aktuell nur von LedEffect.CAPTURE_TRANSFER ausgewertet
         (_render_capture_transfer): der wandernde LED-Punkt erreicht 3 Uhr
         exakt nach `duration` Sekunden, unabhängig davon, wie lange die
-        tatsächliche Übertragung am Ende dauert (siehe app_with_hw.py -
+        tatsächliche Übertragung am Ende dauert (siehe app.py -
         `duration` kommt aus der per Stoppuhr gemessenen, in
         capture_timing.py persistierten Schätzung).
         """
@@ -291,7 +291,7 @@ class HwLedProvider:
             elif effect == LedEffect.CAPTURE_TRANSFER:
                 # NEU (Sprint 11, Feature 1): wandernder gruener Punkt statt
                 # statischem Vollkreis - laeuft synchron zur Datei-Symbol-
-                # Animation im Renderer (app_with_hw.py uebergibt dieselbe
+                # Animation im Renderer (app.py uebergibt dieselbe
                 # Sollzeit an beide).
                 self._render_capture_transfer(now - effect_since, effect_duration)
                 time.sleep(0.02)
@@ -604,7 +604,7 @@ class HwLedProvider:
     def _render_capture_transfer(self, elapsed: float, duration: float) -> None:
         """
         NEU (Sprint 11, Feature 1): waehrend der Bilduebertragung (Ausloesen
-        + gphoto2-Download, laeuft in app_with_hw.py in einem Hintergrund-
+        + gphoto2-Download, laeuft in app.py in einem Hintergrund-
         Thread) wandert ein einzelner, weich auslaufender gruener Punkt von
         9 Uhr ueber 12 Uhr nach 3 Uhr (180-Grad-Bogen) - synchron zur
         Datei-Symbol-Animation im Renderer. `duration` ist die per

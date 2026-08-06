@@ -44,6 +44,15 @@ class UiState:
     countdown_value: int | None = None
     status_text: str = ""
     error_text: str | None = None
+    # NEU (Nutzer-Feedback): Anzeigesprache fuer die Gaeste-Texte auf
+    # ANLEITUNG/BEDINGUNGEN ("de"/"en"), umschaltbar ueber einen eigenen
+    # Button (siehe layout.language_toggle). Bewusst NICHT auf gallery_
+    # scroll_offset o.ae. beschraenkt, sondern ein allgemeines UI-Feld -
+    # gilt session-weit (bleibt beim Wechsel zwischen ANLEITUNG und
+    # BEDINGUNGEN erhalten), setzt sich aber NICHT automatisch zurueck
+    # (kein Reset beim Verlassen), damit ein einmal gewaehltes Englisch
+    # nicht bei jedem erneuten Aufruf wieder auf Deutsch zurueckspringt.
+    text_language: str = "de"
     # --- Verstecktes Herunterfahren (Schritt 3) ---
     # Bisher eingegebene PIN-Ziffern im PIN_ENTRY-Screen (fuer die maskierte
     # Anzeige). Wird beim Betreten und beim Verlassen des Screens geleert,
@@ -51,7 +60,7 @@ class UiState:
     pin_entry: str = ""
     # NEU (4.3): ermittelte Diagnosezeilen fuer AppState.ADMIN_STATUS.
     # Leer, solange die Ermittlung noch laeuft (siehe "collect_admin_status"
-    # in app_with_hw.py).
+    # in app.py).
     admin_status_lines: tuple[str, ...] = ()
     # NEU (4.4): Zusammenfassung nach dem Loeschen aller Bilder
     # (AppState.ADMIN_DELETE_DONE). Bewusst getrennt von
@@ -75,7 +84,7 @@ class UiState:
     # Entfernen des Sticks zur Loesch-Abfrage statt ins Service-Menue.
     admin_usb_offer_delete: bool = False
     # NEU (4.7): Fortschrittstext des laufenden Exports (wird von
-    # app_with_hw direkt aus dem ExportProgress-Objekt gesetzt).
+    # app direkt aus dem ExportProgress-Objekt gesetzt).
     admin_usb_export_progress: str = ""
     # NEU (4.8): Fuellstand des Fortschrittsbalkens, 0.0 bis 1.0.
     # Deckt BEIDE Phasen ab (Kopieren 0.0-0.5, Pruefen 0.5-1.0), damit
@@ -92,7 +101,7 @@ class UiState:
     # daraus ein neues Tupel, das Modell selbst bleibt dabei frozen. Leer,
     # solange kein Konflikt offen ist (Normalfall).
     admin_usb_conflicts: tuple[ExportConflict, ...] = ()
-    # NEU (Speicherplatz-Alarm): periodisch von app_with_hw.py aktualisiert
+    # NEU (Speicherplatz-Alarm): periodisch von app.py aktualisiert
     # (siehe storage_service.assess_storage()), unabhaengig vom aktuellen
     # AppState - 0=unauffaellig, 1=Warnung, 2=kritisch (Aufnahmesperre).
     storage_alarm_level: int = 0
@@ -181,7 +190,7 @@ class UiState:
     # markierte Datei ("" = keine Auswahl), pending = True, sobald "Speichern"
     # im Auswahl-Screen erfolgreich in die Zwischenablage kopiert hat (erst
     # das AEUSSERE "Speichern" auf ADMIN_EVENT_SETTINGS macht daraus das
-    # echte Hauptmenue-Wallpaper, siehe app_with_hw._save_admin_event_settings).
+    # echte Hauptmenue-Wallpaper, siehe app._save_admin_event_settings).
     admin_event_wallpaper_candidates: tuple[str, ...] = ()
     admin_event_wallpaper_selected: str = ""
     admin_event_wallpaper_pending: bool = False

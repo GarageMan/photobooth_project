@@ -55,7 +55,7 @@ und wieder geschlossen. Auch dieses Zusammenspiel ist nur am echten Geraet
 endgueltig verifizierbar.
 
 Gemeinsamer Kamera-Zugriff:
-  Wie HwCaptureProvider/HwGphoto2PreviewProvider wird das von app_with_hw.py
+  Wie HwCaptureProvider/HwGphoto2PreviewProvider wird das von app.py
   erzeugte gemeinsame `camera_lock` verwendet - gphoto2 erlaubt immer nur
   eine aktive Verbindung gleichzeitig.
 

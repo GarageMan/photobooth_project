@@ -24,7 +24,7 @@ Wichtig - gemeinsamer Kamera-Zugriff:
   gphoto2 erlaubt nur eine aktive Verbindung zur Kamera gleichzeitig. Diese
   Klasse und HwCaptureProvider (Bild-Download) teilen sich deshalb ein
   gemeinsames threading.Lock (camera_lock), das beim Erzeugen beider
-  Provider in app_with_hw.py uebergeben wird. Waehrend eines echten Downloads
+  Provider in app.py uebergeben wird. Waehrend eines echten Downloads
   pausiert die Vorschau-Schleife automatisch (wartet auf das Lock) und laeuft
   danach von selbst weiter.
 

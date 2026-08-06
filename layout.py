@@ -28,6 +28,12 @@ class LayoutRects:
     # sonst ungenutzten Rand am unteren Bildschirmrand fuer mehr Textzeilen
     # nutzbar zu machen (siehe _draw_terms/_draw_instructions).
     text_view_back: pygame.Rect
+    # NEU (Nutzer-Feedback): DE/EN-Sprachumschalter auf ANLEITUNG/BEDINGUNGEN
+    # - unten LINKS im geschuetzten Rand (margin_x, gleiche Zeile/Hoehe wie
+    # text_view_back), also auf der Seite, die "Zurueck"/"Verstanden" dort
+    # frei laesst. Bewusst schmaler als button_w (button_w waere fuer ein
+    # kurzes "DE"/"EN"-Label unnoetig breit).
+    language_toggle: pygame.Rect
     # NEU (3.3): Ziffernfeld fuer die versteckte PIN-Eingabe (PIN_ENTRY).
     # Schluessel: "0".."9", "backspace", "submit", "cancel".
     pin_keys: dict[str, pygame.Rect]
@@ -72,7 +78,7 @@ class LayoutRects:
     admin_camera_drive_plus: pygame.Rect
     # Ersetzen "Zurueck" auf diesem Screen; page_prev/page_next sind je nach
     # aktueller Seite nur einer davon wirklich erreichbar (siehe
-    # app_with_hw._map_click_to_event).
+    # app._map_click_to_event).
     admin_camera_save: pygame.Rect
     admin_camera_cancel: pygame.Rect
     admin_camera_page_prev: pygame.Rect
@@ -104,7 +110,7 @@ class LayoutRects:
 # (ADMIN_EVENT_TEXT_ENTRY) bei gedruecktem "Umschalt" - deutsche QWERTZ-
 # Belegung (Ziffernreihe -> Sonderzeichen) sowie ,.- -> ;:_ (Unterstrich
 # wichtig als Trennzeichen im Datei-Praefix). Modul-Ebene statt innerhalb
-# von build_layout(), damit sowohl app_with_hw.py (Klick-Routing) als auch
+# von build_layout(), damit sowohl app.py (Klick-Routing) als auch
 # renderer.py (Label-Anzeige) denselben einen Import nutzen koennen -
 # gleiches Prinzip wie admin_menu.ADMIN_MENU_ITEMS, das ebenfalls von
 # beiden Dateien importiert wird. ae/oe/ue sind bewusst NICHT enthalten -
@@ -146,6 +152,11 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # Etappe 5) waechst der Button nach OBEN statt tiefer zu rutschen.
     text_view_lower_y = 0.82
     text_view_back = rect(1 - margin_x - button_w, text_view_lower_y, button_w, button_h)
+    # NEU (Nutzer-Feedback): DE/EN-Umschalter unten links, gleiche Zeile/
+    # Hoehe wie text_view_back, aber schmaler (0.16 statt button_w=0.28) -
+    # reicht fuer ein kurzes "DE"/"EN"-Label locker.
+    language_toggle_w = 0.16
+    language_toggle = rect(margin_x, text_view_lower_y, language_toggle_w, button_h)
 
     # Hauptmenue: 4 Buttons diagonal versetzt, in der unteren Bildschirmhaelfte.
     # War frueher 3 Buttons bei diag_w=0.28 (0.06/0.36/0.66) - fuer den 4.
@@ -199,7 +210,15 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # kompakter positioniert, sonst haette "Abbrechen" unten aus dem
     # Bildschirm herausgeragt.
     key_h = 0.135
-    key_w = (key_h * height) / width
+    # GEAENDERT (Nutzer-Feedback): Ziffern-/Aktionstasten (1-9, Backspace, 0,
+    # OK) auf 150% der urspruenglichen (quadratischen) Breite verbreitert -
+    # "Abbrechen" bleibt bewusst unveraendert (button_w/button_h weiter
+    # unten, komplett unabhaengig von key_w). Die Hoehe (key_h) bleibt
+    # gleich, die Tasten sind dadurch nicht mehr quadratisch, sondern breiter
+    # als hoch. grid_w/grid_x0 (und damit die Zentrierung) sind unten bereits
+    # generisch aus key_w abgeleitet und passen sich automatisch an.
+    _key_w_square = (key_h * height) / width
+    key_w = _key_w_square * 1.5
     gap_y = 0.02
     gap_x = (gap_y * height) / width
     grid_w = 3 * key_w + 2 * gap_x
@@ -370,7 +389,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # Ziffernreihe (-> Sonderzeichen, deutsche QWERTZ-Belegung) sowie ,.-
     # (-> ;:_ - der Unterstrich wird als Trennzeichen im Datei-Praefix
     # gebraucht). ae/oe/ue bleiben bewusst unveraendert (siehe
-    # app_with_hw._map_admin_event_text_entry_click/renderer.py).
+    # app._map_admin_event_text_entry_click/renderer.py).
     # GEAENDERT (Nutzer-Feedback, Bugfix): kb_y0 stand bisher bei 0.12 -
     # direkt im Bereich der Bildschirm-Ueberschrift (status_text, z.B.
     # "WLAN-Passwort", gezeichnet bei y=60..135px, siehe renderer.render())
@@ -445,6 +464,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         right=right,
         back=back,
         text_view_back=text_view_back,
+        language_toggle=language_toggle,
         pin_keys=pin_keys,
         usb_conflicts_overwrite_all=usb_conflicts_overwrite_all,
         usb_conflicts_rename_all=usb_conflicts_rename_all,
@@ -494,11 +514,13 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         # "Zurueck" unten rechts, tiefer als sonst uebliche Einzel-Button-
         # Screens - nutzt den sonst ungenutzten unteren Bildschirmrand fuer
         # mehr Textzeilen (siehe LayoutRects.text_view_back).
-        return {"back": rects.text_view_back}
+        # NEU (Nutzer-Feedback): DE/EN-Umschalter unten links, siehe
+        # LayoutRects.language_toggle.
+        return {"back": rects.text_view_back, "language_toggle": rects.language_toggle}
     if state == AppState.TERMS:
         # "Verstanden" an derselben Position wie das "Zurueck" bei
         # INSTRUCTIONS - gleiche Einzel-Button-Konvention.
-        return {"back": rects.text_view_back}
+        return {"back": rects.text_view_back, "language_toggle": rects.language_toggle}
     if state == AppState.PHOTO_INTRO:
         return {"photo": rects.left, "cancel": rects.right}
     if state == AppState.PHOTO_PREVIEW:
@@ -516,12 +538,12 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"photo": rects.left, "back": rects.right}
     if state == AppState.ATTRACT_GALLERY:
         # Bewusst leer: kein sichtbarer Button, nur Tippen irgendwo/Taster
-        # fuehrt zurueck ins Hauptmenue (siehe app_with_hw.py).
+        # fuehrt zurueck ins Hauptmenue (siehe app.py).
         return {}
     if state == AppState.GALLERY_FULLSCREEN:
         # NEU (Sprint 11, Feature 4): "gallery_qr" - Icon "QR-Code
         # anfordern" unten rechts, gleichwertige Alternative zum Doppeltap
-        # (siehe app_with_hw._handle_pygame_event).
+        # (siehe app._handle_pygame_event).
         return {"back": rects.back, "gallery_qr": rects.gallery_qr_icon}
     # NEU (Sprint 11, Feature 4): eigener Zustand fuer den Foto-QR-Code -
     # nur "Zurueck" (gleiche Position wie bei GALLERY_FULLSCREEN), kein
@@ -545,7 +567,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         # GEAENDERT (Kamera-Menue 2.0): "back" entfaellt (Speichern/Abbrechen
         # ersetzen es). Enthaelt bewusst die Buttons BEIDER Seiten - welche
         # davon auf der aktuell sichtbaren Seite tatsaechlich Sinn ergeben
-        # (model.ui.admin_camera_page), filtert app_with_hw._map_click_to_event
+        # (model.ui.admin_camera_page), filtert app._map_click_to_event
         # heraus (gleiches Prinzip wie beim gallery_enabled-Filter).
         return {
             "admin_camera_iso_minus": rects.admin_camera_iso_minus,
@@ -585,7 +607,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         }
     if state == AppState.ADMIN_EVENT_TEXT_ENTRY:
         # Wird technisch nicht ueber diese generische Tabelle abgefragt
-        # (app_with_hw._map_click_to_event special-cased diesen State,
+        # (app._map_click_to_event special-cased diesen State,
         # analog zu PIN_ENTRY) - nur der Vollstaendigkeit halber mitgefuehrt.
         return rects.keyboard_keys
     if state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:
@@ -598,7 +620,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
     if state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
         # NEU (Nutzer-Feedback): scrollbare Bilderliste vom Stick - die
         # Zeilen selbst sind dynamisch (siehe renderer._draw_admin_event_
-        # wallpaper_pick/app_with_hw._map_click_to_event, gleiches Prinzip
+        # wallpaper_pick/app._map_click_to_event, gleiches Prinzip
         # wie ADMIN_USB_CONFLICTS), nur "Speichern"/"Abbrechen" sind
         # statisch und nutzen die vorhandenen rects.left/rects.right.
         return {
@@ -640,7 +662,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
     # NEU (6c): Sammelaktionen + "Ausfuehren" (auf "right", wie bei den
     # uebrigen USB-Screens). Die Einzelentscheidung je Datei laeuft NICHT
     # ueber diese Rects, sondern ueber renderer.usb_conflict_row_hitboxes
-    # (siehe app_with_hw._map_click_to_event) - die Zeilenposition ist erst
+    # (siehe app._map_click_to_event) - die Zeilenposition ist erst
     # nach dem Zeichnen (Scroll-Offset!) bekannt.
     if state == AppState.ADMIN_USB_CONFLICTS:
         return {

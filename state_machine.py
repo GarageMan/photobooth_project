@@ -99,7 +99,7 @@ class StateMachine:
         # NEU (Sprint 11): ohne Galerie-Funktion fuer diese Veranstaltung
         # (config.gallery_enabled, siehe event_config.json) ignoriert die
         # State Machine TAP_GALLERY - der Button ist im Renderer/Layout
-        # ohnehin schon nicht antippbar (siehe app_with_hw._map_click_to_
+        # ohnehin schon nicht antippbar (siehe app._map_click_to_
         # event), dies ist die zusaetzliche Absicherung, falls das Event
         # trotzdem irgendwie ausgeloest wird (Verteidigung in der Tiefe,
         # gleiches Muster wie config.qr_codes_enabled).
@@ -131,6 +131,24 @@ class StateMachine:
     def _handle_instructions(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
         if event.type == EventType.TAP_BACK:
             return self._go_main_menu(model, now)
+        # NEU (Nutzer-Feedback): der Hardware-Taster soll auf JEDEM
+        # Gaeste-Screen dieselbe Vorwaerts-Aktion ausloesen wie ueberall
+        # sonst auch (TAP_PHOTO/BUTTON_PRESS -> _go_photo_intro, siehe z.B.
+        # _handle_main_menu/_handle_gallery_grid) - bisher wurde BUTTON_PRESS
+        # auf ANLEITUNG gar nicht behandelt, ein Tastendruck hier hatte also
+        # keine Wirkung. Gleiche Speicherplatz-Sperre wie in
+        # _handle_main_menu/_handle_gallery_empty, aus denselben Gruenden.
+        if event.type == EventType.BUTTON_PRESS:
+            if model.ui.storage_alarm_level >= 2:
+                return TransitionResult(model=model)
+            return self._go_photo_intro(model, now)
+        # NEU (Nutzer-Feedback): DE/EN-Umschalter - reines UI-Feld, kein
+        # Timer-/Idle-Bezug noetig (ANLEITUNG hat ohnehin keine Idle-Deadline,
+        # siehe app.py idle_states).
+        if event.type == EventType.TAP_TOGGLE_LANGUAGE:
+            new_language = "en" if model.ui.text_language == "de" else "de"
+            new_ui = replace(model.ui, text_language=new_language)
+            return TransitionResult(model=model.evolve(ui=new_ui))
         return TransitionResult(model=model)
 
     def _handle_terms(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
@@ -139,6 +157,23 @@ class StateMachine:
         # Untaetigkeit (IDLE_TIMEOUT, siehe _go_terms/terms_idle_seconds).
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
+        # NEU (Nutzer-Feedback): gleiches Prinzip wie _handle_instructions -
+        # siehe Kommentar dort.
+        if event.type == EventType.BUTTON_PRESS:
+            if model.ui.storage_alarm_level >= 2:
+                return TransitionResult(model=model)
+            return self._go_photo_intro(model, now)
+        # NEU (Nutzer-Feedback): DE/EN-Umschalter - gleiches Prinzip wie
+        # _handle_instructions, hier zusaetzlich die Idle-Deadline
+        # aufgefrischt (TERMS hat im Gegensatz zu ANLEITUNG einen aktiven
+        # Idle-Timeout, siehe terms_idle_seconds), damit ein Sprachwechsel
+        # nicht kurz danach in einen ungewollten automatischen Rueckzug ins
+        # Hauptmenue laeuft.
+        if event.type == EventType.TAP_TOGGLE_LANGUAGE:
+            new_language = "en" if model.ui.text_language == "de" else "de"
+            new_ui = replace(model.ui, text_language=new_language)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.terms_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=new_ui, timers=timers))
         return TransitionResult(model=model)
 
     def _handle_photo_intro(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
@@ -214,13 +249,13 @@ class StateMachine:
             return self._go_photo_intro(model, now)
         # NEU (Sprint 11, Feature 4): Doppeltap auf das Foto oder das Icon
         # "QR-Code anfordern" (beide loesen dasselbe Event aus, siehe
-        # app_with_hw.py) - QR-Code fuer GENAU dieses Foto einblenden.
+        # app.py) - QR-Code fuer GENAU dieses Foto einblenden.
         # GEAENDERT (Sprint-11-Nachbesserung): ignoriert das Event komplett,
         # wenn QR-Codes fuer diese Veranstaltung deaktiviert sind
         # (config.qr_codes_enabled) - zentrale Stelle, die sowohl den
         # Doppeltap als auch das Icon (falls trotzdem angetippt) abdeckt,
         # unabhaengig davon, ob die Anzeige des Icons selbst auch schon
-        # unterdrueckt wird (siehe app_with_hw.py/renderer.py).
+        # unterdrueckt wird (siehe app.py/renderer.py).
         if event.type == EventType.TAP_GALLERY_QR and photo_count and self.config.qr_codes_enabled:
             return self._go_gallery_photo_qr(model, now)
         return TransitionResult(model=model)
@@ -256,7 +291,7 @@ class StateMachine:
         if event.type in {EventType.TAP_PHOTO, EventType.BUTTON_PRESS}:
             # TAP_PHOTO kommt entweder von einem manuellen Tastendruck (Taster)
             # oder automatisch vom Timer (preview_auto_countdown_deadline in
-            # app_with_hw.py) - beide Faelle sollen gleich behandelt werden.
+            # app.py) - beide Faelle sollen gleich behandelt werden.
             return self._go_countdown(model, now)
         if event.type == EventType.IDLE_TIMEOUT:
             return self._go_main_menu(model, now)
@@ -428,7 +463,7 @@ class StateMachine:
         return TransitionResult(model=model)
 
     # NEU (Sprint 11, Feature 2): ISO/Blende ueber USB. read_admin_camera_
-    # settings (synchron, siehe app_with_hw._read_admin_camera_settings)
+    # settings (synchron, siehe app._read_admin_camera_settings)
     # liefert die aktuellen Werte + gueltigen Auswahllisten; +/- wandert
     # innerhalb dieser Liste. Die eigentliche gphoto2-set_config()-Aktion
     # laeuft ebenfalls synchron (kein Hintergrund-Thread noetig - einzelne
@@ -535,7 +570,7 @@ class StateMachine:
             return self._go_admin_menu(model, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_CANCEL:
             # "Abbrechen" sendet die Werte zurueck, mit denen der Screen
-            # betreten wurde (siehe app_with_hw._revert_admin_camera_settings).
+            # betreten wurde (siehe app._revert_admin_camera_settings).
             menu_result = self._go_admin_menu(model, now)
             return TransitionResult(
                 model=menu_result.model,
@@ -560,7 +595,7 @@ class StateMachine:
         einstellbaren Kamera-Werte: einen Schritt in der von der Kamera
         gelieferten choices-Liste wandern, optimistisch in model.ui
         vormerken, `action` loest den eigentlichen gphoto2-set_config()-
-        Aufruf aus (siehe app_with_hw._set_admin_camera_setting).
+        Aufruf aus (siehe app._set_admin_camera_setting).
         BUGFIX (Nutzer-Feedback nach Live-Test): idle_deadline wurde bisher
         NUR beim Betreten des Screens gesetzt, nie bei tatsaechlicher
         Bedienung - dadurch konnte man mitten in der Einstellungsaenderung
@@ -597,7 +632,7 @@ class StateMachine:
     # (hier gibt es - anders als bei den Kamera-Einstellungen - kein
     # wiederholtes READY waehrend des Bearbeitens, das READY kommt genau
     # einmal synchron nach dem Betreten, siehe
-    # app_with_hw._collect_admin_event_settings). "Abbrechen"/TAP_BACK/
+    # app._collect_admin_event_settings). "Abbrechen"/TAP_BACK/
     # Idle-Timeout stellen den Snapshot wieder her, OHNE zu speichern - erst
     # "Speichern" schreibt tatsaechlich auf Platte (Action "save_event_config").
     def _handle_admin_event_settings(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
@@ -658,7 +693,7 @@ class StateMachine:
         if event.type == EventType.TAP_ADMIN_EVENT_SAVE:
             # Schreibt noch nicht selbst - das Ergebnis kommt synchron als
             # ADMIN_EVENT_SAVE_RESULT zurueck (siehe
-            # app_with_hw._save_admin_event_settings, das bei Erfolg
+            # app._save_admin_event_settings, das bei Erfolg
             # zusaetzlich ein evtl. zwischengelagertes Wallpaper befoerdert -
             # siehe admin_event_wallpaper_pending).
             return TransitionResult(model=model, actions=("save_event_config",))
@@ -795,9 +830,9 @@ class StateMachine:
         return TransitionResult(model=model)
 
     # Wallpaper-Auswahl: Hintergrund-Thread (Stick suchen/mounten/Bilder
-    # AUFLISTEN, noch nichts kopiert - siehe app_with_hw._wallpaper_start_list)
+    # AUFLISTEN, noch nichts kopiert - siehe app._wallpaper_start_list)
     # - bewusst nicht abbrechbar, analog ADMIN_USB_CHECK. Bei Erfolg bleibt
-    # der Stick gemountet (self._wallpaper_pick_stick in app_with_hw.py) und
+    # der Stick gemountet (self._wallpaper_pick_stick in app.py) und
     # es geht weiter zur Auswahlliste; nur bei Fehlschlag/leerem Ergebnis
     # zeigt ADMIN_EVENT_WALLPAPER_RESULT die Fehlermeldung.
     def _go_admin_event_wallpaper_pick_loading(self, model: AppModel, now: float) -> TransitionResult:
@@ -821,12 +856,12 @@ class StateMachine:
     # NEU (Nutzer-Feedback): scrollbare Auswahlliste - Antippen einer Zeile
     # markiert sie nur (admin_event_wallpaper_selected), "Speichern" kopiert
     # die Auswahl in eine Zwischenablage (action wallpaper_pick_stage,
-    # synchron - siehe app_with_hw._wallpaper_stage_selected), "Abbrechen"
+    # synchron - siehe app._wallpaper_stage_selected), "Abbrechen"
     # verwirft nur den USB-Mount wieder (action wallpaper_pick_discard).
     # WICHTIG (Bugfix): keines von beidem macht das Bild bereits zum echten
     # Hauptmenue-Wallpaper - das passiert erst beim AEUSSEREN "Speichern"
     # auf ADMIN_EVENT_SETTINGS (siehe _handle_admin_event_settings/
-    # app_with_hw._save_admin_event_settings).
+    # app._save_admin_event_settings).
     def _go_admin_event_wallpaper_pick(
         self, model: AppModel, now: float, candidates: tuple[str, ...],
     ) -> TransitionResult:
@@ -1154,7 +1189,7 @@ class StateMachine:
     # NEU (4.3): Diagnose-Unterseite - Idle-Timer wie im Menue selbst,
     # admin_status_lines wird geleert; die Zeilen kommen etwas spaeter per
     # ADMIN_STATUS_READY (App sammelt sie synchron, siehe "collect_admin_status"
-    # in app_with_hw.py).
+    # in app.py).
     def _go_admin_status(self, model: AppModel, now: float) -> TransitionResult:
         ui = replace(model.ui, status_text="Status / Diagnose", error_text=None, admin_status_lines=())
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
@@ -1548,7 +1583,7 @@ class StateMachine:
             preview_warning_deadline=None,
             preview_total_deadline=None,
             # Nach preview_auto_start_seconds startet der Countdown automatisch
-            # (siehe app_with_hw.py::_emit_due_timers) - kein Tap mehr noetig.
+            # (siehe app.py::_emit_due_timers) - kein Tap mehr noetig.
             preview_auto_countdown_deadline=now + self.config.timeouts.preview_auto_start_seconds,
         )
         ui = replace(model.ui, status_text="Bitte auf die Markierung stellen!", countdown_value=None, error_text=None)

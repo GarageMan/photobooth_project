@@ -5,7 +5,7 @@ Reine Logik fuer den Admin-Screen "Veranstaltungsdaten": Speichern der
 Event-Konfiguration (event_config.json) sowie Suche/Kopie eines
 Wallpaper-Bilds von einem USB-Stick.
 
-Bewusst OHNE Abhaengigkeit zu pygame, config oder app_with_hw - genau wie
+Bewusst OHNE Abhaengigkeit zu pygame, config oder app - genau wie
 admin_usb_service.py/admin_usb_export.py, damit diese Logik offline und
 ohne Hardware testbar bleibt (siehe test_event_config_service.py).
 
@@ -13,7 +13,7 @@ Kein Aufruf hier wirft jemals eine Exception nach aussen - jede Funktion
 faengt alle erwartbaren Fehler (fehlende Datei, kein Schreibzugriff, volle
 Platte, kaputter Stick waehrend des Kopierens) ab und liefert stattdessen
 ein Ergebnis-Tupel mit einer fuer Lutz verstaendlichen Meldung zurueck.
-Das ist wichtig, weil app_with_hw.py diese Funktionen teils aus einem
+Das ist wichtig, weil app.py diese Funktionen teils aus einem
 Hintergrund-Thread heraus aufruft (siehe _wallpaper_start_list) - eine
 dort unbehandelte Exception wuerde den Thread stillschweigend beenden,
 ohne dass der Screen jemals ein Ergebnis anzeigt.
@@ -142,7 +142,7 @@ def promote_pending_wallpaper(pending: Path, target: Path) -> tuple[bool, str]:
 
     NEU (Nutzer-Feedback, Bugfix): wird ausschliesslich vom AEUSSEREN
     "Speichern" auf ADMIN_EVENT_SETTINGS aufgerufen (siehe
-    app_with_hw._save_admin_event_settings) - erst dadurch wird ein per
+    app._save_admin_event_settings) - erst dadurch wird ein per
     Auswahlliste gepicktes Bild tatsaechlich zum Hauptmenue-Wallpaper, nicht
     schon beim "Speichern" innerhalb der Auswahlliste selbst.
 

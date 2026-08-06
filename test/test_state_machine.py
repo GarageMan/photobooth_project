@@ -50,6 +50,56 @@ class StateMachineTestCase(unittest.TestCase):
         result = self.transition(EventType.TAP_BACK, now_offset=self.config.timeouts.boot_seconds + 0.3)
         self.assertEqual(result.model.state, AppState.MAIN_MENU)
 
+    # NEU (Nutzer-Feedback): Hardware-Taster soll auf ANLEITUNG/BEDINGUNGEN
+    # dieselbe Vorwaerts-Aktion ausloesen wie ueberall sonst (TAP_PHOTO/
+    # BUTTON_PRESS -> PHOTO_INTRO) - vorher wurde BUTTON_PRESS dort gar
+    # nicht behandelt.
+    def test_instructions_button_press_goes_to_photo_intro(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_INSTRUCTIONS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
+
+    def test_terms_button_press_goes_to_photo_intro(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_TERMS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
+
+    def test_instructions_button_press_blocked_by_storage_alarm(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_INSTRUCTIONS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.model = replace(self.model, ui=replace(self.model.ui, storage_alarm_level=2))
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.INSTRUCTIONS)
+
+    def test_terms_button_press_blocked_by_storage_alarm(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_TERMS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.model = replace(self.model, ui=replace(self.model.ui, storage_alarm_level=2))
+        result = self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.state, AppState.TERMS)
+
+    # NEU (Nutzer-Feedback): DE/EN-Umschalter auf ANLEITUNG/BEDINGUNGEN.
+    def test_instructions_toggle_language_flips_de_en(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_INSTRUCTIONS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        self.assertEqual(self.model.ui.text_language, "de")
+        result = self.transition(EventType.TAP_TOGGLE_LANGUAGE, now_offset=self.config.timeouts.boot_seconds + 0.3)
+        self.assertEqual(result.model.ui.text_language, "en")
+        self.assertEqual(result.model.state, AppState.INSTRUCTIONS)
+        result = self.transition(EventType.TAP_TOGGLE_LANGUAGE, now_offset=self.config.timeouts.boot_seconds + 0.4)
+        self.assertEqual(result.model.ui.text_language, "de")
+
+    def test_terms_toggle_language_flips_de_en_and_refreshes_idle_deadline(self) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.TAP_TERMS, now_offset=self.config.timeouts.boot_seconds + 0.2)
+        result = self.transition(EventType.TAP_TOGGLE_LANGUAGE, now_offset=50.0)
+        self.assertEqual(result.model.ui.text_language, "en")
+        self.assertEqual(result.model.state, AppState.TERMS)
+        expected_deadline = self.now + 50.0 + self.config.timeouts.terms_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected_deadline)
+
     def test_photo_intro_to_countdown_menu_on_trigger(self) -> None:
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
         self.transition(EventType.TAP_PHOTO, now_offset=self.config.timeouts.boot_seconds + 0.2)
@@ -162,7 +212,7 @@ class StateMachineTestCase(unittest.TestCase):
         # unten). Damit dieser Test wirklich GALLERY_GRID prueft (nicht nur
         # zufaellig ueber GALLERY_EMPTY denselben Zielzustand trifft), wird
         # hier ein Foto "eingespeist" - in der echten App erledigt das
-        # app_with_hw.py beim Betreten von MAIN_MENU (gallery_service.
+        # app.py beim Betreten von MAIN_MENU (gallery_service.
         # list_photos()), hier simulieren wir das direkt am Modell.
         self.model = self.model.evolve(session=replace(self.model.session, photos=("test.jpg",)))
         self.transition(EventType.TAP_GALLERY, now_offset=self.config.timeouts.boot_seconds + 0.2)
@@ -284,7 +334,7 @@ class StateMachineTestCase(unittest.TestCase):
 class StorageAlarmLockTestCase(unittest.TestCase):
     """Speicherplatz-Alarm Stufe 2: keine neue Aufnahme mehr moeglich, weder
     ueber MAIN_MENU noch ueber GALLERY_EMPTY. storage_alarm_level wird in
-    der echten App periodisch von app_with_hw.py gesetzt (siehe
+    der echten App periodisch von app.py gesetzt (siehe
     storage_service.assess_storage()) - hier direkt am Modell simuliert."""
 
     def setUp(self) -> None:
@@ -433,7 +483,7 @@ class GalleryDisabledTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.MAIN_MENU)
         # Idle-Deadline muss neu gesetzt sein (in der Zukunft liegen) -
         # sonst wuerde IDLE_TIMEOUT bei jedem folgenden Tick sofort wieder
-        # feuern (siehe app_with_hw._emit_due_timers).
+        # feuern (siehe app._emit_due_timers).
         self.assertGreater(result.model.timers.idle_deadline, self.now + offset)
 
 

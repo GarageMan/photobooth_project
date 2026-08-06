@@ -147,7 +147,7 @@ class Renderer:
         # (Rect, Dateiname, "overwrite"|"rename"). Wird bei jedem Aufruf von
         # _draw_admin_usb_conflicts() neu befuellt (Positionen haengen vom
         # Scroll-Offset ab, sind also erst nach dem Zeichnen bekannt) und in
-        # app_with_hw._map_click_to_event gegen den Tap geprueft - gleiches
+        # app._map_click_to_event gegen den Tap geprueft - gleiches
         # Muster wie gallery_thumbnail_hitboxes.
         self.usb_conflict_row_hitboxes: list[tuple[pygame.Rect, str, str]] = []
         # NEU (Nutzer-Feedback): Scroll-Position + Trefferflaechen der
@@ -162,6 +162,25 @@ class Renderer:
         # "fuenf kurze Zeilen" hinausgewachsen ist und ohne Scrollen unten
         # aus dem Bild lief (siehe _draw_admin_status).
         self.admin_status_scroll_offset: int = 0
+        # NEU (Nutzer-Feedback): Trefferflaechen der Scroll-Indikator-Tasten
+        # ("Runter"/"Hoch", siehe _draw_scroll_indicators) fuer den jeweils
+        # AKTUELL gezeichneten scrollbaren Screen. Anders als z.B.
+        # usb_conflict_row_hitboxes (mehrere Zeilen) reicht hier je Frame
+        # hoechstens ein Down- und ein Up-Rect, da immer nur ein scrollbarer
+        # Screen gleichzeitig sichtbar ist. `*_offset_attr` enthaelt den
+        # Attributnamen (z.B. "instructions_scroll_offset"), den
+        # app._handle_pygame_event bei einem Treffer per setattr/
+        # getattr anpasst - so braucht es dort keine Fallunterscheidung nach
+        # Screen, das generische Muster passt fuer alle 5 scrollbaren Screens.
+        self.scroll_down_hitbox: pygame.Rect | None = None
+        self.scroll_down_offset_attr: str | None = None
+        self.scroll_up_hitbox: pygame.Rect | None = None
+        self.scroll_up_offset_attr: str | None = None
+        # NEU (Nutzer-Feedback): von _draw_instructions/_draw_terms gesetzt,
+        # von _draw_buttons gelesen (fuer die "Zurueck"/"Verstanden"-
+        # Beschriftung in der jeweils gewaehlten Sprache) - gleiches Muster
+        # wie self._admin_camera_page.
+        self._current_text_language: str = "de"
         self._last_rendered_state: AppState | None = None
         # NEU (Nutzer-Feedback, Screenshot "Dateien mit abweichendem Inhalt
         # gef[unden]" ragte rechts ueber den Bildschirmrand hinaus): Cache
@@ -176,6 +195,16 @@ class Renderer:
         qr_surface: pygame.Surface | None = None,
         capture_progress: float | None = None,
     ) -> None:
+        # NEU (Nutzer-Feedback): Scroll-Indikator-Trefferflaechen jeden Frame
+        # zuruecksetzen - nur der aktuell gezeichnete Screen (falls scrollbar)
+        # setzt sie unten in _draw_scroll_indicators() neu. Ohne dieses
+        # Zuruecksetzen wuerde ein Tap auf denselben Bildschirmbereich nach
+        # einem Screen-Wechsel versehentlich noch die Hitbox des VORHERIGEN
+        # Screens treffen.
+        self.scroll_down_hitbox = None
+        self.scroll_down_offset_attr = None
+        self.scroll_up_hitbox = None
+        self.scroll_up_offset_attr = None
         # Scroll-Position der Anleitung zuruecksetzen, sobald man neu in
         # diesen State wechselt (nicht bei jedem Frame innerhalb des States).
         if model.state == AppState.INSTRUCTIONS and self._last_rendered_state != AppState.INSTRUCTIONS:
@@ -251,17 +280,17 @@ class Renderer:
 
         # NEU (Sprint 11, Feature 1): Datei-Symbol-Animation waehrend der
         # eigentlichen Uebertragung (capture_progress ist nur waehrend
-        # dieser Phase gesetzt - siehe app_with_hw._capture_progress_fraction).
+        # dieser Phase gesetzt - siehe app._capture_progress_fraction).
         # Davor (Ausloeseimpuls, kurzer Vorlauf) zeigt CAPTURE_PENDING
         # bewusst noch keine Animation, siehe _draw_capture_transfer_animation.
         if model.state == AppState.CAPTURE_PENDING and capture_progress is not None:
             self._draw_capture_transfer_animation(capture_progress)
 
         if model.state == AppState.INSTRUCTIONS:
-            self._draw_instructions()
+            self._draw_instructions(model)
 
         if model.state == AppState.TERMS:
-            self._draw_terms()
+            self._draw_terms(model)
 
         if model.state == AppState.PIN_ENTRY:            # NEU (3.3)
             self._draw_pin_entry(model)
@@ -324,7 +353,7 @@ class Renderer:
             self._draw_admin_usb_copy(model)
 
         # NEU (6b/6c): Aufloesungslauf (Phase 2) zeigt denselben Fortschritts-
-        # balken wie der Kopierlauf - app_with_hw.py fuellt dieselben UI-
+        # balken wie der Kopierlauf - app.py fuellt dieselben UI-
         # Felder (admin_usb_export_progress/admin_usb_progress_fraction),
         # daher genuegt die Wiederverwendung derselben Zeichenfunktion statt
         # einer Kopie.
@@ -900,7 +929,7 @@ class Renderer:
         Hintergrund weg, damit ein frisch von USB importiertes Wallpaper
         ohne Neustart der App erscheint (naechster _draw_main_menu_background-
         Aufruf laedt automatisch neu von Platte, siehe
-        _get_main_menu_background). Wird von app_with_hw._emit_due_timers
+        _get_main_menu_background). Wird von app._emit_due_timers
         nach einem erfolgreichen Wallpaper-Import aufgerufen. Alle anderen
         Veranstaltungsdaten (Titel/Praefix/WLAN/Schalter) wirken bewusst
         erst nach einem Neustart - AppConfig ist ein frozen Dataclass ohne
@@ -1055,7 +1084,7 @@ class Renderer:
         ein kleines Datei-Symbol vom Kamera-Symbol (links) zum Raspi-
         Speicher-Symbol (rechts) - synchron zum wandernden LED-Punkt
         (hw_led_provider._render_capture_transfer, dieselbe `progress`-
-        Herkunft: app_with_hw._capture_progress_fraction, gespeist aus der
+        Herkunft: app._capture_progress_fraction, gespeist aus der
         in capture_timing.py persistierten Zeitschaetzung).
 
         Kamera- und Speicher-Symbol sind weiterhin mit pygame-Bordmitteln
@@ -1364,7 +1393,7 @@ class Renderer:
         """NEU (Sprint 11, Feature 4): legt ueber das im Hintergrund weiter
         sichtbare Foto (siehe render(), ruft vorher bereits
         _draw_gallery_fullscreen()) eine abgedunkelte Flaeche plus die
-        QR-Karte fuer GENAU dieses Foto (app_with_hw._generate_gallery_qr
+        QR-Karte fuer GENAU dieses Foto (app._generate_gallery_qr
         erzeugt qr_surface passend zum aktuell ausgewaehlten Foto). Schliesst
         sich automatisch nach config.timeouts.gallery_qr_seconds oder per
         "Zurück" (siehe state_machine._handle_gallery_photo_qr)."""
@@ -1448,6 +1477,64 @@ class Renderer:
             lines.append(current)
         return lines
 
+    def _wrap_numbered(self, number: str, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+        """Zeilenumbruch fuer nummerierte Listenpunkte (z.B. "1. ...") mit
+        haengendem Einzug: die erste Zeile beginnt mit "<number>. ", alle
+        Folgezeilen werden um dieselbe (Pixel-)Breite eingerueckt. Die
+        Leerzeichen-Anzahl fuer den Einzug wird ueber die tatsaechliche
+        Fontbreite ermittelt (nicht einfach Zeichenanzahl), damit das auch
+        bei zweistelligen Nummern oder in der (schmaleren) englischen
+        Uebersetzung optisch sauber ausgerichtet bleibt - vgl. den alten,
+        von Hand ausgemessenen "5. "/"    "-Trick, der nur fuer genau diesen
+        einen Fall zufällig gleich breit war."""
+        prefix = f"{number}. "
+        prefix_w = font.size(prefix)[0]
+        space_w = font.size(" ")[0] or 1
+        indent = " " * max(1, round(prefix_w / space_w))
+        wrapped = self._wrap_text(text, font, max_width - prefix_w)
+        return [(prefix if i == 0 else indent) + line for i, line in enumerate(wrapped)]
+
+    def _build_paragraph_lines(
+        self, paragraphs: list, font: pygame.font.Font, max_width: int,
+    ) -> list:
+        """Baut aus einer Liste von "Absaetzen" die tatsaechlich zu
+        zeichnenden Zeilen fuer _draw_instructions/_draw_terms. Jeder Absatz
+        ist entweder:
+        - ""                        -> eine Leerzeile
+        - ein normaler String       -> wird per _wrap_text() automatisch
+                                        umgebrochen (fuer flie§enden Text)
+        - ("H", text)               -> Ueberschrift (fett, siehe _heading),
+                                        bewusst NICHT umgebrochen (Ueber-
+                                        schriften sind kurz genug)
+        - ("RAW", text)             -> genau eine Zeile, unveraendert (fuer
+                                        Adressbloecke o.ae., die NICHT als
+                                        Fliesstext umgebrochen werden sollen)
+        - ("NUM", nummer, text)     -> nummerierter Listenpunkt mit
+                                        haengendem Einzug, siehe _wrap_numbered
+
+        NEU (Nutzer-Feedback, DE/EN): dieser gemeinsame Baustein ersetzt die
+        bisher von Hand auf feste Bildschirmbreiten umgebrochenen
+        Zeilenlisten - von Hand umgebrochene deutsche Zeilen passen nicht
+        automatisch zu den anderen Wortlaengen einer englischen Uebersetzung.
+        Der automatische Umbruch funktioniert dagegen fuer beide Sprachen
+        gleichermassen richtig, ohne die Zeilen doppelt (DE force-wrapped +
+        EN force-wrapped) pflegen zu muessen.
+        """
+        lines: list = []
+        for item in paragraphs:
+            if item == "":
+                lines.append("")
+            elif isinstance(item, tuple) and item[0] == "H":
+                lines.append(self._heading(item[1]))
+            elif isinstance(item, tuple) and item[0] == "RAW":
+                lines.append(item[1])
+            elif isinstance(item, tuple) and item[0] == "NUM":
+                _, number, text = item
+                lines.extend(self._wrap_numbered(number, text, font, max_width))
+            else:
+                lines.extend(self._wrap_text(item, font, max_width))
+        return lines
+
     def _blit_center(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], cy: int) -> None:
         """Einzeiligen Text horizontal zentriert auf Hoehe cy zeichnen
         (das uebliche _draw_text ist linksbuendig ab (x, y)).
@@ -1495,7 +1582,7 @@ class Renderer:
         """Verstecktes Ziffernfeld fuer die Wartungs-PIN (AppState.PIN_ENTRY).
 
         Erreichbar nur ueber die Geheim-Geste im Hauptmenue (siehe
-        admin_service / app_with_hw, admin_service umbenannt Sprint 11,
+        admin_service / app, admin_service umbenannt Sprint 11,
         vormals shutdown_service.py). Die eingegebene PIN wird maskiert
         (ein Kreis je Ziffer), das Raster kommt aus layout.pin_keys.
         """
@@ -1594,14 +1681,23 @@ class Renderer:
         return canvas
 
 
-    def _draw_instructions(self) -> None:
+    def _draw_instructions(self, model: AppModel) -> None:
         """Scrollbarer Anleitungstext, ohne Titel darueber (siehe render()).
 
-        Die Liste `lines` darf beliebig erweitert werden - die Ansicht
-        scrollt automatisch, sobald der Text nicht mehr komplett in den
-        sichtbaren Bereich passt (Wischen hoch/runter, siehe app_with_hw.py).
+        NEU (Nutzer-Feedback, DE/EN): Inhalt kommt jetzt in zwei
+        Sprachvarianten (model.ui.text_language, umschaltbar ueber den
+        Button aus _draw_language_toggle_button) - beide werden ueber
+        _build_paragraph_lines()/_wrap_text() automatisch umgebrochen statt
+        wie bisher von Hand auf feste Zeilenbreiten aufgeteilt zu sein (von
+        Hand umgebrochene deutsche Zeilen passen nicht automatisch zu den
+        anderen Wortlaengen der englischen Uebersetzung).
         """
         width, height = self.config.screen.width, self.config.screen.height
+        self._current_text_language = model.ui.text_language
+        left = 60
+        max_text_w = width - left - 40
+        font = self.font_body
+
         # GEAENDERT (Sprint-11-Nachbesserung): der bisherige Punkt 5 (QR-Code
         # direkt nach dem Speichern scannen) beschrieb ein Verhalten, das es
         # seit Sprint 11 Feature 3 gar nicht mehr gibt (kein sofortiges
@@ -1610,9 +1706,7 @@ class Renderer:
         # bisherige Punkt 6 (Galerie) ruckt zu Punkt 5 nach und bekommt den
         # QR-Hinweissatz nur noch angehaengt, wenn QR-Codes fuer diese
         # Veranstaltung ueberhaupt aktiv sind (config.qr_codes_enabled,
-        # siehe event_config.json) - dynamisch umgebrochen statt als feste
-        # Zeilenliste, da der Satz je nach Einstellung unterschiedlich lang
-        # ist (siehe _wrap_text).
+        # siehe event_config.json).
         #
         # NEU (Sprint 11): der ganze Punkt 5 (Galerie) entfaellt jetzt
         # ersatzlos, wenn die Galerie-Funktion fuer diese Veranstaltung
@@ -1620,8 +1714,41 @@ class Renderer:
         # worauf sich der Text noch beziehen wuerde (auch der QR-Hinweis
         # darin, da der QR-Download ausschliesslich aus der Galerie-
         # Vollansicht heraus erreichbar ist, siehe config.GALLERY_ENABLED).
-        gallery_lines: list[str] = []
-        if self.config.gallery_enabled:
+        if model.ui.text_language == "en":
+            gallery_point_text = (
+                "In the \"Gallery\" you can see all the photos taken so far. "
+                "Swipe up/down to browse the gallery, tap a photo for the "
+                "full-screen view, then swipe left/right"
+            )
+            if self.config.qr_codes_enabled:
+                gallery_point_text += (
+                    " and the option to display a QR code for download. "
+                    "Alternatively, connect directly to the WiFi network "
+                    f"\"{self.config.network.guest_wifi_ssid}\" "
+                    f"(password: {self.config.network.guest_wifi_password})."
+                )
+            else:
+                gallery_point_text += "."
+            paragraphs: list = [
+                "Please only use the photo booth if you agree to the terms of use.",
+                "",
+                ("NUM", "1", "Press \"Take photo\", or press the physical photo button."),
+                "",
+                (
+                    "NUM", "2",
+                    "Press \"Start countdown\" once you're ready for the shot "
+                    "(or \"Cancel\"). The countdown before the picture is taken "
+                    "lasts 5 seconds.",
+                ),
+                "",
+                ("NUM", "3", "Get into position and smile!"),
+                "",
+                ("NUM", "4", "After the shot: save or delete the photo."),
+            ]
+            if self.config.gallery_enabled:
+                paragraphs += ["", ("NUM", "5", gallery_point_text)]
+            paragraphs += ["", "Have fun! If you have any questions, please ask Lutz."]
+        else:
             gallery_point_text = (
                 "In der \"Galerie\" siehst du alle bisherigen Fotos. "
                 "Hoch/runter Wischen zum Blättern durch die Galerie, ein Foto "
@@ -1636,37 +1763,28 @@ class Renderer:
                 )
             else:
                 gallery_point_text += "."
-            # "5. "/"    " sind beide exakt gleich breit (siehe Messung) - ein
-            # einheitlicher Puffer reicht fuer Erst- und Folgezeilen.
-            prefix_w = self.font_body.size("5. ")[0]
-            max_text_w = width - 60 - 40 - prefix_w
-            gallery_lines = [
-                ("5. " if i == 0 else "    ") + wrapped
-                for i, wrapped in enumerate(self._wrap_text(gallery_point_text, self.font_body, max_text_w))
+            paragraphs = [
+                "Bitte nutze die Fotobox nur, wenn du den Nutzungsbedingungen zustimmst.",
+                "",
+                ("NUM", "1", "\"Fotografieren\" drücken oder die Foto-Taste betätigen"),
+                "",
+                (
+                    "NUM", "2",
+                    "\"Countdown starten\" drücken, wenn du bereit für die "
+                    "Aufnahme bist (oder \"Abbrechen\"). Der Countdown bis zur "
+                    "Auslösung der Aufnahme beträgt 5 Sekunden.",
+                ),
+                "",
+                ("NUM", "3", "Auf die Markierung stellen und lächeln!"),
+                "",
+                ("NUM", "4", "Nach der Aufnahme: Foto speichern oder löschen."),
             ]
+            if self.config.gallery_enabled:
+                paragraphs += ["", ("NUM", "5", gallery_point_text)]
+            paragraphs += ["", "Viel Spaß! Bei Fragen bitte an Lutz wenden."]
 
-        lines = [
-            "Bitte nutze die Fotobox nur, wenn du den",
-            "Nutzungsbedingungen zustimmst.",
-            "",
-            "1. \"Fotografieren\" drücken oder die Foto-Taste betätigen",
-            "",
-            "2. \"Countdown starten\" drücken, wenn du bereit für die",
-            "    Aufnahme bist (oder \"Abrechen\").",
-            "    Der Countdown bis zur Auslösung der Aufnahme",
-            "    beträgt 5 Sekunden.",
-            "",
-            "3. Auf die Markierung stellen und lächeln!",
-            "",
-            "4. Nach der Aufnahme: Foto speichern oder löschen.",
-        ]
-        if gallery_lines:
-            lines.append("")
-            lines.extend(gallery_lines)
-        lines.append("")
-        lines.append("Viel Spaß! Bei Fragen bitte an Lutz wenden.")
+        lines = self._build_paragraph_lines(paragraphs, font, max_text_w)
 
-        left = 60
         top = round(0.06 * height)
         # Statt einer eigenen, unabhaengigen Prozentzahl (frueher: fix
         # 0.78*height) direkt von der tatsaechlichen Button-Position
@@ -1689,6 +1807,9 @@ class Renderer:
                 self._draw_text(line, self.font_body, (230, 230, 230), (left, y))
             y += line_height
         self.screen.set_clip(previous_clip)
+        # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Buttons zusaetzlich
+        # zum Wischen.
+        self._draw_scroll_indicators(viewport, self.instructions_scroll_offset, max_scroll, "instructions_scroll_offset")
 
     @staticmethod
     def _heading(text: str) -> tuple[str, bool]:
@@ -1698,12 +1819,12 @@ class Renderer:
         Strings - kein "\\"-artiges Steuerzeichen mitten im Text noetig."""
         return (text, True)
 
-    def _draw_terms(self) -> None:
+    def _draw_terms(self, model: AppModel) -> None:
         """Scrollbare Nutzungsbedingungen, analog zu _draw_instructions().
 
-        Der Inhalt ist bewusst als einfache Zeilenliste hier im Code
-        gepflegt (wie bei _draw_instructions) statt in einer externen
-        Text-/HTML-Datei geladen zu werden:
+        Der Inhalt ist bewusst als einfache "Absatz"-Liste hier im Code
+        gepflegt (wie bei _draw_instructions, siehe _build_paragraph_lines)
+        statt in einer externen Text-/HTML-Datei geladen zu werden:
         - Die Fotobox-App hat sonst nirgends einen Rich-Text-/HTML-Renderer;
           das haette einen zusaetzlichen Parser noetig gemacht, nur um am
           Ende wieder auf denselben pygame-Text-Zeilen zu landen.
@@ -1713,9 +1834,21 @@ class Renderer:
           fehlerhaften Rechts-Hinweis fuehren, was bei einem Datenschutz-
           Text besonders unguenstig ist.
         Aenderungen an den Nutzungsbedingungen (z.B. nach einer neuen
-        Veranstaltung) macht man hier direkt in der Liste `lines`.
+        Veranstaltung) macht man hier direkt in den Listen `paragraphs_de`/
+        `paragraphs_en`.
+
+        NEU (Nutzer-Feedback, DE/EN): zwei vollstaendige Sprachvarianten
+        (model.ui.text_language) statt einer festen deutschen Zeilenliste -
+        beide Absatz-Listen sind inhaltlich/strukturell parallel gehalten,
+        damit spaetere inhaltliche Aenderungen (z.B. neue Kontaktdaten) an
+        beiden Stellen leicht nachvollzogen werden koennen.
         """
         width, height = self.config.screen.width, self.config.screen.height
+        self._current_text_language = model.ui.text_language
+        left = 60
+        max_text_w = width - left - 40
+        font = self.font_body
+
         # GEAENDERT (Sprint-11-Nachbesserung): der ganze Abschnitt zum
         # QR-Download entfaellt, wenn QR-Codes fuer diese Veranstaltung
         # deaktiviert sind (config.qr_codes_enabled, siehe event_config.json)
@@ -1728,84 +1861,197 @@ class Renderer:
         # ebenfalls unerreichbar, unabhaengig von qr_codes_enabled. Beide
         # Schalter muessen daher UND-verknuepft aktiv sein, damit dieser
         # Passus angezeigt wird.
-        qr_download_section = [
-            self._heading("Lokaler Download (WLAN)"),
-            "",
-            f"Über das WLAN \"{self.config.network.guest_wifi_ssid}\" (Passwort:",
-            f"{self.config.network.guest_wifi_password}) kannst du dein Foto",
-            "nach der Aufnahme per QR-Code herunterladen.",
-            "Da es sich um ein Veranstaltungsnetzwerk handelt",
-            "sind die Bilddateien dabei theoretisch für andere",
-            "angemeldete Nutzer einsehbar.",
-            "Lade keine Bilder herunter, wenn du damit nicht",
-            "einverstanden bist.",
-            "",
-        ] if (self.config.qr_codes_enabled and self.config.gallery_enabled) else []
+        qr_active = self.config.qr_codes_enabled and self.config.gallery_enabled
+
         # NEU (Sprint 11): diese Aussage stimmt nur, wenn die Galerie fuer
         # diese Veranstaltung tatsaechlich aktiv ist (config.gallery_enabled)
         # - ohne Galerie-Funktion koennen andere Gaeste die Fotos gerade
         # NICHT auf dem Display einsehen, das muss der rechtlich relevante
         # Text korrekt widerspiegeln statt etwas Falsches zu behaupten.
-        gallery_visibility_lines = [
-            "Während der Veranstaltung sind deine Fotos auf dem",
-            "Display von anderen Nutzern der Fotobox einsehbar.",
-        ] if self.config.gallery_enabled else [
-            "Eine Galerie-Funktion ist bei dieser Veranstaltung nicht",
-            "aktiv - andere Gäste können deine Fotos auf dem Display",
-            "der Fotobox nicht einsehen.",
-        ]
-        lines = [
-            self._heading("Nutzungsbedingungen zur Fotobox"),
-            "",
-            "Mit der Nutzung dieser Fotobox (z. B. durch Betätigen",
-            "des Auslösers) erklärst du dich damit einverstanden,",
-            "dass Fotografien von dir angefertigt werden.",
-            "Die Nutzung ist freiwillig.",
-            "",
-            self._heading("Verwendungszweck & Speicherung"),
-            "",
-            "Die Fotos dienen als Erinnerung für Familie, Freunde",
-            "und Verwandte sowie den Gastgeber.",
-            "Sie werden zunächst lokal auf der Fotobox gespeichert",
-            "und anschließend vom Gastgeber in einem privaten Kreis",
-            "weiterverarbeitet.",
-            *gallery_visibility_lines,
-            "Eine Weitergabe an unbeteiligte Dritte, eine",
-            "Veröffentlichung bspw. im Internet oder eine",
-            "kommerzielle Nutzung findet nicht statt.",
-            "",
-            *qr_download_section,
-            self._heading("Deine Rechte"),
-            "",
-            "Du kannst der Speicherung deines Bildes direkt nach",
-            "der Aufnahme über die \"Löschen\"-Taste widersprechen.",
-            "Außerdem hast du jederzeit das Recht auf Auskunft,",
-            "Berichtigung, Löschung, Einschränkung der Verarbeitung,",
-            "Datenübertragbarkeit und Widerspruch.",
-            "Wende dich dazu einfach an den unten genannten",
-            "Verantwortlichen bzw. an die unten genannte Ver-",
-            "Verantwortliche.",
-            "Eine erteilte Einwilligung kannst du jederzeit mit",
-            "Wirkung für die Zukunft widerrufen.",
-            "",
-            "Alle gespeicherten Fotos werden unwiderruflich innerhalb",
-            "von zwei (2) Tagen nach der Veranstaltung von der",
-            "Fotobox gelöscht.",
-            "",
-            "Kinder & Jugendliche nutzen die Fotobox bitte nur",
-            "in Begleitung bzw. mit Zustimmung einer",
-            "erziehungsberechtigten Person.",
-            "",
-            self._heading("Verantwortlich für den Betrieb"),
-            "",
-            "Lutz Buchholz",
-            "Dechant-Fein-Str. 24",
-            "51375 Leverkusen",
-            "lutz-peter@imail.de", 
-            "0163 8506144",
-        ]
+        # NEU (Nutzer-Feedback): explizit ergaenzt, dass jede Person, die die
+        # Galerie oeffnet, dort JEDES Foto (nicht nur die eigenen) ansehen
+        # kann - und, falls QR-Codes fuer diese Veranstaltung aktiv sind,
+        # auch herunterladen kann. Der Download-Teil wird bewusst nur
+        # erwaehnt, wenn er technisch ueberhaupt moeglich ist: ohne
+        # config.qr_codes_enabled gibt es aus der Galerie-Vollansicht heraus
+        # keinen Download-Weg (siehe _handle_gallery_fullscreen), das waere
+        # sonst eine falsche Aussage in einem rechtlich relevanten Text.
+        if model.ui.text_language == "en":
+            if self.config.gallery_enabled:
+                gallery_visibility_text = (
+                    "During the event, your photos are visible to other "
+                    "guests of the photo booth on the display. Anyone who "
+                    "opens the gallery can view every photo in it"
+                    + (" and also download it" if self.config.qr_codes_enabled else "")
+                    + " - not just their own."
+                )
+            else:
+                gallery_visibility_text = (
+                    "A gallery feature is not active for this event - other "
+                    "guests cannot view your photos on the photo booth's "
+                    "display."
+                )
+            qr_download_paragraphs: list = [
+                ("H", "Local download (WiFi)"),
+                "",
+                (
+                    f"Via the WiFi network \"{self.config.network.guest_wifi_ssid}\" "
+                    f"(password: {self.config.network.guest_wifi_password}) you can "
+                    "download your photo after the shot using a QR code. Since "
+                    "this is an event network, the image files are theoretically "
+                    "viewable by other logged-in users. Don't download any "
+                    "pictures if you're not comfortable with that."
+                ),
+                "",
+            ] if qr_active else []
+            paragraphs = [
+                ("H", "Terms of use for the photo booth"),
+                "",
+                (
+                    "By using this photo booth (e.g. by pressing the shutter "
+                    "button) you agree that photographs will be taken of you. "
+                    "Use of the photo booth is voluntary."
+                ),
+                "",
+                ("H", "Purpose & storage"),
+                "",
+                (
+                    "The photos serve as a keepsake for family, friends and "
+                    "relatives as well as the host. They are first stored "
+                    "locally on the photo booth and are subsequently processed "
+                    "further by the host within a private circle."
+                ),
+                gallery_visibility_text,
+                (
+                    "The photos are not passed on to uninvolved third parties, "
+                    "published online, or used commercially."
+                ),
+                "",
+                *qr_download_paragraphs,
+                ("H", "Your rights"),
+                "",
+                (
+                    "You can object to the storage of your picture directly "
+                    "after the shot via the \"Delete\" button. You also have "
+                    "the right, at any time, to information, correction, "
+                    "deletion, restriction of processing, data portability and "
+                    "objection. Simply contact the data controller named below "
+                    "for this. Any consent given can be withdrawn at any time "
+                    "with effect for the future."
+                ),
+                "",
+                (
+                    "All stored photos are irrevocably deleted from the photo "
+                    "booth within two (2) days after the event."
+                ),
+                "",
+                (
+                    "Children & young people should only use the photo booth "
+                    "when accompanied by, or with the consent of, a parent or "
+                    "legal guardian."
+                ),
+                "",
+                ("H", "Responsible for this photo booth"),
+                "",
+                ("RAW", "Lutz Buchholz"),
+                ("RAW", "Dechant-Fein-Str. 24"),
+                ("RAW", "51375 Leverkusen, Germany"),
+                ("RAW", "lutz-peter@imail.de"),
+                ("RAW", "0163 8506144"),
+            ]
+        else:
+            if self.config.gallery_enabled:
+                gallery_visibility_text = (
+                    "Während der Veranstaltung sind deine Fotos auf dem "
+                    "Display von anderen Nutzern der Fotobox einsehbar. Jede "
+                    "Person, die die Galerie öffnet, kann dabei jedes Foto "
+                    "ansehen"
+                    + (" und auch herunterladen" if self.config.qr_codes_enabled else "")
+                    + " - nicht nur die eigenen Aufnahmen."
+                )
+            else:
+                gallery_visibility_text = (
+                    "Eine Galerie-Funktion ist bei dieser Veranstaltung nicht "
+                    "aktiv - andere Gäste können deine Fotos auf dem Display "
+                    "der Fotobox nicht einsehen."
+                )
+            qr_download_paragraphs = [
+                ("H", "Lokaler Download (WLAN)"),
+                "",
+                (
+                    f"Über das WLAN \"{self.config.network.guest_wifi_ssid}\" "
+                    f"(Passwort: {self.config.network.guest_wifi_password}) kannst "
+                    "du dein Foto nach der Aufnahme per QR-Code herunterladen. Da "
+                    "es sich um ein Veranstaltungsnetzwerk handelt, sind die "
+                    "Bilddateien dabei theoretisch für andere angemeldete Nutzer "
+                    "einsehbar. Lade keine Bilder herunter, wenn du damit nicht "
+                    "einverstanden bist."
+                ),
+                "",
+            ] if qr_active else []
+            paragraphs = [
+                ("H", "Nutzungsbedingungen zur Fotobox"),
+                "",
+                (
+                    "Mit der Nutzung dieser Fotobox (z. B. durch Betätigen des "
+                    "Auslösers) erklärst du dich damit einverstanden, dass "
+                    "Fotografien von dir angefertigt werden. Die Nutzung ist "
+                    "freiwillig."
+                ),
+                "",
+                ("H", "Verwendungszweck & Speicherung"),
+                "",
+                (
+                    "Die Fotos dienen als Erinnerung für Familie, Freunde und "
+                    "Verwandte sowie den Gastgeber. Sie werden zunächst lokal "
+                    "auf der Fotobox gespeichert und anschließend vom "
+                    "Gastgeber in einem privaten Kreis weiterverarbeitet."
+                ),
+                gallery_visibility_text,
+                (
+                    "Eine Weitergabe an unbeteiligte Dritte, eine "
+                    "Veröffentlichung bspw. im Internet oder eine "
+                    "kommerzielle Nutzung findet nicht statt."
+                ),
+                "",
+                *qr_download_paragraphs,
+                ("H", "Deine Rechte"),
+                "",
+                (
+                    "Du kannst der Speicherung deines Bildes direkt nach der "
+                    "Aufnahme über die \"Löschen\"-Taste widersprechen. "
+                    "Außerdem hast du jederzeit das Recht auf Auskunft, "
+                    "Berichtigung, Löschung, Einschränkung der Verarbeitung, "
+                    "Datenübertragbarkeit und Widerspruch. Wende dich dazu "
+                    "einfach an den unten genannten Verantwortlichen bzw. an "
+                    "die unten genannte Verantwortliche. Eine erteilte "
+                    "Einwilligung kannst du jederzeit mit Wirkung für die "
+                    "Zukunft widerrufen."
+                ),
+                "",
+                (
+                    "Alle gespeicherten Fotos werden unwiderruflich innerhalb "
+                    "von zwei (2) Tagen nach der Veranstaltung von der Fotobox "
+                    "gelöscht."
+                ),
+                "",
+                (
+                    "Kinder & Jugendliche nutzen die Fotobox bitte nur in "
+                    "Begleitung bzw. mit Zustimmung einer erziehungs-"
+                    "berechtigten Person."
+                ),
+                "",
+                ("H", "Verantwortlich für den Betrieb"),
+                "",
+                ("RAW", "Lutz Buchholz"),
+                ("RAW", "Dechant-Fein-Str. 24"),
+                ("RAW", "51375 Leverkusen"),
+                ("RAW", "lutz-peter@imail.de"),
+                ("RAW", "0163 8506144"),
+            ]
 
-        left = 60
+        lines = self._build_paragraph_lines(paragraphs, font, max_text_w)
+
         top = round(0.06 * height)
         # Siehe Kommentar in _draw_instructions() - dieselbe Ableitung aus
         # der tatsaechlichen Button-Position statt einer separaten,
@@ -1839,6 +2085,9 @@ class Renderer:
                 self._draw_text(text, font, color, (left, y))
             y += line_height
         self.screen.set_clip(previous_clip)
+        # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Buttons zusaetzlich
+        # zum Wischen.
+        self._draw_scroll_indicators(viewport, self.terms_scroll_offset, max_scroll, "terms_scroll_offset")
 
     def _draw_buttons(self, state: AppState) -> None:
         if state == AppState.MAIN_MENU:
@@ -1856,9 +2105,11 @@ class Renderer:
         elif state == AppState.ATTRACT_GALLERY:
             pass  # bewusst kein Button - Tippen/Taster fuehrt zurueck
         elif state == AppState.INSTRUCTIONS:
-            self._draw_button("Zurück", self.layout.text_view_back, (100, 100, 100))
+            self._draw_button("Zurück" if self._current_text_language == "de" else "Back", self.layout.text_view_back, (100, 100, 100))
+            self._draw_language_toggle_button()
         elif state == AppState.TERMS:
-            self._draw_button("Verstanden", self.layout.text_view_back, (0, 130, 110))
+            self._draw_button("Verstanden" if self._current_text_language == "de" else "Understood", self.layout.text_view_back, (0, 130, 110))
+            self._draw_language_toggle_button()
         elif state == AppState.PHOTO_INTRO:
             self._draw_button("Countdown starten", self.layout.left, (0, 150, 0))
             self._draw_button("Zurück", self.layout.right, (100, 100, 100))
@@ -1876,10 +2127,10 @@ class Renderer:
         elif state == AppState.GALLERY_FULLSCREEN:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
             # NEU (Sprint 11, Feature 4): gleichwertige Alternative zum
-            # Doppeltap auf das Foto (siehe app_with_hw._handle_pygame_event).
+            # Doppeltap auf das Foto (siehe app._handle_pygame_event).
             # GEAENDERT (Sprint-11-Nachbesserung): kein Button ohne
             # QR-Funktion (config.qr_codes_enabled) - siehe auch
-            # app_with_hw._map_click_to_event (Treffer-Rechteck entfaellt
+            # app._map_click_to_event (Treffer-Rechteck entfaellt
             # dort ebenfalls).
             if self.config.qr_codes_enabled:
                 self._draw_button("QR-Code anfordern", self.layout.gallery_qr_icon, (0, 100, 150))
@@ -2042,7 +2293,7 @@ class Renderer:
     def _draw_admin_menu_buttons(self) -> None:
         # Beschriftung, Farbe und Position kommen vollstaendig aus
         # admin_menu.ADMIN_MENU_ITEMS - hier wird nichts dupliziert, damit
-        # Zeichnung und Treffererkennung (app_with_hw._map_admin_menu_click)
+        # Zeichnung und Treffererkennung (app._map_admin_menu_click)
         # nicht auseinanderlaufen koennen.
         # Noch nicht implementierte Punkte (enabled=False) werden dunkelgrau
         # gezeichnet, damit sichtbar ist, dass sie noch nichts tun.
@@ -2059,7 +2310,7 @@ class Renderer:
         # Zeile lag teils hinter dem "Zurueck"-Button bzw. komplett ausserhalb
         # des Bildschirms). Jetzt scrollbar - gleiches Clip-/Scroll-Muster
         # wie _draw_admin_usb_conflicts (Swipe-Handling siehe
-        # app_with_hw._handle_pygame_event, ADMIN_STATUS-Zweig).
+        # app._handle_pygame_event, ADMIN_STATUS-Zweig).
         # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
         # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
         # font_body.
@@ -2086,6 +2337,9 @@ class Renderer:
                 self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
         self.screen.set_clip(previous_clip)
+        # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Buttons zusaetzlich
+        # zum Wischen.
+        self._draw_scroll_indicators(viewport, self.admin_status_scroll_offset, max_scroll, "admin_status_scroll_offset")
 
     def _draw_admin_camera_settings(self, model: AppModel, preview_frame: pygame.Surface | None) -> None:
         """GEAENDERT (Kamera-Menue 2.0, Nutzer-Feedback nach Sprint 11):
@@ -2203,7 +2457,7 @@ class Renderer:
     def _draw_admin_event_settings(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Uebersichts-/Bearbeitungs-Screen fuer
         Titel/Praefix/WLAN-SSID/WLAN-Passwort (je ein eigenes Tap-Ziel, siehe
-        layout.admin_event_*_row/app_with_hw._map_click_to_event - oeffnet
+        layout.admin_event_*_row/app._map_click_to_event - oeffnet
         die Tastatur fuer genau dieses Feld) sowie QR-/Galerie-Schalter (Tap
         kippt direkt, kein Tastatur-Umweg). Die Rects sind reine Tap-Ziele
         ohne eigene Optik aus layout.py - die sichtbare "Karte" je Zeile wird
@@ -2318,7 +2572,7 @@ class Renderer:
                 # Zusatzbedingung liess ae/oe/ue bewusst klein - laut
                 # Feedback sollen sie sich wie a-z verhalten. str.upper()
                 # wandelt sie korrekt in Ae/Oe/Ue um, muss also nur noch mit
-                # app_with_hw._map_admin_event_text_entry_click (tatsaechliche
+                # app._map_admin_event_text_entry_click (tatsaechliche
                 # Zeichenausgabe) im Einklang gehalten werden.
                 label = name.upper()
             else:
@@ -2354,7 +2608,7 @@ class Renderer:
         Gleiches Scroll-/Clip-/Hitbox-Muster wie _draw_admin_usb_conflicts:
         Zeilenposition haengt vom Scroll-Offset ab, daher dynamisch pro Frame
         neu berechnet statt aus layout.py, mit Hitboxen in Bildschirm-
-        koordinaten fuer app_with_hw._map_click_to_event."""
+        koordinaten fuer app._map_click_to_event."""
         width, height = self.config.screen.width, self.config.screen.height
         candidates = model.ui.admin_event_wallpaper_candidates
         selected = model.ui.admin_event_wallpaper_selected
@@ -2390,6 +2644,9 @@ class Renderer:
                 self.wallpaper_pick_row_hitboxes.append((row_rect, name))
             y += row_h + gap
         self.screen.set_clip(previous_clip)
+        # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Buttons zusaetzlich
+        # zum Wischen.
+        self._draw_scroll_indicators(viewport, self.wallpaper_pick_scroll_offset, max_scroll, "wallpaper_pick_scroll_offset")
 
     def _draw_admin_event_wallpaper_result(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Ergebnis-Zeilen nach dem Wallpaper-
@@ -2413,7 +2670,7 @@ class Renderer:
         Ausnahme fuer alle vier Punkte (Titel/Praefix/WLAN/Schalter) - das
         Wallpaper wird seit dem Deferred-Save-Bugfix nicht mehr sofort beim
         Auswaehlen uebernommen, sondern erst hier, synchron als Teil dieses
-        "Speichern"-Vorgangs (siehe app_with_hw._save_admin_event_settings /
+        "Speichern"-Vorgangs (siehe app._save_admin_event_settings /
         event_config_service.promote_pending_wallpaper), ist also kein
         Sonderfall mehr. Farbe passend zum leuchtenden Orange in
         _draw_admin_event_settings. "Jetzt neu starten"/"Später" werden
@@ -2422,7 +2679,7 @@ class Renderer:
         GEAENDERT (Nutzer-Feedback): der Dateiname (z.B. "event_config.json
         gespeichert.") steckte bisher in ui.admin_event_save_message - fuer
         den Admin keine relevante Information, siehe
-        app_with_hw._save_admin_event_settings (ersetzt die Meldung dort im
+        app._save_admin_event_settings (ersetzt die Meldung dort im
         Erfolgsfall durch ein einfaches "Gespeichert."). Ausserdem: der
         Neustart-Hinweis ist jetzt die EINZIGE Stelle, an der er noch
         erscheint (auf der Uebersicht ADMIN_EVENT_SETTINGS wurde er als
@@ -2525,7 +2782,7 @@ class Renderer:
         # NEU (Sprint-11-Nachbesserung #2): der Fortschrittsbalken belegt
         # die erste Haelfte (0.0-0.5) mit dem eigentlichen Kopieren/
         # Aufloesen und die zweite Haelfte (0.5-1.0) mit der SHA256-
-        # Pruefsummen-Kontrolle (siehe app_with_hw._emit_due_timers,
+        # Pruefsummen-Kontrolle (siehe app._emit_due_timers,
         # phase == "copy"/"resolve" vs. "verify" - dieselbe 0.5-Schwelle).
         # Waehrend des Kopierens bleibt die bisherige "fliegende" Animation
         # (Speicher -> Stick), waehrend der Pruefung zeigt eine eigene
@@ -2866,7 +3123,7 @@ class Renderer:
         Scrollen wie bei INSTRUCTIONS/TERMS ueber einen rein im Renderer
         gehaltenen Offset (reine Anzeigesache). Tipp-Erkennung je
         Dateizeile ueber usb_conflict_row_hitboxes (siehe
-        app_with_hw._map_click_to_event) - die "Alle auswaehlen"-Zeile
+        app._map_click_to_event) - die "Alle auswaehlen"-Zeile
         scrollt dagegen NICHT mit und nutzt daher die statischen Rects aus
         layout.py, genau wie jeder andere Button im Programm.
         """
@@ -2947,13 +3204,16 @@ class Renderer:
                 self._draw_conflict_checkbox(rename_rect, conflict.decision == "rename")
 
                 # Hitboxen in Bildschirm-Koordinaten (nicht relativ zum
-                # Clip) - app_with_hw.py prueft sie gegen die tatsaechliche
+                # Clip) - app.py prueft sie gegen die tatsaechliche
                 # Tap-Position.
                 self.usb_conflict_row_hitboxes.append((overwrite_rect, conflict.name, "overwrite"))
                 self.usb_conflict_row_hitboxes.append((rename_rect, conflict.name, "rename"))
             y += row_h + gap
 
         self.screen.set_clip(previous_clip)
+        # NEU (Nutzer-Feedback): sichtbare "Runter"/"Hoch"-Buttons zusaetzlich
+        # zum Wischen.
+        self._draw_scroll_indicators(viewport, self.usb_conflicts_scroll_offset, max_scroll, "usb_conflicts_scroll_offset")
 
     def _draw_admin_delete_confirm(self, model: AppModel) -> None:
         # NEU (4.4): Warntext gross und zentriert. status_text enthaelt
@@ -3221,6 +3481,61 @@ class Renderer:
         else:
             text_rect = text_surface.get_rect(center=rect.center)
             self.screen.blit(text_surface, text_rect)
+
+    def _draw_language_toggle_button(self) -> None:
+        """NEU (Nutzer-Feedback): DE/EN-Umschalter auf ANLEITUNG/BEDINGUNGEN.
+        Das Label zeigt die Sprache, in die GEWECHSELT wird (waehrend
+        Deutsch aktiv ist steht "EN" auf dem Button, waehrend Englisch aktiv
+        ist steht "DE") - gaengige Konvention bei Sprachumschaltern, macht
+        auf einen Blick klar, was ein Antippen bewirkt."""
+        label = "EN" if self._current_text_language == "de" else "DE"
+        self._draw_button(label, self.layout.language_toggle, (70, 70, 100), font_size=36)
+
+    # NEU (Nutzer-Feedback): Groesse/Abstand der Scroll-Indikator-Tasten -
+    # eigene, kleinere Konstanten statt der grossen Standard-Buttons
+    # (button_w/button_h in layout.py), da sie zusaetzlich zur ohnehin
+    # vorhandenen Button-Reihe innerhalb des Textbereichs schweben.
+    _SCROLL_INDICATOR_W = 150
+    _SCROLL_INDICATOR_H = 66
+    _SCROLL_INDICATOR_PAD = 12
+
+    def _draw_scroll_indicators(
+        self, viewport: pygame.Rect, offset: int, max_scroll: int, offset_attr_name: str,
+    ) -> None:
+        """Zeichnet optionale "Runter"/"Hoch"-Buttons als sichtbare, antippbare
+        Scroll-Indikatoren - zusaetzlich zur bestehenden Wisch-Geste (siehe
+        app._handle_pygame_event) nutzbar.
+
+        NEU (Nutzer-Feedback: "Ist das machbar?" - ja, ueber dieses Muster):
+        Bewusst INNERHALB der Ecken von `viewport` platziert (unten links /
+        oben rechts relativ zum sichtbaren TEXTBEREICH), nicht relativ zum
+        gesamten Bildschirm oder zur screen-spezifischen Button-Reihe darunter.
+        Grund: die Button-Reihe sieht je nach Screen unterschiedlich aus -
+        bei ADMIN_STATUS liegt "Zurück" z.B. exakt an der Bildschirm-Position
+        unten links, die dieser Button sonst haette. Eine Positionierung
+        relativ zum ohnehin je Screen individuell berechneten `viewport` ist
+        dagegen fuer alle 5 scrollbaren Screens automatisch
+        ueberlappungsfrei, ohne Sonderfaelle je Screen.
+
+        "Runter" erscheint nur, wenn noch nach unten gescrollt werden kann
+        (offset < max_scroll), "Hoch" nur, wenn bereits nach unten gescrollt
+        wurde (offset > 0) - identische Sichtbarkeitslogik wie die generische
+        Scrollbar-Interaktion selbst. Die Trefferflaechen werden in
+        self.scroll_down_hitbox/scroll_up_hitbox abgelegt (siehe __init__ und
+        app._handle_pygame_event) und je Frame vorher in render()
+        zurueckgesetzt.
+        """
+        w, h, pad = self._SCROLL_INDICATOR_W, self._SCROLL_INDICATOR_H, self._SCROLL_INDICATOR_PAD
+        if offset < max_scroll:
+            down_rect = pygame.Rect(viewport.left + pad, viewport.bottom - h - pad, w, h)
+            self._draw_button("Runter", down_rect, (60, 65, 90), font_size=30)
+            self.scroll_down_hitbox = down_rect
+            self.scroll_down_offset_attr = offset_attr_name
+        if offset > 0:
+            up_rect = pygame.Rect(viewport.right - w - pad, viewport.top + pad, w, h)
+            self._draw_button("Hoch", up_rect, (60, 65, 90), font_size=30)
+            self.scroll_up_hitbox = up_rect
+            self.scroll_up_offset_attr = offset_attr_name
 
     def _draw_text(self, text: str, font: pygame.font.Font, color: tuple[int, int, int], pos: tuple[int, int]) -> None:
         """Rendert Text; unterstuetzt mehrzeilige Strings ueber "\\n"-Trennung

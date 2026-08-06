@@ -6,11 +6,11 @@ Zentrale Definition des Service-/Admin-Menues (AppState.ADMIN_MENU).
 Warum ein eigenes Modul und kein Eintrag in layout.py:
 Beschriftung, Rasterposition, Farbe und ausgeloestes Event eines
 Menuepunkts stehen hier an EINER Stelle. renderer.py (Zeichnen) und
-app_with_hw.py (Treffererkennung) leiten beide aus derselben Liste ab
+app.py (Treffererkennung) leiten beide aus derselben Liste ab
 und koennen dadurch nicht auseinanderlaufen - ein neuer Menuepunkt
 erfordert nur eine Aenderung in dieser Datei. Bei der sonst ueblichen
 Aufteilung (Rechtecke in layout.py, Beschriftungen im Renderer,
-Event-Zuordnung in app_with_hw.py) muessten drei Dateien synchron
+Event-Zuordnung in app.py) muessten drei Dateien synchron
 gehalten werden.
 
 Raster: 2 Spalten x 4 Zeilen (GEAENDERT, Sprint 11 Feature 2: vorher
@@ -151,7 +151,7 @@ _GAP_Y = 0.02
 def build_admin_rects(width: int, height: int) -> dict[str, pygame.Rect]:
     """Berechnet die Button-Rechtecke aller Menuepunkte.
 
-    Wird sowohl vom Renderer (Zeichnen) als auch von app_with_hw
+    Wird sowohl vom Renderer (Zeichnen) als auch von app
     (Treffererkennung) aufgerufen - beide bekommen damit garantiert
     dieselbe Geometrie. Bewusst bei jedem Aufruf neu berechnet statt
     zwischengespeichert: die Rechnung ist trivial, und ein Cache waere

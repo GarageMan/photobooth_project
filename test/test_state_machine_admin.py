@@ -445,7 +445,7 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
 
     def test_cancel_reverts_ui_values_are_irrelevant_only_action_matters(self) -> None:
         # Das eigentliche Zuruecksenden an die Kamera passiert ausserhalb der
-        # State-Machine (siehe app_with_hw._revert_admin_camera_settings,
+        # State-Machine (siehe app._revert_admin_camera_settings,
         # liest model.ui.admin_camera_entry_* aus) - hier wird nur
         # sichergestellt, dass die Entry-Werte zum Zeitpunkt des Abbrechens
         # noch unveraendert im Modell stehen, damit dieser Aufrufer sie lesen
@@ -795,7 +795,7 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         # WICHTIG (Bugfix): erst hier wird admin_event_wallpaper_pending
         # gesetzt - das Bild ist damit NOCH NICHT das echte Hauptmenue-
         # Wallpaper, das passiert erst beim AEUSSEREN "Speichern" (siehe
-        # app_with_hw._save_admin_event_settings/promote_pending_wallpaper).
+        # app._save_admin_event_settings/promote_pending_wallpaper).
         self._go_to_wallpaper_pick()
         self.transition(
             EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, now_offset=14.0, payload={"name": "bbb.jpg"},
@@ -1039,7 +1039,7 @@ class AdminDeleteAllTestCase(unittest.TestCase):
 class IdleTimeoutWiringTestCase(unittest.TestCase):
     """Quelltext-Test gegen eine Luecke, die in Etappe 4.4 tatsaechlich
     auftrat: die State Machine kann einen IDLE_TIMEOUT nur verarbeiten,
-    wenn app_with_hw.py ihn fuer diesen Zustand ueberhaupt AUSLOEST. Beides
+    wenn app.py ihn fuer diesen Zustand ueberhaupt AUSLOEST. Beides
     steht an voellig verschiedenen Stellen (_go_*-Methode setzt die
     Deadline, _emit_due_timers entscheidet ueber das Feuern) und lief
     auseinander - die Loesch-Abfrage bekam eine Deadline, lief aber nie in
@@ -1047,7 +1047,7 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
 
     Die uebrigen Tests hier speisen IDLE_TIMEOUT direkt ein und pruefen
     damit nur die Reaktion, nicht die Ausloesung. Dieser Test schliesst
-    die Luecke - bewusst auf Quelltextebene, weil app_with_hw.py sich fuer
+    die Luecke - bewusst auf Quelltextebene, weil app.py sich fuer
     einen Import Hardware-Provider und ein Pygame-Fenster erzeugen wuerde.
     """
 
@@ -1078,9 +1078,9 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
 
     def test_states_with_idle_deadline_are_emitted_by_the_app(self) -> None:
         from pathlib import Path
-        source = (Path(__file__).resolve().parent.parent / "app_with_hw.py").read_text(encoding="utf-8")
+        source = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
         anchor = source.find("AppState.TERMS,")
-        self.assertNotEqual(anchor, -1, "Anker 'AppState.TERMS,' in app_with_hw.py nicht gefunden.")
+        self.assertNotEqual(anchor, -1, "Anker 'AppState.TERMS,' in app.py nicht gefunden.")
         block_end = source.find("}", anchor)
         self.assertNotEqual(block_end, -1, "Ende des idle_states-Sets nicht gefunden.")
         block = source[anchor:block_end]
@@ -1089,7 +1089,7 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         self.assertEqual(
             missing, [],
             f"Diese Zustaende bekommen eine idle_deadline, feuern aber nie einen "
-            f"IDLE_TIMEOUT (fehlen im idle_states-Set in app_with_hw.py): {missing}",
+            f"IDLE_TIMEOUT (fehlen im idle_states-Set in app.py): {missing}",
         )
 
     def test_state_machine_really_sets_those_deadlines(self) -> None:

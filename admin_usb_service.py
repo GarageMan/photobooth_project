@@ -5,7 +5,7 @@ USB-Stick-Handling fuer den Service-Menue-Punkt "Bilder auf USB-Stick"
 (Etappe 4a: erkennen, einbinden, Kapazitaet und freien Platz pruefen,
 sauber wieder aushaengen - das Kopieren selbst folgt in Etappe 4b).
 
-Bewusst OHNE Abhaengigkeit zu pygame, config oder app_with_hw: alle
+Bewusst OHNE Abhaengigkeit zu pygame, config oder app: alle
 Eingaben kommen als Pfade/Zahlen herein, damit die Logik offline und
 ohne Hardware testbar bleibt (siehe test_admin_usb_service.py).
 
@@ -17,7 +17,7 @@ Sicherheit:
     grundsaetzlich ausgefiltert, unabhaengig davon, was lsblk meldet.
     Ein Bedienfehler darf niemals das Wurzeldateisystem treffen.
 
-Berechtigungen: Die App laeuft als root (siehe app_with_hw._power_off),
+Berechtigungen: Die App laeuft als root (siehe app._power_off),
 daher genuegen die direkten mount/umount-Aufrufe - die sudoers-Regel muss
 dafuer NICHT erweitert werden.
 

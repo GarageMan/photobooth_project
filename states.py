@@ -83,7 +83,7 @@ class AppState(Enum):
     # eine Zwischenablage (noch nicht das echte Hauptmenue-Wallpaper, siehe
     # event_config_service.py), "Abbrechen" verwirft die Auswahl. Der
     # USB-Stick bleibt waehrend dieses gesamten Screens gemountet (analog
-    # zum USB-Export-Ablauf, self._wallpaper_pick_stick in app_with_hw.py)
+    # zum USB-Export-Ablauf, self._wallpaper_pick_stick in app.py)
     # und wird erst beim Verlassen (Speichern ODER Abbrechen) wieder
     # ausgehaengt.
     ADMIN_EVENT_WALLPAPER_PICK = auto()
@@ -122,7 +122,7 @@ class AppState(Enum):
     ADMIN_DELETE_DONE = auto()
     # --- USB-Export (Etappe 4a) ---
     # ADMIN_USB_WAIT: zeigt den benoetigten Platz und wartet darauf, dass
-    # ein Stick eingesteckt wird (Hintergrund-Suche in app_with_hw).
+    # ein Stick eingesteckt wird (Hintergrund-Suche in app).
     ADMIN_USB_WAIT = auto()
     # ADMIN_USB_CHECK: einbinden und messen (Hintergrund-Thread).
     ADMIN_USB_CHECK = auto()

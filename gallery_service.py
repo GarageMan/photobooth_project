@@ -24,7 +24,7 @@ class GalleryService:
     photo_dir: Path
     max_thumbnail_cache_items: int = 200
     max_fullscreen_cache_items: int = 12
-    # Wird von app_with_hw.py aus config.gallery.excluded_filenames gesetzt.
+    # Wird von app.py aus config.gallery.excluded_filenames gesetzt.
     # Der Default hier ist bewusst identisch, damit auch direkte
     # Instanziierungen (Tests, Hilfsskripte) das Testbild ausblenden.
     excluded_filenames: frozenset[str] = DEFAULT_EXCLUDED_FILENAMES

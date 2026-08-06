@@ -7,7 +7,7 @@ sprechende Fehlerzeile statt eine Ausnahme zu werfen - ein einzelner
 nicht verfuegbarer Wert (z.B. Kamera nicht angeschlossen) soll nicht
 die gesamte Diagnoseseite zum Absturz bringen.
 
-Bewusst UNABHAENGIG von app_with_hw importierbar (nur Path/Zahlen als
+Bewusst UNABHAENGIG von app importierbar (nur Path/Zahlen als
 Parameter), damit die Funktionen isoliert und ohne Pygame-Fenster
 getestet werden koennen (siehe test_admin_diagnostics.py).
 """

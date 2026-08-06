@@ -79,7 +79,7 @@ _GPHOTO2_RETRY_WAIT   = 1.0   # Sekunden zwischen Versuchen
 
 @dataclass
 class CaptureProgress:
-    """NEU (Sprint 11, Feature 1): wird von app_with_hw.py verwendet, um den
+    """NEU (Sprint 11, Feature 1): wird von app.py verwendet, um den
     kompletten Aufnahme-Ablauf (Ausloesen inkl. GPIO-Puls + gphoto2-Download,
     bisher blockierend im Hauptthread) in einen Hintergrund-Thread zu
     verlagern - gleiches Muster wie ExportProgress/DeleteProgress
@@ -119,7 +119,7 @@ class HwCaptureProvider:
     # Fuer photo_prefix (siehe config.py) beim Erzeugen des Dateinamens in
     # _fetch_image(). Default_factory nur als Sicherheitsnetz fuer
     # bestehende Aufrufer/Tests ohne explizites config - im echten Betrieb
-    # wird stets die tatsaechliche AppConfig-Instanz von app_with_hw.py
+    # wird stets die tatsaechliche AppConfig-Instanz von app.py
     # uebergeben (siehe _build_capture_provider()).
     config: AppConfig = field(default_factory=AppConfig)
     _gpio_ready: bool = field(default=False, init=False)
@@ -261,7 +261,7 @@ class HwCaptureProvider:
                 # Dateiname: photo_prefix + Zeitstempel (JJJJMMTTHHMMSS),
                 # z.B. "mina_20260711153045.jpg" - photo_prefix aus
                 # config.py (config.photo_prefix), vom Aufrufer beim
-                # Erstellen des Providers gesetzt (siehe app_with_hw.py).
+                # Erstellen des Providers gesetzt (siehe app.py).
                 local_name = self._build_local_filename(target_dir)
                 local_path = target_dir / local_name
 

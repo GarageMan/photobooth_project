@@ -44,7 +44,7 @@ einfach der Reihe nach ausprobieren.
 
 **App reagiert gar nicht mehr / hängt:**
 ```bash
-sudo pkill -f app_with_hw.py
+sudo pkill -f app.py
 ```
 Die Autostart-Schleife (`start_fotobox.sh`) startet die App
 automatisch neu (siehe [Autostart](#autostart)).
@@ -52,7 +52,7 @@ automatisch neu (siehe [Autostart](#autostart)).
 **Kamera reagiert nicht / Live-Vorschau bleibt schwarz:**
 1. USB-Kabel zur Nikon D3300 prüfen (Wackelkontakt?)
 2. Kamera aus-/wieder einschalten
-3. `sudo pkill -f app_with_hw.py` (siehe oben) — startet auch die
+3. `sudo pkill -f app.py` (siehe oben) — startet auch die
    Kamera-Verbindung neu
 
 **Hauptmenü zeigt „ACHTUNG: Bitte Techniker rufen!" mit blinkendem
@@ -273,7 +273,7 @@ Event (Touch/Taster/Timer)
         └── Actions (Strings, z.B. "delete_photo", "export_photo")
         │
         ▼
-   app_with_hw.py: Actions ausführen, Hardware ansteuern
+   app.py: Actions ausführen, Hardware ansteuern
         │
         ▼
    renderer.py: aktuellen State auf das Display zeichnen
@@ -300,7 +300,7 @@ autoritative Liste in `states.py`).
 
 | Datei | Zweck |
 |---|---|
-| `app_with_hw.py` | Einstiegspunkt, Event-Loop, Hardware-Wiring, Action-Ausführung |
+| `app.py` | Einstiegspunkt, Event-Loop, Hardware-Wiring, Action-Ausführung |
 | `state_machine.py` | Zustandsübergänge, reine Logik ohne Hardware-Bezug |
 | `states.py` / `events.py` | `AppState`- und `EventType`-Enums |
 | `models.py` | `AppModel`, `TimerState`, `SessionState`, `UiState` |
@@ -363,7 +363,7 @@ Nachbau ist ein Release-Tag der verlässlichere Ausgangspunkt.
 sudo apt update
 sudo apt install python3-gphoto2 libgphoto2-6 -y
 
-# Python-Abhängigkeiten (mit sudo installieren, da app_with_hw.py mit
+# Python-Abhängigkeiten (mit sudo installieren, da app.py mit
 # sudo läuft und sonst KEINE user-lokalen ~/.local-Pakete sieht!)
 sudo pip3 install gphoto2 neopixel_spi qrcode pillow pygame --break-system-packages
 ```
@@ -393,7 +393,7 @@ Details zu den jeweiligen Feldern siehe
 [Event-Parameter](#event-parameter-event_configjson).
 ### Berechtigungen
 
-Nur `app_with_hw.py`, `hw_led_provider.py`, `hw_button_provider.py` und
+Nur `app.py`, `hw_led_provider.py`, `hw_button_provider.py` und
 `hw_capture_provider.py` benötigen zur Laufzeit `sudo` (GPIO-/SPI-
 Hardwarezugriff). Reine Logik-Module werden nie direkt ausgeführt.
 
@@ -480,11 +480,11 @@ grundsätzlich keinen digitalen Download anbieten möchte:
 
 - `raspi-config` → Desktop-Autologin aktivieren
 - `~/.config/autostart/fotobox.desktop` startet `start_fotobox.sh`
-- `start_fotobox.sh` startet `app_with_hw.py` in einer Endlosschleife mit
+- `start_fotobox.sh` startet `app.py` in einer Endlosschleife mit
   automatischem Neustart bei Absturz, Logs unter
   `~/photobooth/data/logs/fotobox.log`
 - Passwortloses `sudo` ist strikt auf
-  `python3 /home/photobox/photobooth/app_with_hw.py` beschränkt
+  `python3 /home/photobox/photobooth/app.py` beschränkt
 
 ## Netzwerk-Setup
 
@@ -659,7 +659,7 @@ Fehlschläge in `test_admin_diagnostics.py` und
 
 - `test_admin_diagnostics.py::test_returns_five_lines` rief
   `collect_status_lines()` noch mit der alten, um vier Parameter kürzeren
-  Signatur auf (`TypeError`) — `app_with_hw.py` rief die Funktion bereits
+  Signatur auf (`TypeError`) — `app.py` rief die Funktion bereits
   korrekt auf, betroffen war ausschließlich der Test. Umbenannt in
   `test_returns_seven_lines` und an die aktuelle Signatur angepasst.
 - Die drei Fehlschläge in `test_state_machine_shutdown.py` gingen davon
