@@ -33,7 +33,7 @@ class CameraPreviewService:
         return self.provider.get_frame()
 
     def run_with_camera(self, fn):
-        """NEU (Kamera-Menue 2.0): Passthrough zu provider.run_with_camera()
+        """Passthrough zu provider.run_with_camera()
         (nur HwGphoto2PreviewProvider hat das - bewusst nicht Teil des
         PreviewProvider-Protocols, damit FakePreviewService & Co. nicht
         angepasst werden muessen). Ohne laufende Vorschau oder bei einem
