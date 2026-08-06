@@ -1,7 +1,7 @@
 """
 capture_timing.py
 ==================
-NEU (Sprint 11, Feature 1): persistiert eine laufend aktualisierte
+persistiert eine laufend aktualisierte
 Schaetzung der tatsaechlichen Bilduebertragungsdauer (Ausloesen inkl.
 GPIO-Puls + gphoto2-Download), damit die Uebertragungs-Animation
 (Datei-Symbol in renderer.py + LED-Punkt in hw_led_provider.py) halbwegs
