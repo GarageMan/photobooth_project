@@ -54,7 +54,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(0, 100, 150),
         column=0,
         row=0,
-        enabled=True,           # Etappe 2 - implementiert
+        enabled=True,
     ),
     AdminMenuItem(
         key="usb_export",
@@ -63,7 +63,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(0, 130, 110),
         column=1,
         row=0,
-        enabled=True,           # Etappe 4a - implementiert
+        enabled=True,
     ),
     AdminMenuItem(
         key="restart_app",
@@ -72,7 +72,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(120, 90, 0),
         column=0,
         row=1,
-        enabled=True,           # Etappe 2 - implementiert
+        enabled=True,
     ),
     AdminMenuItem(
         key="shutdown",
@@ -81,12 +81,8 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(120, 30, 90),
         column=1,
         row=1,
-        enabled=True,           # Etappe 1 - bereits funktionsfaehig
+        enabled=True,
     ),
-    # NEU (Sprint 11, Feature 2): eigene Zeile OBERHALB von "Zurück"/"Alle
-    # Bilder löschen" (row=2 statt deren row=2 von frueher - diese beiden
-    # ruecken auf row=3), damit die bewusste Platzierung "Loeschen unten
-    # rechts, weit weg von Zurueck" unveraendert bleibt.
     AdminMenuItem(
         key="camera_settings",
         label="Kamera-Einstellungen",
@@ -96,8 +92,6 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         row=2,
         enabled=True,
     ),
-    # NEU (letzte Sprint-11-Aufgabe): fuellt den bisher freien Platz
-    # Spalte 1/Zeile 2 - kein Umbau des 2x4-Rasters noetig.
     AdminMenuItem(
         key="event_settings",
         label="Veranstaltungsdaten",
@@ -114,7 +108,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(100, 100, 100),
         column=0,
         row=3,
-        enabled=True,           # Etappe 1
+        enabled=True,
     ),
     AdminMenuItem(
         key="delete_all",
@@ -123,7 +117,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         color=(150, 0, 0),
         column=1,
         row=3,
-        enabled=True,           # Etappe 3 - implementiert
+        enabled=True,
     ),
 )
 
