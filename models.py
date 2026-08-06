@@ -166,14 +166,25 @@ class UiState:
     admin_event_edit_field: str = ""
     admin_event_text_buffer: str = ""
     admin_event_keyboard_shift: bool = False
-    # Gilt fuer Uebersicht UND Tastatur-Screen gemeinsam (derselbe Wert).
-    admin_event_wifi_password_visible: bool = False
+    # ENTFERNT (Nutzer-Feedback): admin_event_wifi_password_visible - das
+    # WLAN-Passwort wird jetzt immer im Klartext angezeigt.
     # Ergebnis von "Speichern".
     admin_event_save_ok: bool = False
     admin_event_save_message: str = ""
-    # Ergebnis des Wallpaper-Imports.
+    # Ergebnis-Zeilen der Wallpaper-Suche - jetzt nur noch fuer den
+    # FEHLERFALL genutzt (kein Stick/kein Bild gefunden), siehe
+    # ADMIN_EVENT_WALLPAPER_RESULT.
     admin_event_wallpaper_lines: tuple[str, ...] = ()
     admin_event_wallpaper_ok: bool = False
+    # NEU (Nutzer-Feedback): Wallpaper-Auswahl-Screen. candidates = auf dem
+    # Stick gefundene Bild-Dateinamen (Anzeigereihenfolge), selected = gerade
+    # markierte Datei ("" = keine Auswahl), pending = True, sobald "Speichern"
+    # im Auswahl-Screen erfolgreich in die Zwischenablage kopiert hat (erst
+    # das AEUSSERE "Speichern" auf ADMIN_EVENT_SETTINGS macht daraus das
+    # echte Hauptmenue-Wallpaper, siehe app_with_hw._save_admin_event_settings).
+    admin_event_wallpaper_candidates: tuple[str, ...] = ()
+    admin_event_wallpaper_selected: str = ""
+    admin_event_wallpaper_pending: bool = False
 
 
 @dataclass(slots=True, frozen=True)

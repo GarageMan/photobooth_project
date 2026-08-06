@@ -66,7 +66,7 @@ from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolution
 )
 from storage_service import StorageService
 from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
-from layout import build_layout, button_rects_for_state
+from layout import KEYBOARD_SHIFT_MAP, build_layout, button_rects_for_state
 from renderer import Renderer
 from admin_service import PinLockout, SecretGestureDetector  # NEU (3.4), umbenannt (Sprint 11, vormals shutdown_service.py)
 import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
@@ -245,11 +245,17 @@ class PhotoboothApp:
         # noch aendern, bevor "Ausfuehren" getippt wird.
         self._usb_export_pending_result = None
 
-        # NEU (Veranstaltungsdaten): Wallpaper-Import von USB - gleiches
+        # NEU (Veranstaltungsdaten): Wallpaper-Auswahl von USB - gleiches
         # Einzelwert-Poll-Muster wie bei _usb_job_result oben (Thread setzt
         # genau einmal, _emit_due_timers pollt).
         self._wallpaper_thread: threading.Thread | None = None
-        self._wallpaper_job_result = None
+        self._wallpaper_list_job_result = None
+        # NEU (Nutzer-Feedback): der Stick bleibt waehrend der gesamten
+        # Auswahlliste gemountet (Bugfix-Voraussetzung: erst nach der
+        # tatsaechlichen Auswahl wird EIN Bild kopiert, nicht mehr blind das
+        # erste gefundene) - gleiches Prinzip wie self._usb_stick beim
+        # USB-Export, nur fuer diesen eigenen Ablauf.
+        self._wallpaper_pick_stick = None
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -423,6 +429,16 @@ class PhotoboothApp:
                         0, self.renderer.usb_conflicts_scroll_offset - 150
                     )
                     return
+            elif self.model.state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
+                # NEU (Nutzer-Feedback): gleiches Prinzip wie ADMIN_USB_CONFLICTS.
+                if dy < -60:
+                    self.renderer.wallpaper_pick_scroll_offset += 150
+                    return
+                if dy > 60:
+                    self.renderer.wallpaper_pick_scroll_offset = max(
+                        0, self.renderer.wallpaper_pick_scroll_offset - 150
+                    )
+                    return
 
             # Kein Swipe erkannt -> als normaler Tap an der Startposition werten.
             # Kleine Toleranz (Zittern beim Antippen soll nicht dazu fuehren,
@@ -473,6 +489,14 @@ class PhotoboothApp:
                         payload={"name": name, "decision": decision},
                         source="touch",
                     )
+
+        # NEU (Nutzer-Feedback): Zeilen der Wallpaper-Auswahlliste - gleiches
+        # Prinzip wie ADMIN_USB_CONFLICTS oben (Zeilenposition haengt vom
+        # Scroll-Offset ab, daher dynamische Hitboxen statt layout.py-Rects).
+        if state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
+            for rect, name in self.renderer.wallpaper_pick_row_hitboxes:
+                if rect.collidepoint(pos):
+                    return AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, payload={"name": name}, source="touch")
 
         if state == AppState.PIN_ENTRY:                       # NEU (3.4)
             return self._map_pin_entry_click(pos)
@@ -597,9 +621,6 @@ class PhotoboothApp:
             "admin_event_edit_wifi_password": AppEvent(
                 EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "wifi_password"}, source="touch",
             ),
-            "admin_event_wifi_password_toggle_visibility": AppEvent(
-                EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE, source="touch",
-            ),
             "admin_event_toggle_qr": AppEvent(
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "qr"}, source="touch",
             ),
@@ -609,6 +630,13 @@ class PhotoboothApp:
             "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
             "admin_event_save": AppEvent(EventType.TAP_ADMIN_EVENT_SAVE, source="touch"),
             "admin_event_restart_now": AppEvent(EventType.TAP_ADMIN_EVENT_RESTART_NOW, source="touch"),
+            # NEU (Nutzer-Feedback): statische Buttons des Wallpaper-
+            # Auswahl-Screens (die Listenzeilen selbst sind dynamisch, siehe
+            # das eigene Hitbox-Handling weiter oben in dieser Methode).
+            "admin_event_wallpaper_pick_save": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, source="touch"),
+            "admin_event_wallpaper_pick_cancel": AppEvent(
+                EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL, source="touch",
+            ),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -673,10 +701,16 @@ class PhotoboothApp:
                 return AppEvent(EventType.TEXT_ENTRY_SHIFT, source="touch")
             if name == "space":
                 return AppEvent(EventType.TEXT_ENTRY_CHAR, payload={"char": " "}, source="touch")
-            # Umschalt-Taste wirkt bewusst nur auf a-z (siehe layout.py-
-            # Kommentar zur vereinfachten Tastatur) - Ziffern/Umlaute/
-            # Satzzeichen bleiben davon unberuehrt.
-            char = name.upper() if (self.model.ui.admin_event_keyboard_shift and name.isalpha() and name.isascii()) else name
+            # GEAENDERT (Nutzer-Feedback): Umschalt wirkt jetzt zusaetzlich
+            # ueber KEYBOARD_SHIFT_MAP auf Ziffern/,.-  (deutsche QWERTZ-
+            # Sonderzeichen-Ebene) - ae/oe/ue bleiben weiterhin unveraendert.
+            shift = self.model.ui.admin_event_keyboard_shift
+            if shift and name in KEYBOARD_SHIFT_MAP:
+                char = KEYBOARD_SHIFT_MAP[name]
+            elif shift and name.isalpha() and name.isascii():
+                char = name.upper()
+            else:
+                char = name
             return AppEvent(EventType.TEXT_ENTRY_CHAR, payload={"char": char}, source="touch")
         return None
 
@@ -815,21 +849,20 @@ class PhotoboothApp:
                 self.dispatch(AppEvent(event_type, payload=job, source="usb"), now)
             return
 
-        # NEU (Veranstaltungsdaten): Wallpaper-Import-Job (Stick suchen/
-        # mounten/Bild kopieren/aushaengen) - bewusst nicht abbrechbar,
-        # gleiches Einzelwert-Poll-Muster wie ADMIN_USB_CHECK/_EJECT oben.
-        if state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
-            job = self._wallpaper_job_result
+        # GEAENDERT (Nutzer-Feedback): Wallpaper-Auswahl-Job (Stick suchen/
+        # mounten/Bilder AUFLISTEN, noch nichts kopiert) - bewusst nicht
+        # abbrechbar, gleiches Einzelwert-Poll-Muster wie ADMIN_USB_CHECK/
+        # _EJECT oben. Bei Erfolg bleibt der Stick gemountet
+        # (self._wallpaper_pick_stick) fuer die anschliessende Auswahlliste -
+        # kein invalidate_main_menu_background() mehr hier, das passiert erst
+        # beim tatsaechlichen Uebernehmen in _save_admin_event_settings.
+        if state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:
+            job = self._wallpaper_list_job_result
             if job is not None:
-                self._wallpaper_job_result = None
+                self._wallpaper_list_job_result = None
                 self._wallpaper_thread = None
-                if job.get("ok"):
-                    # Neues Wallpaper wirkt SOFORT, ohne App-Neustart - anders
-                    # als alle uebrigen Veranstaltungsdaten-Felder (siehe
-                    # renderer.invalidate_main_menu_background).
-                    self.renderer.invalidate_main_menu_background()
                 self.dispatch(
-                    AppEvent(EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, payload=job, source="wallpaper"),
+                    AppEvent(EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, payload=job, source="wallpaper"),
                     now,
                 )
             return
@@ -933,12 +966,13 @@ class PhotoboothApp:
             AppState.ADMIN_USB_CONFLICTS,
             # NEU (4.5): Ergebnis-Screen - nach 30s zurueck ins Hauptmenue.
             AppState.ADMIN_DELETE_DONE,
-            # NEU (Veranstaltungsdaten): Uebersicht/Tastatur/Wallpaper-
-            # Ergebnis/Gespeichert-Bestaetigung - bewusst OHNE
-            # ADMIN_EVENT_WALLPAPER_IMPORT (dort laeuft ein Hintergrund-
+            # NEU (Veranstaltungsdaten): Uebersicht/Tastatur/Wallpaper-Auswahl/
+            # -Ergebnis/Gespeichert-Bestaetigung - bewusst OHNE
+            # ADMIN_EVENT_WALLPAPER_PICK_LOADING (dort laeuft ein Hintergrund-
             # Thread, nicht unterbrechbar, idle_deadline ist dort ohnehin
-            # None).
+            # None; umbenannt von ADMIN_EVENT_WALLPAPER_IMPORT).
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
         }
 
@@ -1159,8 +1193,16 @@ class PhotoboothApp:
                 self._collect_admin_event_settings()
             elif action == "save_event_config":                # NEU (Veranstaltungsdaten)
                 self._save_admin_event_settings()
-            elif action == "wallpaper_import":                 # NEU (Veranstaltungsdaten)
-                self._wallpaper_start_import()
+            elif action == "wallpaper_pick_list":              # NEU (Nutzer-Feedback), war "wallpaper_import"
+                self._wallpaper_start_list()
+            elif action == "wallpaper_pick_stage":             # NEU (Nutzer-Feedback)
+                self._wallpaper_stage_selected()
+            elif action == "wallpaper_pick_discard":           # NEU (Nutzer-Feedback)
+                self._wallpaper_pick_discard()
+            elif action == "discard_pending_wallpaper":        # NEU (Nutzer-Feedback, Bugfix)
+                event_config_service.discard_pending_wallpaper(
+                    self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
+                )
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -1728,50 +1770,103 @@ class PhotoboothApp:
             "gallery_enabled": ui.admin_event_gallery_enabled,
         }
         ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
+        # NEU (Nutzer-Feedback, Bugfix): ein per Auswahlliste zwischen-
+        # gelagertes Wallpaper (admin_event_wallpaper_pending) wird JETZT,
+        # bei erfolgreichem "Speichern" - und nur jetzt - zum echten
+        # Hauptmenue-Wallpaper befoerdert. Bei save-Fehlschlag bewusst NICHT
+        # befoerdert (bleibt in der Zwischenablage liegen, bis der naechste
+        # Speichern-/Abbrechen-Versuch es befoerdert bzw. verwirft).
+        if ok and ui.admin_event_wallpaper_pending:
+            pending = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
+            target = self.config.assets_dir / "hauptmenu_wallpaper.png"
+            promoted, _promote_message = event_config_service.promote_pending_wallpaper(pending, target)
+            if promoted:
+                self.renderer.invalidate_main_menu_background()
         self.dispatch(
             AppEvent(EventType.ADMIN_EVENT_SAVE_RESULT, payload={"ok": ok, "message": message}, source="event_settings")
         )
 
-    def _wallpaper_start_import(self) -> None:
-        # NEU (Veranstaltungsdaten): Hintergrund-Thread nach demselben
+    def _wallpaper_start_list(self) -> None:
+        # NEU (Nutzer-Feedback): Hintergrund-Thread nach demselben
         # Einzelwert-Poll-Muster wie _usb_start_check - Stick suchen,
-        # einbinden, EIN Bild suchen und kopieren, wieder aushaengen. Setzt
-        # NIE self.dispatch() aus dem Thread heraus auf (siehe
-        # _emit_due_timers, das den Job pollt), sondern nur
-        # self._wallpaper_job_result.
+        # einbinden, ALLE Bilder AUFLISTEN (noch nichts kopieren). Anders
+        # als der fruehere Einmal-Ablauf bleibt der Stick bei Erfolg
+        # gemountet (self._wallpaper_pick_stick) - der Admin braucht ihn
+        # noch fuer die Auswahl auf dem naechsten Screen, gleiches Prinzip
+        # wie self._usb_stick beim USB-Export. Setzt NIE self.dispatch() aus
+        # dem Thread heraus auf (siehe _emit_due_timers, das den Job
+        # pollt), sondern nur self._wallpaper_list_job_result.
         def worker() -> None:
             try:
                 partition = admin_usb_service.pick_best_partition(admin_usb_service.find_usb_partitions())
                 if partition is None:
-                    self._wallpaper_job_result = {"ok": False, "lines": ("Kein USB-Stick gefunden.",)}
+                    self._wallpaper_list_job_result = {"ok": False, "lines": ("Kein USB-Stick gefunden.",)}
                     return
                 stick, mount_message = admin_usb_service.mount_partition(partition)
                 if stick is None:
-                    self._wallpaper_job_result = {"ok": False, "lines": (mount_message,)}
+                    self._wallpaper_list_job_result = {"ok": False, "lines": (mount_message,)}
                     return
-                try:
-                    source = event_config_service.find_wallpaper_on_stick(stick.mountpoint)
-                    if source is None:
-                        self._wallpaper_job_result = {
-                            "ok": False,
-                            "lines": ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",),
-                        }
-                        return
-                    target = self.config.assets_dir / "hauptmenu_wallpaper.png"
-                    ok, message = event_config_service.import_wallpaper(source, target)
-                    self._wallpaper_job_result = {"ok": ok, "lines": (message,)}
-                finally:
+                candidates = event_config_service.find_wallpaper_candidates(stick.mountpoint)
+                if not candidates:
                     if stick.mounted_by_us:
                         admin_usb_service.unmount(stick.mountpoint)
+                    self._wallpaper_list_job_result = {
+                        "ok": False,
+                        "lines": ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",),
+                    }
+                    return
+                # Stick bleibt bewusst gemountet - erst _wallpaper_stage_selected
+                # (Speichern) oder _wallpaper_pick_discard (Abbrechen) haengt
+                # ihn wieder aus.
+                self._wallpaper_pick_stick = stick
+                self._wallpaper_list_job_result = {
+                    "ok": True, "candidates": tuple(p.name for p in candidates),
+                }
             except Exception as exc:
-                print(f"[App] FEHLER beim Wallpaper-Import: {exc}")
-                self._wallpaper_job_result = {
+                print(f"[App] FEHLER bei der Wallpaper-Suche: {exc}")
+                self._wallpaper_list_job_result = {
                     "ok": False,
-                    "lines": ("Unerwarteter Fehler beim Wallpaper-Import.", str(exc)[:70]),
+                    "lines": ("Unerwarteter Fehler bei der Wallpaper-Suche.", str(exc)[:70]),
                 }
 
-        self._wallpaper_thread = threading.Thread(target=worker, name="wallpaper-import", daemon=True)
+        self._wallpaper_thread = threading.Thread(target=worker, name="wallpaper-list", daemon=True)
         self._wallpaper_thread.start()
+
+    def _wallpaper_stage_selected(self) -> None:
+        # NEU (Nutzer-Feedback): "Speichern" im Auswahl-Screen - kopiert NUR
+        # in die Zwischenablage (event_config_service.WALLPAPER_PENDING_
+        # FILENAME), macht die Auswahl noch NICHT zum echten Hauptmenue-
+        # Wallpaper (das passiert erst in _save_admin_event_settings, siehe
+        # Bugfix-Kommentar dort). Synchron statt Hintergrund-Thread: die
+        # Datei ist bereits auf dem gemounteten Stick lokalisiert (kein
+        # erneutes Suchen/Mounten noetig) und durch _MAX_WALLPAPER_BYTES auf
+        # maximal 30 MB begrenzt - ein kurzer, tolerierbarer Kopiervorgang,
+        # gleiches Prinzip wie das synchrone save_event_config oben.
+        stick = self._wallpaper_pick_stick
+        selected = self.model.ui.admin_event_wallpaper_selected
+        ok = False
+        message = "Kein USB-Stick mehr eingebunden."
+        if stick is not None and selected:
+            source = stick.mountpoint / selected
+            target = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
+            ok, message = event_config_service.import_wallpaper(source, target)
+        if stick is not None:
+            if stick.mounted_by_us:
+                admin_usb_service.unmount(stick.mountpoint)
+            self._wallpaper_pick_stick = None
+        self.dispatch(
+            AppEvent(EventType.ADMIN_EVENT_WALLPAPER_STAGE_RESULT, payload={"ok": ok, "message": message}, source="wallpaper")
+        )
+
+    def _wallpaper_pick_discard(self) -> None:
+        # NEU (Nutzer-Feedback): "Abbrechen" im Auswahl-Screen (oder
+        # Idle-Timeout) - haengt den Stick nur wieder aus, kein Datei-
+        # Vorgang (noch nichts wurde kopiert).
+        stick = self._wallpaper_pick_stick
+        if stick is not None:
+            if stick.mounted_by_us:
+                admin_usb_service.unmount(stick.mountpoint)
+            self._wallpaper_pick_stick = None
 
     def _read_admin_camera_settings(self) -> None:
         # NEU (Sprint 11, Feature 2): synchron ermittelt (ein gphoto2-
@@ -2010,14 +2105,16 @@ class PhotoboothApp:
             effect = LedEffect.INSTRUCTIONS_WAVE
         elif state in {
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
+            AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
         }:
             # NEU (Veranstaltungsdaten): gleiche ruhige Welle wie die
             # uebrigen Service-Menue-Unterseiten.
             effect = LedEffect.INSTRUCTIONS_WAVE
-        elif state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
+        elif state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:
             # NEU (Veranstaltungsdaten): "es passiert gerade etwas" - wie
-            # beim USB-Pruefen/Neustart.
+            # beim USB-Pruefen/Neustart. Umbenannt von
+            # ADMIN_EVENT_WALLPAPER_IMPORT.
             effect = LedEffect.CAPTURE_PROCESSING
         elif state == AppState.ADMIN_RESTART_PENDING:
             # NEU (4.3): gruen wie waehrend der Kamera-Verarbeitung -
@@ -2153,7 +2250,8 @@ class PhotoboothApp:
             # NEU (Veranstaltungsdaten): auch hier darf der Taster nichts
             # ausloesen (Service-Menue-Unterseite wie ADMIN_STATUS).
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
-            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
         }:
             self._button_provider.set_led(False)

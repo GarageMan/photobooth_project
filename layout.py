@@ -86,7 +86,6 @@ class LayoutRects:
     admin_event_prefix_row: pygame.Rect
     admin_event_wifi_ssid_row: pygame.Rect
     admin_event_wifi_password_row: pygame.Rect
-    admin_event_wifi_password_toggle_visibility: pygame.Rect
     admin_event_qr_toggle: pygame.Rect
     admin_event_gallery_toggle: pygame.Rect
     admin_event_wallpaper_button: pygame.Rect
@@ -96,6 +95,22 @@ class LayoutRects:
     # jedes Zeichen der vier Buchstaben-/Ziffernreihen sowie "shift",
     # "backspace", "space", "cancel", "submit".
     keyboard_keys: dict[str, pygame.Rect]
+
+
+# NEU (Nutzer-Feedback): Sonderzeichen-Ebene der Bildschirmtastatur
+# (ADMIN_EVENT_TEXT_ENTRY) bei gedruecktem "Umschalt" - deutsche QWERTZ-
+# Belegung (Ziffernreihe -> Sonderzeichen) sowie ,.- -> ;:_ (Unterstrich
+# wichtig als Trennzeichen im Datei-Praefix). Modul-Ebene statt innerhalb
+# von build_layout(), damit sowohl app_with_hw.py (Klick-Routing) als auch
+# renderer.py (Label-Anzeige) denselben einen Import nutzen koennen -
+# gleiches Prinzip wie admin_menu.ADMIN_MENU_ITEMS, das ebenfalls von
+# beiden Dateien importiert wird. ae/oe/ue sind bewusst NICHT enthalten -
+# die bleiben bei Umschalt unveraendert klein.
+KEYBOARD_SHIFT_MAP: dict[str, str] = {
+    "1": "!", "2": "\"", "3": "§", "4": "$", "5": "%",
+    "6": "&", "7": "/", "8": "(", "9": ")", "0": "=",
+    ",": ";", ".": ":", "-": "_",
+}
 
 
 def build_layout(width: int, height: int) -> LayoutRects:
@@ -294,11 +309,25 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # eigene, schmalere Randbreite als margin_x (0.10), damit auf einer
     # Zeile spuerbar mehr Platz fuer Label+Wert bleibt (Sichtpruefung auf
     # echter Hardware empfohlen, wie beim Kamera-Menue).
+    #
+    # GEAENDERT (Nutzer-Feedback): event_row_y0 von 0.10 auf 0.21 angehoben -
+    # der grosse Titel "Veranstaltungsdaten" wird generisch fest bei y=60px
+    # gezeichnet (siehe renderer._title_font_for/render()) und reichte bei
+    # 720px Bildschirmhoehe bis ca. 137px runter, ueberlappte also die erste
+    # Zeile. Titel bleibt (bewusst NICHT entfernt, Nutzerwunsch), stattdessen
+    # ruecken die Zeilen darunter. event_row_h/_step dafuer etwas verkleinert
+    # (0.075/0.088 -> 0.068/0.078), sonst waere kein Platz mehr fuer den
+    # Hinweistext ("Titel/Praefix/WLAN/..." siehe renderer.
+    # _draw_admin_event_settings) zwischen letzter Zeile und der Speichern/
+    # Abbrechen-Reihe geblieben. Letzte Zeile (Wallpaper-Button, Index 6)
+    # endet damit bei 0.21+6*0.078+0.068=0.746 - der Hinweistext sitzt in der
+    # verbleibenden Luecke bis lower_y=0.80 (Sichtpruefung auf echter
+    # Hardware empfohlen, wie beim Kamera-Menue).
     event_margin_x = 0.06
     event_row_w = 1 - 2 * event_margin_x
-    event_row_h = 0.075
-    event_row_y0 = 0.10
-    event_row_step = 0.088
+    event_row_h = 0.068
+    event_row_y0 = 0.21
+    event_row_step = 0.078
 
     def _event_row(index: int) -> pygame.Rect:
         return rect(event_margin_x, event_row_y0 + index * event_row_step, event_row_w, event_row_h)
@@ -310,21 +339,19 @@ def build_layout(width: int, height: int) -> LayoutRects:
     admin_event_qr_toggle = _event_row(4)
     admin_event_gallery_toggle = _event_row(5)
     admin_event_wallpaper_button = _event_row(6)
-    # Kleines Rect am rechten Rand der Passwortzeile - eigenes Tap-Ziel statt
-    # das Aufklappen der Tastatur zu ueberlagern (siehe app_with_hw.py).
-    admin_event_wifi_password_toggle_visibility = pygame.Rect(
-        admin_event_wifi_password_row.right - round(0.06 * width),
-        admin_event_wifi_password_row.y,
-        round(0.06 * width),
-        admin_event_wifi_password_row.height,
-    )
+    # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Umschalter fuer die
+    # WLAN-Passwort-Zeile - das Passwort steht jetzt immer als Klartext da,
+    # ein Sichtbarkeits-Umschalter ist nicht mehr noetig (siehe renderer.py).
 
     # NEU (Veranstaltungsdaten): QWERTZ-Bildschirmtastatur (deutsche
-    # Tastenanordnung inkl. ae/oe/ue) fuer ADMIN_EVENT_TEXT_ENTRY. Bewusst
-    # vereinfacht: kein volles Sonderzeichen-Layer, "shift" wirkt nur auf
-    # Buchstaben a-z (siehe state_machine._map_admin_event_text_entry_click
-    # in app_with_hw.py) - reicht fuer Titel/Praefix/SSID/Passwort, ohne die
-    # Tastenflaeche auf dem 1280x720-Panel unbedienbar klein zu machen.
+    # Tastenanordnung inkl. ae/oe/ue) fuer ADMIN_EVENT_TEXT_ENTRY.
+    #
+    # GEAENDERT (Nutzer-Feedback): "Umschalt" wirkt jetzt nicht mehr nur auf
+    # Buchstaben a-z, sondern zusaetzlich ueber KEYBOARD_SHIFT_MAP auf die
+    # Ziffernreihe (-> Sonderzeichen, deutsche QWERTZ-Belegung) sowie ,.-
+    # (-> ;:_ - der Unterstrich wird als Trennzeichen im Datei-Praefix
+    # gebraucht). ae/oe/ue bleiben bewusst unveraendert (siehe
+    # app_with_hw._map_admin_event_text_entry_click/renderer.py).
     kb_key_h = 0.10
     kb_key_w = (kb_key_h * height) / width
     kb_gap_y = 0.012
@@ -348,22 +375,35 @@ def build_layout(width: int, height: int) -> LayoutRects:
         for col_index, char in enumerate(row_chars):
             keyboard_keys[char] = _kb_key_rect(row_index, col_index, len(row_chars))
 
-    # Untere Reihe: Umschalt/Loeschen/Leerzeichen/Abbrechen/OK als fuenf
-    # gleich breite Tasten - gleiche margin_x-Logik wie die Zwei-Button-Reihe
-    # oben (event_margin_x bis 1-event_margin_x).
-    kb_bottom_y = kb_y0 + len(_KEYBOARD_ROWS) * (kb_key_h + kb_gap_y)
+    # GEAENDERT (Nutzer-Feedback): statt einer Reihe mit fuenf gleich breiten
+    # Tasten jetzt ZWEI Reihen:
+    #   Reihe A (direkt unter "yxcvb..."): Umschalt (schmaler) | Leertaste
+    #     (dominant, 50% breiter) | DEL - Verhaeltnis 0.8 : 1.5 : 1.0.
+    #   Reihe B (darunter): Abbrechen | Speichern - je zur Haelfte, gleiche
+    #     Zwei-Button-Aufteilung wie admin_camera_cancel/admin_camera_save,
+    #     nur auf event_margin_x statt margin_x bezogen.
+    kb_row_a_y = kb_y0 + len(_KEYBOARD_ROWS) * (kb_key_h + kb_gap_y)
+    kb_row_b_y = kb_row_a_y + kb_key_h + kb_gap_y
     kb_bottom_gap = 0.015
-    kb_bottom_w = (1 - 2 * event_margin_x - 4 * kb_bottom_gap) / 5
 
-    def _kb_bottom_rect(index: int) -> pygame.Rect:
-        x = event_margin_x + index * (kb_bottom_w + kb_bottom_gap)
-        return rect(x, kb_bottom_y, kb_bottom_w, kb_key_h)
+    kb_row_a_unit = (event_row_w - 2 * kb_bottom_gap) / (0.8 + 1.5 + 1.0)
+    kb_shift_w = 0.8 * kb_row_a_unit
+    kb_space_w = 1.5 * kb_row_a_unit
+    kb_del_w = 1.0 * kb_row_a_unit
 
-    keyboard_keys["shift"] = _kb_bottom_rect(0)
-    keyboard_keys["backspace"] = _kb_bottom_rect(1)
-    keyboard_keys["space"] = _kb_bottom_rect(2)
-    keyboard_keys["cancel"] = _kb_bottom_rect(3)
-    keyboard_keys["submit"] = _kb_bottom_rect(4)
+    keyboard_keys["shift"] = rect(event_margin_x, kb_row_a_y, kb_shift_w, kb_key_h)
+    keyboard_keys["space"] = rect(
+        event_margin_x + kb_shift_w + kb_bottom_gap, kb_row_a_y, kb_space_w, kb_key_h,
+    )
+    keyboard_keys["backspace"] = rect(
+        event_margin_x + kb_shift_w + kb_space_w + 2 * kb_bottom_gap, kb_row_a_y, kb_del_w, kb_key_h,
+    )
+
+    kb_row_b_w = (event_row_w - kb_bottom_gap) / 2
+    keyboard_keys["cancel"] = rect(event_margin_x, kb_row_b_y, kb_row_b_w, kb_key_h)
+    keyboard_keys["submit"] = rect(
+        event_margin_x + kb_row_b_w + kb_bottom_gap, kb_row_b_y, kb_row_b_w, kb_key_h,
+    )
 
     return LayoutRects(
         main_photo=main_photo,
@@ -403,7 +443,6 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_prefix_row=admin_event_prefix_row,
         admin_event_wifi_ssid_row=admin_event_wifi_ssid_row,
         admin_event_wifi_password_row=admin_event_wifi_password_row,
-        admin_event_wifi_password_toggle_visibility=admin_event_wifi_password_toggle_visibility,
         admin_event_qr_toggle=admin_event_qr_toggle,
         admin_event_gallery_toggle=admin_event_gallery_toggle,
         admin_event_wallpaper_button=admin_event_wallpaper_button,
@@ -504,7 +543,6 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_edit_prefix": rects.admin_event_prefix_row,
             "admin_event_edit_wifi_ssid": rects.admin_event_wifi_ssid_row,
             "admin_event_edit_wifi_password": rects.admin_event_wifi_password_row,
-            "admin_event_wifi_password_toggle_visibility": rects.admin_event_wifi_password_toggle_visibility,
             "admin_event_toggle_qr": rects.admin_event_qr_toggle,
             "admin_event_toggle_gallery": rects.admin_event_gallery_toggle,
             "admin_event_wallpaper": rects.admin_event_wallpaper_button,
@@ -516,10 +554,23 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         # (app_with_hw._map_click_to_event special-cased diesen State,
         # analog zu PIN_ENTRY) - nur der Vollstaendigkeit halber mitgefuehrt.
         return rects.keyboard_keys
-    if state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:
+    if state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:
         # Laeuft, nicht abbrechbar - bewusst kein Button (analog
-        # ADMIN_USB_CHECK).
+        # ADMIN_USB_CHECK). Umbenannt von ADMIN_EVENT_WALLPAPER_IMPORT
+        # (Nutzer-Feedback: Stick wird jetzt nur noch nach Bildern
+        # DURCHSUCHT, nicht mehr automatisch das erste gefundene Bild
+        # kopiert - siehe ADMIN_EVENT_WALLPAPER_PICK).
         return {}
+    if state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
+        # NEU (Nutzer-Feedback): scrollbare Bilderliste vom Stick - die
+        # Zeilen selbst sind dynamisch (siehe renderer._draw_admin_event_
+        # wallpaper_pick/app_with_hw._map_click_to_event, gleiches Prinzip
+        # wie ADMIN_USB_CONFLICTS), nur "Speichern"/"Abbrechen" sind
+        # statisch und nutzen die vorhandenen rects.left/rects.right.
+        return {
+            "admin_event_wallpaper_pick_save": rects.left,
+            "admin_event_wallpaper_pick_cancel": rects.right,
+        }
     if state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:
         return {"back": rects.back}
     if state == AppState.ADMIN_EVENT_SAVED:

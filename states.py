@@ -72,14 +72,25 @@ class AppState(Enum):
     # ui.admin_event_edit_field. Ein gemeinsamer Screen fuer Titel/Praefix/
     # WLAN-SSID/WLAN-Passwort statt vier fast identischer States.
     ADMIN_EVENT_TEXT_ENTRY = auto()
-    # Hintergrund-Thread sucht einen USB-Stick, kopiert ein gefundenes Bild
-    # als neues Hauptmenue-Wallpaper - bewusst nicht abbrechbar, analog zu
-    # ADMIN_USB_CHECK.
-    ADMIN_EVENT_WALLPAPER_IMPORT = auto()
-    # Ergebnis-Screen des Wallpaper-Imports (Erfolg/Fehlermeldung). Eigener
-    # State statt Rueckkehr auf ADMIN_EVENT_SETTINGS direkt, damit "Zurueck"
-    # gezielt in die noch offene Bearbeitung zurueckfuehrt, ohne diese wie
-    # ein normales Verlassen des Screens zu behandeln (siehe state_machine.py).
+    # GEAENDERT (Nutzer-Feedback): Hintergrund-Thread sucht einen USB-Stick
+    # und listet ALLE gefundenen Bilder darauf (statt wie bisher automatisch
+    # das alphabetisch erste zu kopieren) - bewusst nicht abbrechbar, analog
+    # zu ADMIN_USB_CHECK. Umbenannt von ADMIN_EVENT_WALLPAPER_IMPORT, da
+    # hier nichts mehr importiert/kopiert wird, nur gesucht/gelistet.
+    ADMIN_EVENT_WALLPAPER_PICK_LOADING = auto()
+    # NEU (Nutzer-Feedback): scrollbare Liste der auf dem Stick gefundenen
+    # Bilder - Antippen markiert eine Auswahl, "Speichern" kopiert NUR in
+    # eine Zwischenablage (noch nicht das echte Hauptmenue-Wallpaper, siehe
+    # event_config_service.py), "Abbrechen" verwirft die Auswahl. Der
+    # USB-Stick bleibt waehrend dieses gesamten Screens gemountet (analog
+    # zum USB-Export-Ablauf, self._wallpaper_pick_stick in app_with_hw.py)
+    # und wird erst beim Verlassen (Speichern ODER Abbrechen) wieder
+    # ausgehaengt.
+    ADMIN_EVENT_WALLPAPER_PICK = auto()
+    # Nur noch FEHLER-Anzeige (kein Stick gefunden/Mount fehlgeschlagen/
+    # keine Bilder auf dem Stick) - der Erfolgsfall fuehrt seit der
+    # Auswahlliste (ADMIN_EVENT_WALLPAPER_PICK) direkt zurueck auf
+    # ADMIN_EVENT_SETTINGS statt hierher.
     ADMIN_EVENT_WALLPAPER_RESULT = auto()
     # Nach erfolgreichem Speichern: bietet "Jetzt neu starten" (fuehrt in
     # ADMIN_RESTART_PENDING, exakt derselbe Ablauf wie der bestehende

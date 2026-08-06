@@ -630,15 +630,14 @@ class StateMachine:
                 return TransitionResult(model=model)
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
             return TransitionResult(model=model.evolve(ui=ui, timers=timers))
-        if event.type == EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE:
-            ui = replace(model.ui, admin_event_wifi_password_visible=not model.ui.admin_event_wifi_password_visible)
-            return TransitionResult(model=model.evolve(ui=ui))
         if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT:
-            return self._go_admin_event_wallpaper_import(model, now)
+            return self._go_admin_event_wallpaper_pick_loading(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_SAVE:
             # Schreibt noch nicht selbst - das Ergebnis kommt synchron als
             # ADMIN_EVENT_SAVE_RESULT zurueck (siehe
-            # app_with_hw._save_admin_event_settings).
+            # app_with_hw._save_admin_event_settings, das bei Erfolg
+            # zusaetzlich ein evtl. zwischengelagertes Wallpaper befoerdert -
+            # siehe admin_event_wallpaper_pending).
             return TransitionResult(model=model, actions=("save_event_config",))
         if event.type == EventType.ADMIN_EVENT_SAVE_RESULT:
             ui = replace(
@@ -661,7 +660,17 @@ class StateMachine:
                 admin_event_qr_enabled=model.ui.admin_event_entry_qr_enabled,
                 admin_event_gallery_enabled=model.ui.admin_event_entry_gallery_enabled,
             )
-            return self._go_admin_menu(model.evolve(ui=ui), now)
+            menu_result = self._go_admin_menu(model.evolve(ui=ui), now)
+            # NEU (Nutzer-Feedback, Bugfix): ein evtl. in dieser Sitzung
+            # zwischengelagertes Wallpaper (siehe admin_event_wallpaper_pending)
+            # darf beim Abbrechen NICHT zum Hauptmenue-Wallpaper werden - die
+            # Zwischenablage-Datei wird hier verworfen. Immer angehaengt
+            # (auch wenn nichts zwischengelagert wurde) - die Action ist ein
+            # No-Op ohne vorhandene Datei, siehe event_config_service.
+            # discard_pending_wallpaper.
+            return TransitionResult(
+                model=menu_result.model, actions=("discard_pending_wallpaper",) + menu_result.actions,
+            )
         return TransitionResult(model=model)
 
     def _go_admin_event_settings(self, model: AppModel, now: float) -> TransitionResult:
@@ -684,11 +693,13 @@ class StateMachine:
             admin_event_edit_field="",
             admin_event_text_buffer="",
             admin_event_keyboard_shift=False,
-            admin_event_wifi_password_visible=False,
             admin_event_save_ok=False,
             admin_event_save_message="",
             admin_event_wallpaper_lines=(),
             admin_event_wallpaper_ok=False,
+            admin_event_wallpaper_candidates=(),
+            admin_event_wallpaper_selected="",
+            admin_event_wallpaper_pending=False,
         )
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
         return TransitionResult(
@@ -745,9 +756,6 @@ class StateMachine:
         if event.type == EventType.TEXT_ENTRY_SHIFT:
             ui = replace(model.ui, admin_event_keyboard_shift=not model.ui.admin_event_keyboard_shift)
             return TransitionResult(model=model.evolve(ui=ui))
-        if event.type == EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE:
-            ui = replace(model.ui, admin_event_wifi_password_visible=not model.ui.admin_event_wifi_password_visible)
-            return TransitionResult(model=model.evolve(ui=ui))
         if event.type == EventType.TEXT_ENTRY_SUBMIT:
             value = model.ui.admin_event_text_buffer.strip()
             result_model = model
@@ -763,23 +771,86 @@ class StateMachine:
             return self._return_to_admin_event_settings(model, now)
         return TransitionResult(model=model)
 
-    # Wallpaper-Import: Hintergrund-Thread (Stick suchen/mounten/Bild
-    # kopieren/aushaengen, siehe app_with_hw._wallpaper_start_import) -
-    # bewusst nicht abbrechbar, analog ADMIN_USB_CHECK.
-    def _go_admin_event_wallpaper_import(self, model: AppModel, now: float) -> TransitionResult:
-        ui = replace(model.ui, status_text="Wallpaper wird von USB-Stick geladen ...", error_text=None)
+    # Wallpaper-Auswahl: Hintergrund-Thread (Stick suchen/mounten/Bilder
+    # AUFLISTEN, noch nichts kopiert - siehe app_with_hw._wallpaper_start_list)
+    # - bewusst nicht abbrechbar, analog ADMIN_USB_CHECK. Bei Erfolg bleibt
+    # der Stick gemountet (self._wallpaper_pick_stick in app_with_hw.py) und
+    # es geht weiter zur Auswahlliste; nur bei Fehlschlag/leerem Ergebnis
+    # zeigt ADMIN_EVENT_WALLPAPER_RESULT die Fehlermeldung.
+    def _go_admin_event_wallpaper_pick_loading(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(model.ui, status_text="USB-Stick wird durchsucht ...", error_text=None)
         timers = replace(model.timers, idle_deadline=None)
         return TransitionResult(
-            model=model.evolve(state=AppState.ADMIN_EVENT_WALLPAPER_IMPORT, ui=ui, timers=timers),
-            actions=("wallpaper_import",),
+            model=model.evolve(state=AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, ui=ui, timers=timers),
+            actions=("wallpaper_pick_list",),
         )
 
-    def _handle_admin_event_wallpaper_import(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
-        if event.type == EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED:
+    def _handle_admin_event_wallpaper_pick_loading(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED:
             ok = bool(event.payload.get("ok", False))
-            lines = tuple(event.payload.get("lines", ()))
-            return self._go_admin_event_wallpaper_result(model, now, ok, lines)
+            candidates = tuple(event.payload.get("candidates", ()))
+            if ok and candidates:
+                return self._go_admin_event_wallpaper_pick(model, now, candidates)
+            lines = tuple(event.payload.get("lines", ())) or ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",)
+            return self._go_admin_event_wallpaper_result(model, now, False, lines)
         return TransitionResult(model=model)
+
+    # NEU (Nutzer-Feedback): scrollbare Auswahlliste - Antippen einer Zeile
+    # markiert sie nur (admin_event_wallpaper_selected), "Speichern" kopiert
+    # die Auswahl in eine Zwischenablage (action wallpaper_pick_stage,
+    # synchron - siehe app_with_hw._wallpaper_stage_selected), "Abbrechen"
+    # verwirft nur den USB-Mount wieder (action wallpaper_pick_discard).
+    # WICHTIG (Bugfix): keines von beidem macht das Bild bereits zum echten
+    # Hauptmenue-Wallpaper - das passiert erst beim AEUSSEREN "Speichern"
+    # auf ADMIN_EVENT_SETTINGS (siehe _handle_admin_event_settings/
+    # app_with_hw._save_admin_event_settings).
+    def _go_admin_event_wallpaper_pick(
+        self, model: AppModel, now: float, candidates: tuple[str, ...],
+    ) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Wallpaper auswählen",
+            error_text=None,
+            admin_event_wallpaper_candidates=candidates,
+            admin_event_wallpaper_selected="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_WALLPAPER_PICK, ui=ui, timers=timers))
+
+    def _handle_admin_event_wallpaper_pick(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT:
+            name = str(event.payload.get("name", ""))
+            if not name:
+                return TransitionResult(model=model)
+            ui = replace(model.ui, admin_event_wallpaper_selected=name)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE:
+            # Ohne Auswahl passiert nichts (kein Fehlertext noetig, "Speichern"
+            # bleibt einfach wirkungslos, bis eine Zeile angetippt wurde).
+            if not model.ui.admin_event_wallpaper_selected:
+                return TransitionResult(model=model)
+            return TransitionResult(model=model, actions=("wallpaper_pick_stage",))
+        if event.type == EventType.ADMIN_EVENT_WALLPAPER_STAGE_RESULT:
+            ok = bool(event.payload.get("ok", False))
+            if ok:
+                ui = replace(model.ui, admin_event_wallpaper_pending=True)
+                return self._return_to_admin_event_settings(model.evolve(ui=ui), now)
+            lines = (str(event.payload.get("message", "Wallpaper konnte nicht übernommen werden.")),)
+            return self._go_admin_event_wallpaper_result(model, now, False, lines)
+        if event.type in {EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL, EventType.IDLE_TIMEOUT}:
+            return self._return_to_admin_event_settings_with_action(model, now, "wallpaper_pick_discard")
+        return TransitionResult(model=model)
+
+    def _return_to_admin_event_settings_with_action(
+        self, model: AppModel, now: float, action: str,
+    ) -> TransitionResult:
+        """Wie _return_to_admin_event_settings, haengt aber zusaetzlich eine
+        Action an (z.B. den USB-Stick der Wallpaper-Auswahl wieder
+        aushaengen) - eigene kleine Hilfsmethode, damit die Aufrufer nicht
+        jedes Mal TransitionResult von Hand zusammenbauen muessen."""
+        result = self._return_to_admin_event_settings(model, now)
+        return TransitionResult(model=result.model, actions=(action,) + result.actions)
 
     def _go_admin_event_wallpaper_result(
         self, model: AppModel, now: float, ok: bool, lines: tuple[str, ...],

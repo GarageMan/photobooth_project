@@ -112,13 +112,32 @@ class EventType(Enum):
     TAP_ADMIN_EVENT_FIELD_EDIT = auto()
     # payload: {"field": "qr"|"gallery"} - kippt den jeweiligen Schalter.
     TAP_ADMIN_EVENT_TOGGLE = auto()
-    # Zeigt/verbirgt das Gaeste-WLAN-Passwort im Klartext - gilt fuer die
-    # Uebersicht UND den Tastatur-Screen (ein gemeinsames Flag).
-    TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE = auto()
+    # ENTFERNT (Nutzer-Feedback): TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE -
+    # das WLAN-Passwort steht jetzt immer als Klartext da, kein Umschalter
+    # mehr noetig.
+    # Oeffnet den Wallpaper-Auswahl-Screen (Bedeutung geaendert, Name
+    # bewusst gleich geblieben): fruehner "jetzt importieren", jetzt "Stick
+    # nach Bildern durchsuchen und Auswahlliste zeigen" - siehe
+    # ADMIN_EVENT_WALLPAPER_PICK_LOADING/_PICK in states.py.
     TAP_ADMIN_EVENT_WALLPAPER_IMPORT = auto()
-    # Hintergrund-Thread (Stick suchen/einbinden/Bild kopieren/aushaengen)
-    # ist fertig; payload: ok, lines.
-    ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED = auto()
+    # Hintergrund-Thread (Stick suchen/einbinden/Bilder AUFLISTEN, noch
+    # NICHTS kopiert) ist fertig; payload: ok, lines, candidates.
+    ADMIN_EVENT_WALLPAPER_LIST_FINISHED = auto()
+    # NEU (Nutzer-Feedback): Auswahl-Screen ADMIN_EVENT_WALLPAPER_PICK.
+    # Antippen einer Zeile markiert sie (payload: {"name": str}, gleiches
+    # Prinzip wie TAP_ADMIN_USB_CONFLICT_DECISION).
+    TAP_ADMIN_EVENT_WALLPAPER_SELECT = auto()
+    # "Speichern" im Auswahl-Screen - kopiert die Auswahl NUR in eine
+    # Zwischenablage (event_config_service.WALLPAPER_PENDING_FILENAME),
+    # noch NICHT in das echte Hauptmenue-Wallpaper (siehe
+    # app_with_hw._wallpaper_stage_selected).
+    TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE = auto()
+    # "Abbrechen" im Auswahl-Screen - verwirft die Auswahl, haengt den
+    # Stick nur wieder aus (kein Datei-Vorgang).
+    TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL = auto()
+    # Ergebnis des synchronen Kopierens in die Zwischenablage; payload:
+    # ok, message.
+    ADMIN_EVENT_WALLPAPER_STAGE_RESULT = auto()
     TAP_ADMIN_EVENT_SAVE = auto()
     # Ergebnis des synchronen JSON-Schreibens; payload: ok, message.
     ADMIN_EVENT_SAVE_RESULT = auto()

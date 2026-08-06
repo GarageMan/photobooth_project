@@ -10,7 +10,7 @@ import pygame
 from PIL import Image as PILImage
 
 from config import AppConfig
-from layout import LayoutRects, build_layout
+from layout import KEYBOARD_SHIFT_MAP, LayoutRects, build_layout
 from models import AppModel
 from states import AppState
 from admin_menu import ADMIN_MENU_ITEMS, build_admin_rects  # NEU (4.1)
@@ -129,6 +129,11 @@ class Renderer:
         # app_with_hw._map_click_to_event gegen den Tap geprueft - gleiches
         # Muster wie gallery_thumbnail_hitboxes.
         self.usb_conflict_row_hitboxes: list[tuple[pygame.Rect, str, str]] = []
+        # NEU (Nutzer-Feedback): Scroll-Position + Trefferflaechen der
+        # Wallpaper-Auswahlliste - gleiches Prinzip wie
+        # usb_conflicts_scroll_offset/usb_conflict_row_hitboxes oben.
+        self.wallpaper_pick_scroll_offset: int = 0
+        self.wallpaper_pick_row_hitboxes: list[tuple[pygame.Rect, str]] = []
         self._last_rendered_state: AppState | None = None
         # NEU (Nutzer-Feedback, Screenshot "Dateien mit abweichendem Inhalt
         # gef[unden]" ragte rechts ueber den Bildschirmrand hinaus): Cache
@@ -153,6 +158,10 @@ class Renderer:
         # einem erneuten Export) beginnt oben, nicht an einer alten Position.
         if model.state == AppState.ADMIN_USB_CONFLICTS and self._last_rendered_state != AppState.ADMIN_USB_CONFLICTS:
             self.usb_conflicts_scroll_offset = 0
+        # NEU (Nutzer-Feedback): gleiches Prinzip fuer die Wallpaper-
+        # Auswahlliste.
+        if model.state == AppState.ADMIN_EVENT_WALLPAPER_PICK and self._last_rendered_state != AppState.ADMIN_EVENT_WALLPAPER_PICK:
+            self.wallpaper_pick_scroll_offset = 0
         # Neuer Countdown-Durchlauf (State-Wechsel IN COUNTDOWN hinein) -
         # zufaellig ein neues "bitte laecheln"-Bild fuer diesen Durchlauf
         # ziehen, damit es bei jedem Foto wechselt statt immer gleich zu sein.
@@ -240,8 +249,11 @@ class Renderer:
         if model.state == AppState.ADMIN_EVENT_TEXT_ENTRY:    # NEU (Veranstaltungsdaten)
             self._draw_admin_event_text_entry(model)
 
-        if model.state == AppState.ADMIN_EVENT_WALLPAPER_IMPORT:  # NEU (Veranstaltungsdaten)
-            self._draw_admin_event_wallpaper_import(model)
+        if model.state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:  # NEU (Veranstaltungsdaten)
+            self._draw_admin_event_wallpaper_pick_loading(model)
+
+        if model.state == AppState.ADMIN_EVENT_WALLPAPER_PICK:  # NEU (Nutzer-Feedback)
+            self._draw_admin_event_wallpaper_pick(model)
 
         if model.state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:  # NEU (Veranstaltungsdaten)
             self._draw_admin_event_wallpaper_result(model)
@@ -334,7 +346,8 @@ class Renderer:
             # generischen status_text-Mechanismus weiter unten (gleiches
             # Prinzip wie die USB-Screens) statt eines eigenen Titel-Blocks.
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
-            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
         }
 
@@ -364,7 +377,8 @@ class Renderer:
             # ADMIN_EVENT_SAVE_RESULT) - gleiches Prinzip wie bei den
             # USB-Screens oben.
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
-            AppState.ADMIN_EVENT_WALLPAPER_IMPORT, AppState.ADMIN_EVENT_WALLPAPER_RESULT,
+            AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
+            AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
         }:
             # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
@@ -1907,14 +1921,24 @@ class Renderer:
         elif state == AppState.ADMIN_EVENT_SETTINGS:
             self._draw_button("Speichern", self.layout.left, (0, 150, 0))
             self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
-            self._draw_button("Wallpaper von USB laden", self.layout.admin_event_wallpaper_button, (0, 90, 130))
-            # NEU (Veranstaltungsdaten): kleiner "Anzeigen"/"Verbergen"-Button
-            # neben der Passwortzeile - Wert selbst wird in
-            # _draw_admin_event_settings gezeichnet, dies ist nur der Umschalter.
-            eye_label = "Verbergen" if self._admin_event_wifi_password_visible else "Anzeigen"
+            # GEAENDERT (Nutzer-Feedback): Schrift verkleinert, damit sie zur
+            # uebrigen (kompakteren) Schriftgroesse dieses Screens passt
+            # (font_body_admin, siehe _draw_admin_event_settings) statt der
+            # vorherigen grossen Standard-Buttonschrift.
             self._draw_button(
-                eye_label, self.layout.admin_event_wifi_password_toggle_visibility, (70, 70, 75), font_size=28,
+                "Wallpaper von USB laden", self.layout.admin_event_wallpaper_button, (0, 90, 130), font_size=30,
             )
+            # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Button - das
+            # WLAN-Passwort steht jetzt immer als Klartext da.
+        elif state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
+            # NEU (Nutzer-Feedback): Auswahlliste - "Speichern" kopiert die
+            # markierte Zeile NUR in eine Zwischenablage (siehe
+            # event_config_service.WALLPAPER_PENDING_FILENAME), noch nicht
+            # in das echte Hauptmenue-Wallpaper. Kein eigener "deaktiviert"-
+            # Look ohne Auswahl - der Tap ist dann einfach wirkungslos
+            # (state_machine._handle_admin_event_wallpaper_pick).
+            self._draw_button("Speichern", self.layout.left, (0, 150, 0))
+            self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
         elif state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.ADMIN_EVENT_SAVED:
@@ -1922,8 +1946,8 @@ class Renderer:
             self._draw_button("Später", self.layout.right, (100, 100, 100))
         # ADMIN_EVENT_TEXT_ENTRY zeichnet die Tastatur komplett selbst (siehe
         # _draw_admin_event_text_entry, analog zu PIN_ENTRY).
-        # ADMIN_EVENT_WALLPAPER_IMPORT: bewusst kein Button - laeuft, nicht
-        # abbrechbar (analog ADMIN_USB_CHECK).
+        # ADMIN_EVENT_WALLPAPER_PICK_LOADING: bewusst kein Button - laeuft,
+        # nicht abbrechbar (analog ADMIN_USB_CHECK).
         elif state == AppState.ADMIN_SHUTDOWN_CONFIRM:
             # NEU (Sprint-11-Nachbesserung): gleiche Farbgebung/Anordnung wie
             # ADMIN_DELETE_CONFIRM - "Nein" links neutral, "Ja" rechts rot.
@@ -2117,25 +2141,18 @@ class Renderer:
         ohne eigene Optik aus layout.py - die sichtbare "Karte" je Zeile wird
         hier gezeichnet, analog zu _draw_button() aber links ausgerichtet
         (Label+Wert passen sonst nicht nebeneinander). Der Button "Wallpaper
-        von USB laden" sowie "Speichern"/"Abbrechen"/"Anzeigen"/"Verbergen"
-        werden bereits von _draw_buttons() gezeichnet, hier nicht nochmal."""
+        von USB laden" sowie "Speichern"/"Abbrechen" werden bereits von
+        _draw_buttons() gezeichnet, hier nicht nochmal."""
         ui = model.ui
         height = self.config.screen.height
-        # NEU: merkt sich fuer _draw_buttons (wird danach aufgerufen, siehe
-        # render()), ob der Passwort-Sichtbarkeits-Button "Anzeigen" oder
-        # "Verbergen" beschriftet werden muss - gleiches Prinzip wie
-        # self._admin_camera_page in _draw_admin_camera_settings.
-        self._admin_event_wifi_password_visible = ui.admin_event_wifi_password_visible
 
-        password_display = (
-            ui.admin_event_wifi_password if ui.admin_event_wifi_password_visible
-            else "•" * len(ui.admin_event_wifi_password)
-        )
+        # GEAENDERT (Nutzer-Feedback): WLAN-Passwort steht jetzt immer im
+        # Klartext da - kein Masken-/Sichtbarkeits-Umschalter mehr.
         rows = (
             (self.layout.admin_event_title_row, "Titel", ui.admin_event_title or "-"),
             (self.layout.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix or "-"),
             (self.layout.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid or "-"),
-            (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", password_display or "-"),
+            (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", ui.admin_event_wifi_password or "-"),
         )
         for rect, label, value in rows:
             pygame.draw.rect(self.screen, (45, 50, 60), rect, border_radius=10)
@@ -2160,12 +2177,21 @@ class Renderer:
                 (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
             )
 
-        # Hinweis: nur das Wallpaper (Button darunter, siehe _draw_buttons)
-        # wirkt sofort - alle uebrigen Felder erst nach einem Neustart der
-        # App (AppConfig ist ein frozen Dataclass, siehe config.py).
+        # Hinweis: Titel/Praefix/WLAN/Schalter wirken erst nach einem
+        # Neustart der App (AppConfig ist ein frozen Dataclass, siehe
+        # config.py) - der Text erwaehnt bewusst KEIN "Wallpaper", das bleibt
+        # weiterhin die eine Ausnahme (wirkt sofort). GEAENDERT (Nutzer-
+        # Feedback, Bugfix): "sofort" heisst jetzt aber erst ab dem Klick auf
+        # "Speichern" hier auf der Uebersicht, nicht mehr schon direkt nach
+        # dem USB-Import wie bisher - siehe event_config_service.
+        # promote_pending_wallpaper/app_with_hw._save_admin_event_settings.
+        # GEAENDERT (Nutzer-Feedback): leuchtendes Orange statt dezentem
+        # Grau, und tiefer positioniert (0.773 statt 0.745), da die Zeilen
+        # darueber wegen der Titel-Ueberlappungs-Korrektur (siehe layout.py,
+        # event_row_y0) enger zusammengerueckt sind.
         self._blit_center(
             "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
-            self.font_small, (170, 170, 170), round(0.745 * height),
+            self.font_small, (255, 165, 0), round(0.773 * height),
         )
 
     def _draw_admin_event_text_entry(self, model: AppModel) -> None:
@@ -2174,25 +2200,35 @@ class Renderer:
         Feld gerade bearbeitet wird, steht in ui.admin_event_edit_field (die
         Kopfzeile mit dem Feldnamen kommt bereits ueber status_text, siehe
         render()). Analog zu _draw_pin_entry(), aber mit freiem Text statt
-        maskierten Ziffern. Bewusst vereinfacht: "Umschalt" wirkt nur auf
-        Buchstaben a-z, kein volles Sonderzeichen-Layer (siehe layout.py)."""
+        maskierten Ziffern.
+
+        GEAENDERT (Nutzer-Feedback): "Umschalt" wirkt jetzt nicht mehr nur
+        auf Buchstaben a-z, sondern zusaetzlich ueber KEYBOARD_SHIFT_MAP auf
+        die Ziffernreihe/,.-  (siehe layout.py). WLAN-Passwort wird nicht
+        mehr maskiert (immer Klartext). Ein Cursor-Strich zeigt die
+        Schreibposition (immer am Ende - kein mittiges Editieren
+        vorgesehen)."""
         ui = model.ui
         width, height = self.config.screen.width, self.config.screen.height
 
         buffer = ui.admin_event_text_buffer
-        masked = ui.admin_event_edit_field == "wifi_password" and not ui.admin_event_wifi_password_visible
-        display_text = ("•" * len(buffer)) if masked else buffer
+        display_text = buffer + "|"
         text_cy = round(0.075 * height)
-        self._blit_center(display_text or " ", self.font_body_admin, (255, 255, 255), text_cy)
-        line_y = text_cy + self.font_body_admin.get_linesize() // 2 + 10
-        pygame.draw.line(
-            self.screen, (120, 120, 130), (round(0.15 * width), line_y), (round(0.85 * width), line_y), 2,
-        )
+        # NEU (Nutzer-Feedback): Linie jetzt auch OBERHALB des Eingabetexts,
+        # nicht mehr nur darunter - rahmt das Eingabefeld symmetrisch ein.
+        half_line_gap = self.font_body_admin.get_linesize() // 2 + 10
+        line_y_above = text_cy - half_line_gap
+        line_y_below = text_cy + half_line_gap
+        for line_y in (line_y_above, line_y_below):
+            pygame.draw.line(
+                self.screen, (120, 120, 130), (round(0.15 * width), line_y), (round(0.85 * width), line_y), 2,
+            )
+        self._blit_center(display_text, self.font_body_admin, (255, 255, 255), text_cy)
 
         if model.ui.error_text:
             self._blit_center(model.ui.error_text, self.font_small, (255, 120, 120), round(0.105 * height))
 
-        labels = {"backspace": "DEL", "submit": "OK", "cancel": "Abbrechen", "shift": "Umschalt", "space": "Leertaste"}
+        labels = {"backspace": "DEL", "submit": "Speichern", "cancel": "Abbrechen", "shift": "Umschalt", "space": "Leertaste"}
         colors = {
             "backspace": (120, 90, 0),
             "submit": (0, 130, 0),
@@ -2206,23 +2242,82 @@ class Renderer:
         for name, rect in self.layout.keyboard_keys.items():
             if name in labels:
                 label = labels[name]
+            elif ui.admin_event_keyboard_shift and name in KEYBOARD_SHIFT_MAP:
+                # NEU (Nutzer-Feedback): Sonderzeichen-Ebene (Ziffern/,.-).
+                label = KEYBOARD_SHIFT_MAP[name]
             elif ui.admin_event_keyboard_shift and name.isalpha() and name.isascii():
-                # Umschalt wirkt bewusst nur auf a-z (siehe Docstring/Plan) -
-                # ä/ö/ü bleiben unveraendert klein.
+                # Umschalt wirkt bewusst nur auf a-z - ä/ö/ü bleiben
+                # unveraendert klein.
                 label = name.upper()
             else:
                 label = name
             self._draw_button(label, rect, colors.get(name, (55, 65, 85)), font_size=key_font_size)
 
-    def _draw_admin_event_wallpaper_import(self, model: AppModel) -> None:
-        """NEU (Veranstaltungsdaten): Hintergrund-Thread laeuft (Stick suchen/
-        mounten/Bild kopieren/aushaengen), nicht abbrechbar - analog zu
-        _draw_admin_usb_busy()."""
+    def _draw_admin_event_wallpaper_pick_loading(self, model: AppModel) -> None:
+        """GEAENDERT (Nutzer-Feedback): Hintergrund-Thread laeuft (Stick
+        suchen/mounten/Bilder AUFLISTEN, noch nichts kopiert), nicht
+        abbrechbar - analog zu _draw_admin_usb_busy(). Umbenannt von
+        _draw_admin_event_wallpaper_import."""
         self._blit_center(
-            model.ui.status_text or "Wallpaper wird von USB-Stick geladen ...",
+            model.ui.status_text or "USB-Stick wird durchsucht ...",
             self.font_status_admin, (200, 235, 225),
-            round(0.45 * self.config.screen.height),
+            round(0.35 * self.config.screen.height),
         )
+        # NEU (Nutzer-Feedback): Aufforderung, ueberhaupt erst einen Stick
+        # einzustecken - vorher fehlte hier jede Anweisung dazu.
+        self._blit_center(
+            "Bitte einen USB-Stick mit Bilddateien (.png/.jpg) in den",
+            self.font_body_admin, (170, 200, 195), round(0.48 * self.config.screen.height),
+        )
+        self._blit_center(
+            "USB-Port rechts am Gehäuse einstecken.",
+            self.font_body_admin, (170, 200, 195), round(0.53 * self.config.screen.height),
+        )
+
+    def _draw_admin_event_wallpaper_pick(self, model: AppModel) -> None:
+        """NEU (Nutzer-Feedback): scrollbare Liste der auf dem Stick
+        gefundenen Bilder - Antippen markiert eine Zeile (gruen hervorgehoben,
+        gleiche Farbe wie die aktiven QR-/Galerie-Schalter auf der
+        Uebersicht), "Speichern"/"Abbrechen" zeichnet bereits _draw_buttons().
+        Gleiches Scroll-/Clip-/Hitbox-Muster wie _draw_admin_usb_conflicts:
+        Zeilenposition haengt vom Scroll-Offset ab, daher dynamisch pro Frame
+        neu berechnet statt aus layout.py, mit Hitboxen in Bildschirm-
+        koordinaten fuer app_with_hw._map_click_to_event."""
+        width, height = self.config.screen.width, self.config.screen.height
+        candidates = model.ui.admin_event_wallpaper_candidates
+        selected = model.ui.admin_event_wallpaper_selected
+        self.wallpaper_pick_row_hitboxes = []
+
+        top = round(0.22 * height)
+        bottom = round(0.77 * height)
+        row_h = round(0.075 * height)
+        gap = round(0.012 * height)
+        row_w = round((1 - 2 * 0.06) * width)
+        row_x = round(0.06 * width)
+
+        viewport = pygame.Rect(0, top, width, bottom - top)
+        total_height = len(candidates) * (row_h + gap)
+        max_scroll = max(0, total_height - viewport.height)
+        self.wallpaper_pick_scroll_offset = max(0, min(self.wallpaper_pick_scroll_offset, max_scroll))
+
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(viewport)
+        y = top - self.wallpaper_pick_scroll_offset
+        for name in candidates:
+            if y + row_h >= top and y <= bottom:
+                row_rect = pygame.Rect(row_x, y, row_w, row_h)
+                is_selected = name == selected
+                fill = (20, 90, 30) if is_selected else (45, 50, 60)
+                pygame.draw.rect(self.screen, fill, row_rect, border_radius=10)
+                pygame.draw.rect(self.screen, (255, 255, 255), row_rect, width=2, border_radius=10)
+                text = self._truncate_text(name, self.font_body_admin, row_rect.width - 24)
+                self._draw_text(
+                    text, self.font_body_admin, (230, 230, 230),
+                    (row_rect.x + 16, row_rect.centery - self.font_body_admin.get_linesize() // 2),
+                )
+                self.wallpaper_pick_row_hitboxes.append((row_rect, name))
+            y += row_h + gap
+        self.screen.set_clip(previous_clip)
 
     def _draw_admin_event_wallpaper_result(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Ergebnis-Zeilen nach dem Wallpaper-
@@ -2241,10 +2336,16 @@ class Renderer:
 
     def _draw_admin_event_saved(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Bestaetigung nach "Speichern" - Erfolg/
-        Fehler-Meldung (gruen/rot) plus Hinweis auf den noetigen Neustart
-        (ausser beim Wallpaper, das schon vorher sofort uebernommen wurde,
-        siehe _draw_admin_event_settings). "Jetzt neu starten"/"Später"
-        werden bereits von _draw_buttons() gezeichnet."""
+        Fehler-Meldung (gruen/rot) plus Hinweis auf den noetigen Neustart.
+        GEAENDERT (Nutzer-Feedback, Bugfix): der Hinweistext gilt jetzt OHNE
+        Ausnahme fuer alle vier Punkte (Titel/Praefix/WLAN/Schalter) - das
+        Wallpaper wird seit dem Deferred-Save-Bugfix nicht mehr sofort beim
+        Auswaehlen uebernommen, sondern erst hier, synchron als Teil dieses
+        "Speichern"-Vorgangs (siehe app_with_hw._save_admin_event_settings /
+        event_config_service.promote_pending_wallpaper), ist also kein
+        Sonderfall mehr. Farbe passend zum leuchtenden Orange in
+        _draw_admin_event_settings. "Jetzt neu starten"/"Später" werden
+        bereits von _draw_buttons() gezeichnet."""
         ui = model.ui
         height = self.config.screen.height
         color = (150, 230, 170) if ui.admin_event_save_ok else (255, 150, 150)
@@ -2254,7 +2355,7 @@ class Renderer:
         if ui.admin_event_save_ok:
             self._blit_center(
                 "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
-                self.font_small, (200, 200, 200), round(0.45 * height),
+                self.font_small, (255, 165, 0), round(0.45 * height),
             )
 
     def _draw_centered_in_range(
@@ -3235,10 +3336,14 @@ class Renderer:
             AppState.ADMIN_EVENT_SETTINGS: (18, 22, 30),
             AppState.ADMIN_EVENT_TEXT_ENTRY: (18, 22, 30),
             AppState.ADMIN_EVENT_SAVED: (18, 22, 30),
+            # NEU (Nutzer-Feedback): Auswahlliste - gleiches ruhige Blaugrau
+            # wie die uebrigen interaktiven Veranstaltungsdaten-Screens.
+            AppState.ADMIN_EVENT_WALLPAPER_PICK: (18, 22, 30),
             # NEU (Veranstaltungsdaten): gleiches Blaugruen wie die
             # USB-Vorgaenge (ADMIN_USB_CHECK) - laeuft, nicht abbrechbar.
-            AppState.ADMIN_EVENT_WALLPAPER_IMPORT: (12, 28, 28),
+            # Umbenannt von ADMIN_EVENT_WALLPAPER_IMPORT.
+            AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING: (12, 28, 28),
             # NEU (Veranstaltungsdaten): gleiches Gruen wie ADMIN_USB_READY -
-            # Ergebnis-Screen.
+            # Ergebnis-Screen (jetzt nur noch Fehlerfall).
             AppState.ADMIN_EVENT_WALLPAPER_RESULT: (10, 32, 26),
         }[state]

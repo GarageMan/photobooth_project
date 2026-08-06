@@ -602,11 +602,9 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         result = self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE, now_offset=11.0, payload={"field": "gallery"})
         self.assertFalse(result.model.ui.admin_event_gallery_enabled)
 
-    def test_toggle_password_visible_flips_flag(self) -> None:
-        self._go_to_admin_event_settings()
-        self._fill_ready()
-        result = self.transition(EventType.TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE, now_offset=11.0)
-        self.assertTrue(result.model.ui.admin_event_wifi_password_visible)
+    # ENTFERNT (Nutzer-Feedback): test_toggle_password_visible_flips_flag -
+    # das WLAN-Passwort wird nicht mehr maskiert, es gibt kein "Anzeigen"
+    # mehr und damit auch kein TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE.
 
     # -- Speichern / Abbrechen -------------------------------------------------
 
@@ -642,6 +640,11 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
         self.assertNotIn("save_event_config", result.actions)
         self.assertEqual(result.model.ui.admin_event_title, "Altes Fest")
+        # NEU (Nutzer-Feedback, Bugfix): "Abbrechen" muss ein evtl.
+        # zwischengelagertes (aber noch nicht uebernommenes) Wallpaper immer
+        # verwerfen - die Action ist ein No-Op, wenn nie eines ausgewaehlt
+        # wurde, wird aber trotzdem immer angehaengt.
+        self.assertIn("discard_pending_wallpaper", result.actions)
 
     def test_idle_timeout_reverts_like_cancel(self) -> None:
         self._go_to_admin_event_settings()
@@ -653,30 +656,52 @@ class AdminEventSettingsTestCase(unittest.TestCase):
 
     # -- Wallpaper-Import -------------------------------------------------------
 
-    def test_wallpaper_import_starts_action_and_is_not_idle_abortable(self) -> None:
+    def test_wallpaper_import_starts_list_action_and_is_not_idle_abortable(self) -> None:
+        # GEAENDERT (Nutzer-Feedback): TAP_ADMIN_EVENT_WALLPAPER_IMPORT loest
+        # jetzt nur noch das Suchen/Auflisten aus (Action "wallpaper_pick_list"),
+        # nichts wird mehr automatisch kopiert.
         self._go_to_admin_event_settings()
         self._fill_ready()
         result = self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
-        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_IMPORT)
-        self.assertIn("wallpaper_import", result.actions)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING)
+        self.assertIn("wallpaper_pick_list", result.actions)
         self.assertIsNone(result.model.timers.idle_deadline)
 
-    def test_wallpaper_finished_shows_result(self) -> None:
+    def test_wallpaper_list_finished_with_candidates_shows_pick_screen(self) -> None:
         self._go_to_admin_event_settings()
         self._fill_ready()
         self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
         result = self.transition(
-            EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, now_offset=13.0,
-            payload={"ok": True, "lines": ("Wallpaper übernommen.",)},
+            EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, now_offset=13.0,
+            payload={"ok": True, "candidates": ("aaa.png", "bbb.jpg")},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_PICK)
+        self.assertEqual(result.model.ui.admin_event_wallpaper_candidates, ("aaa.png", "bbb.jpg"))
+        self.assertEqual(result.model.ui.admin_event_wallpaper_selected, "")
+
+    def test_wallpaper_list_finished_without_candidates_shows_error_result(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
+        result = self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, now_offset=13.0,
+            payload={"ok": False, "lines": ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",)},
         )
         self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_RESULT)
-        self.assertTrue(result.model.ui.admin_event_wallpaper_ok)
-        self.assertEqual(result.model.ui.admin_event_wallpaper_lines, ("Wallpaper übernommen.",))
+        self.assertFalse(result.model.ui.admin_event_wallpaper_ok)
+        self.assertEqual(
+            result.model.ui.admin_event_wallpaper_lines,
+            ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",),
+        )
 
     def test_back_from_wallpaper_result_returns_to_editing_not_admin_menu(self) -> None:
         # Regressionsschutz fuer die bewusste Unterscheidung zwischen "ganz
         # verlassen" (verwirft) und "aus Unter-Screen zurueckkehren" (behaelt
         # den Bearbeitungsstand) - siehe state_machine._return_to_admin_event_settings.
+        # GEAENDERT: ADMIN_EVENT_WALLPAPER_RESULT ist inzwischen ein reiner
+        # Fehlerbildschirm (Erfolg fuehrt direkt zurueck, siehe
+        # test_wallpaper_pick_save_stages_and_returns_with_pending_flag), der
+        # Fehlerfall wird hier ueber die leere Kandidatenliste erzeugt.
         self._go_to_admin_event_settings()
         self._fill_ready(title="Altes Fest")
         self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
@@ -687,12 +712,87 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(self.model.ui.admin_event_title, "X")
         self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=13.0)
         self.transition(
-            EventType.ADMIN_EVENT_WALLPAPER_IMPORT_FINISHED, now_offset=14.0,
-            payload={"ok": True, "lines": ("Wallpaper übernommen.",)},
+            EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, now_offset=14.0,
+            payload={"ok": False, "lines": ("Kein Bild (.png/.jpg) auf dem Stick gefunden.",)},
         )
         result = self.transition(EventType.TAP_BACK, now_offset=15.0)
         self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
         self.assertEqual(result.model.ui.admin_event_title, "X")
+
+    # -- Wallpaper-Auswahlliste (ADMIN_EVENT_WALLPAPER_PICK) --------------------
+
+    def _go_to_wallpaper_pick(self, candidates: tuple[str, ...] = ("aaa.png", "bbb.jpg")) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, now_offset=11.0)
+        self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, now_offset=13.0,
+            payload={"ok": True, "candidates": candidates},
+        )
+
+    def test_wallpaper_select_marks_it_without_leaving_pick_screen(self) -> None:
+        self._go_to_wallpaper_pick()
+        result = self.transition(
+            EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, now_offset=14.0, payload={"name": "bbb.jpg"},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_PICK)
+        self.assertEqual(result.model.ui.admin_event_wallpaper_selected, "bbb.jpg")
+
+    def test_wallpaper_pick_save_without_selection_is_a_no_op(self) -> None:
+        self._go_to_wallpaper_pick()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, now_offset=14.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_PICK)
+        self.assertNotIn("wallpaper_pick_stage", result.actions)
+
+    def test_wallpaper_pick_save_with_selection_triggers_stage_action(self) -> None:
+        self._go_to_wallpaper_pick()
+        self.transition(
+            EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, now_offset=14.0, payload={"name": "bbb.jpg"},
+        )
+        result = self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, now_offset=14.5)
+        self.assertIn("wallpaper_pick_stage", result.actions)
+
+    def test_wallpaper_stage_result_ok_returns_to_settings_with_pending_flag(self) -> None:
+        # WICHTIG (Bugfix): erst hier wird admin_event_wallpaper_pending
+        # gesetzt - das Bild ist damit NOCH NICHT das echte Hauptmenue-
+        # Wallpaper, das passiert erst beim AEUSSEREN "Speichern" (siehe
+        # app_with_hw._save_admin_event_settings/promote_pending_wallpaper).
+        self._go_to_wallpaper_pick()
+        self.transition(
+            EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, now_offset=14.0, payload={"name": "bbb.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, now_offset=14.5)
+        result = self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_STAGE_RESULT, now_offset=15.0, payload={"ok": True},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertTrue(result.model.ui.admin_event_wallpaper_pending)
+
+    def test_wallpaper_stage_result_error_shows_result_screen(self) -> None:
+        self._go_to_wallpaper_pick()
+        self.transition(
+            EventType.TAP_ADMIN_EVENT_WALLPAPER_SELECT, now_offset=14.0, payload={"name": "bbb.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, now_offset=14.5)
+        result = self.transition(
+            EventType.ADMIN_EVENT_WALLPAPER_STAGE_RESULT, now_offset=15.0,
+            payload={"ok": False, "message": "Konnte Wallpaper nicht uebernehmen."},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_RESULT)
+        self.assertFalse(result.model.ui.admin_event_wallpaper_ok)
+
+    def test_wallpaper_pick_cancel_returns_to_settings_and_discards_mount(self) -> None:
+        self._go_to_wallpaper_pick()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL, now_offset=14.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertIn("wallpaper_pick_discard", result.actions)
+        self.assertFalse(result.model.ui.admin_event_wallpaper_pending)
+
+    def test_wallpaper_pick_idle_timeout_behaves_like_cancel(self) -> None:
+        self._go_to_wallpaper_pick()
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=90.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertIn("wallpaper_pick_discard", result.actions)
 
     # -- Gespeichert-Bestaetigung -----------------------------------------------
 
@@ -912,11 +1012,14 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         # state_machine._go_admin_camera_settings/_go_admin_shutdown_confirm).
         "ADMIN_CAMERA_SETTINGS",
         "ADMIN_SHUTDOWN_CONFIRM",
-        # NEU (Veranstaltungsdaten): bewusst OHNE ADMIN_EVENT_WALLPAPER_IMPORT
+        # NEU (Veranstaltungsdaten): bewusst OHNE ADMIN_EVENT_WALLPAPER_PICK_LOADING
         # - der laeuft nicht abbrechbar (analog ADMIN_USB_CHECK), bekommt
-        # deshalb keine idle_deadline.
+        # deshalb keine idle_deadline. ADMIN_EVENT_WALLPAPER_PICK (die
+        # eigentliche Auswahlliste) bekommt dagegen eine - der Admin kann
+        # dort beliebig lange ueberlegen, soll aber nicht ewig haengen bleiben.
         "ADMIN_EVENT_SETTINGS",
         "ADMIN_EVENT_TEXT_ENTRY",
+        "ADMIN_EVENT_WALLPAPER_PICK",
         "ADMIN_EVENT_WALLPAPER_RESULT",
         "ADMIN_EVENT_SAVED",
     )

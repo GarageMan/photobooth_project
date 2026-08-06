@@ -14,7 +14,7 @@ faengt alle erwartbaren Fehler (fehlende Datei, kein Schreibzugriff, volle
 Platte, kaputter Stick waehrend des Kopierens) ab und liefert stattdessen
 ein Ergebnis-Tupel mit einer fuer Lutz verstaendlichen Meldung zurueck.
 Das ist wichtig, weil app_with_hw.py diese Funktionen teils aus einem
-Hintergrund-Thread heraus aufruft (siehe _wallpaper_start_import) - eine
+Hintergrund-Thread heraus aufruft (siehe _wallpaper_start_list) - eine
 dort unbehandelte Exception wuerde den Thread stillschweigend beenden,
 ohne dass der Screen jemals ein Ergebnis anzeigt.
 """
@@ -36,6 +36,12 @@ _WALLPAPER_SUFFIXES = (".png", ".jpg", ".jpeg")
 # fertigen Wallpapers). 30 MB sind fuer ein 1280x720-Hintergrundbild in
 # jedem ueblichen Format grosszuegig genug.
 _MAX_WALLPAPER_BYTES = 30 * 1024 * 1024
+
+# NEU (Nutzer-Feedback): Zwischenablage-Dateiname fuer ein per Auswahlliste
+# gepicktes, aber noch NICHT uebernommenes Wallpaper (siehe
+# promote_pending_wallpaper/discard_pending_wallpaper) - liegt im selben
+# Verzeichnis wie das echte "hauptmenu_wallpaper.png" (assets_dir).
+WALLPAPER_PENDING_FILENAME = "hauptmenu_wallpaper.pending.png"
 
 
 def save_event_config(path: Path, data: dict) -> tuple[bool, str]:
@@ -59,23 +65,26 @@ def save_event_config(path: Path, data: dict) -> tuple[bool, str]:
     return True, f"{path.name} gespeichert."
 
 
-def find_wallpaper_on_stick(mountpoint: Path) -> Path | None:
+def find_wallpaper_candidates(mountpoint: Path) -> list[Path]:
     """Sucht auf der obersten Ebene von mountpoint (KEINE Rekursion in
-    Unterordner) nach einer Bilddatei. Bei mehreren Kandidaten wird die
-    alphabetisch erste genommen - deterministisch statt von der
-    Dateisystem-Reihenfolge abhaengig.
+    Unterordner) nach Bilddateien und liefert ALLE Treffer, alphabetisch
+    sortiert - deterministisch statt von der Dateisystem-Reihenfolge
+    abhaengig.
 
-    Liefert None bei leerem/fehlendem/unlesbarem Verzeichnis oder wenn
-    keine Bilddatei gefunden wurde - nie eine Exception.
+    GEAENDERT (Nutzer-Feedback): ersetzt das fruehere find_wallpaper_on_stick
+    (nur EIN, automatisch das alphabetisch erste Bild) - der Admin waehlt
+    jetzt selbst aus einer Liste (siehe ADMIN_EVENT_WALLPAPER_PICK).
+
+    Liefert eine leere Liste bei leerem/fehlendem/unlesbarem Verzeichnis -
+    nie eine Exception.
     """
     try:
-        candidates = sorted(
+        return sorted(
             p for p in mountpoint.iterdir()
             if p.is_file() and p.suffix.lower() in _WALLPAPER_SUFFIXES
         )
     except OSError:
-        return None
-    return candidates[0] if candidates else None
+        return []
 
 
 def import_wallpaper(source: Path, target: Path) -> tuple[bool, str]:
@@ -105,3 +114,40 @@ def import_wallpaper(source: Path, target: Path) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"Konnte Wallpaper nicht uebernehmen: {exc}"
     return True, f"Wallpaper übernommen ({source.name})."
+
+
+def promote_pending_wallpaper(pending: Path, target: Path) -> tuple[bool, str]:
+    """Macht ein zuvor per import_wallpaper() in die Zwischenablage (pending)
+    kopiertes Bild zum echten Hauptmenue-Wallpaper (target) - ein simples
+    os.replace(), da pending bereits eine vollstaendige, ueberprueft kleine
+    Datei im selben Verzeichnis ist (kein erneutes .tmp noetig).
+
+    NEU (Nutzer-Feedback, Bugfix): wird ausschliesslich vom AEUSSEREN
+    "Speichern" auf ADMIN_EVENT_SETTINGS aufgerufen (siehe
+    app_with_hw._save_admin_event_settings) - erst dadurch wird ein per
+    Auswahlliste gepicktes Bild tatsaechlich zum Hauptmenue-Wallpaper, nicht
+    schon beim "Speichern" innerhalb der Auswahlliste selbst.
+
+    Faellt pending fehlt (kein Wallpaper zwischengelagert - der Normalfall,
+    wenn der Admin die Veranstaltungsdaten ohne Wallpaper-Aenderung
+    speichert), ist das kein Fehler: (True, ...). Nie eine Exception.
+    """
+    if not pending.exists():
+        return True, "Kein wartendes Wallpaper vorhanden."
+    try:
+        os.replace(pending, target)
+    except OSError as exc:
+        return False, f"Konnte Wallpaper nicht uebernehmen: {exc}"
+    return True, "Wallpaper übernommen."
+
+
+def discard_pending_wallpaper(pending: Path) -> None:
+    """Loescht ein zwischengelagertes, aber verworfenes Wallpaper (Admin hat
+    "Abbrechen" auf ADMIN_EVENT_SETTINGS gedrueckt) - best effort, wirft nie
+    (gleiche "nie eine Exception nach aussen"-Regel wie der Rest dieses
+    Moduls). Sicher als No-Op aufrufbar, auch wenn nie etwas zwischengelagert
+    wurde."""
+    try:
+        pending.unlink(missing_ok=True)
+    except OSError:
+        pass
