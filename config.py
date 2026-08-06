@@ -182,6 +182,18 @@ QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
 # gemeinsam (UND-verknuepft).
 GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 
+# NEU (Nutzer-Feedback): Hauptmenue-Willkommenstext - bisher fest im Code
+# (state_machine._main_menu_model), jetzt ueber den Admin-Screen
+# "Veranstaltungsdaten" editierbar (siehe event_config_service.
+# DEFAULT_EVENT_VALUES fuer denselben Fallback-Text bei der "Standardwerte"-
+# Taste). Die zu diesem Text passende Schriftgroesse/Kartenhoehe wird
+# bewusst NICHT hier, sondern erst in renderer.Renderer.__post_init__
+# berechnet - das haengt von der tatsaechlichen Bildschirmaufloesung ab
+# (siehe dortiger Kommentar), config.py bleibt bewusst frei von pygame.
+MAIN_MENU_WELCOME_TEXT = str(
+    _event_config.get("welcome_text") or "Lass dich zur Erinnerung an die Veranstaltung fotografieren!"
+)
+
 # NEU (Etappe 8, Feedback): erkennt, ob die Event-Konfiguration noch auf den
 # generischen Platzhaltern steht - entweder weil data/event_config.json
 # komplett fehlt, oder weil sie 1:1 aus event_config_example.json kopiert
@@ -503,6 +515,9 @@ class AppConfig:
     # NEU (Sprint 11): kommt aus data/event_config.json (Fallback True),
     # siehe GALLERY_ENABLED oben.
     gallery_enabled: bool = GALLERY_ENABLED
+    # NEU (Nutzer-Feedback): kommt aus data/event_config.json, siehe
+    # MAIN_MENU_WELCOME_TEXT oben.
+    main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
 
     def ensure_directories(self) -> None:
         for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):

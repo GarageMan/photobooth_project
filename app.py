@@ -663,6 +663,10 @@ class PhotoboothApp:
             "admin_event_edit_wifi_password": AppEvent(
                 EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "wifi_password"}, source="touch",
             ),
+            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
+            "admin_event_edit_welcome_text": AppEvent(
+                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "welcome_text"}, source="touch",
+            ),
             "admin_event_toggle_qr": AppEvent(
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "qr"}, source="touch",
             ),
@@ -1802,6 +1806,7 @@ class PhotoboothApp:
                     "prefix": self.config.photo_prefix,
                     "wifi_ssid": self.config.network.guest_wifi_ssid,
                     "wifi_password": self.config.network.guest_wifi_password,
+                    "welcome_text": self.config.main_menu_welcome_text,
                     "qr_enabled": self.config.qr_codes_enabled,
                     "gallery_enabled": self.config.gallery_enabled,
                 },
@@ -1820,6 +1825,7 @@ class PhotoboothApp:
             "photo_prefix": ui.admin_event_prefix,
             "guest_wifi_ssid": ui.admin_event_wifi_ssid,
             "guest_wifi_password": ui.admin_event_wifi_password,
+            "welcome_text": ui.admin_event_welcome_text,
             "qr_codes_enabled": ui.admin_event_qr_enabled,
             "gallery_enabled": ui.admin_event_gallery_enabled,
         }

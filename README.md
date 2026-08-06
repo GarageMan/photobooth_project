@@ -165,11 +165,11 @@ automatisch, ohne App-Neustart.
 ## Service-Menü
 
 Über eine versteckte Tipp-Geste im Hauptmenü plus PIN erreichbar (siehe
-[Sicherheit / Härtung](#sicherheit--härtung)). Sieben Punkte im
+[Sicherheit / Härtung](#sicherheit--härtung)). Acht Punkte im
 2×4-Raster (`admin_menu.py`, seit Sprint 11 — vorher 2×3, siehe
-"Kamera-Einstellungen" unten; die neue Zeile wurde bewusst OBERHALB von
-"Zurück"/"Alle Bilder löschen" eingefügt, damit deren Eck-Platzierung
-unverändert bleibt):
+"Kamera-Einstellungen"/"Veranstaltungsdaten" unten; die neue Zeile
+wurde bewusst OBERHALB von "Zurück"/"Alle Bilder löschen" eingefügt,
+damit deren Eck-Platzierung unverändert bleibt):
 
 | Punkt | Zweck |
 |---|---|
@@ -178,6 +178,7 @@ unverändert bleibt):
 | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
 | Herunterfahren | Bestätigter Poweroff mit Abschieds-Animation |
 | Kamera-Einstellungen | ISO/Blende direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
+| Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen", eine "Standardwerte"-Taste füllt den Entwurf mit den Werten aus `event_config_example.json`; Änderungen wirken erst nach einem Neustart der App |
 | Zurück | Zurück ins Hauptmenü |
 | Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
 
@@ -433,11 +434,11 @@ Wichtige Felder:
 
 ### Event-Parameter (`event_config.json`)
 
-Titel, Foto-Präfix und Gäste-WLAN-Passwort ändern sich mit jeder
-Veranstaltung und liegen daher **nicht** im Code, sondern in
-`event_config.json` im Hauptverzeichnis (nicht versioniert, siehe
-`.gitignore`) — analog zu `local_secrets.py`. Einmalig aus der
-Beispieldatei anlegen:
+Titel, Foto-Präfix, Gäste-WLAN-Passwort und der Hauptmenü-Willkommens-
+text ändern sich mit jeder Veranstaltung und liegen daher **nicht** im
+Code, sondern in `event_config.json` im Hauptverzeichnis (nicht
+versioniert, siehe `.gitignore`) — analog zu `local_secrets.py`.
+Einmalig aus der Beispieldatei anlegen:
 
 ```bash
 cp event_config_example.json event_config.json
@@ -449,6 +450,7 @@ nano event_config.json
   "event_title": "Minas Geburtstags-Fotobox",
   "photo_prefix": "mina_",
   "guest_wifi_password": "...",
+  "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
   "qr_codes_enabled": true
 }
 ```
@@ -460,6 +462,16 @@ aufsetzen. Das Gäste-WLAN-Passwort kam ursprünglich aus
 `local_secrets.py`; falls in `event_config.json` nicht gesetzt, greift
 übergangsweise noch der alte Wert aus `local_secrets.py`, bevor ein
 Platzhalter verwendet wird.
+
+**`welcome_text`** (NEU, Nutzer-Feedback): der Begrüßungstext im
+Hauptmenü (früher fest im Code als "Lass dich zur Erinnerung an die
+Veranstaltung fotografieren!"). Über den Admin-Screen "Veranstaltungs-
+daten" bearbeitbar (Feld "Willkommenstext", max. 80 Zeichen). Die
+Schriftgröße wird passend zur verfügbaren Kartenbreite berechnet —
+bewusst NICHT in `event_config.json` mitgespeichert, sondern bei jedem
+Programmstart neu ermittelt (`renderer.Renderer.__post_init__`), damit
+derselbe Text auf unterschiedlich großen Bildschirmen (Test-PC vs.
+echter Pi-Bildschirm) jeweils richtig eingepasst wird.
 
 **`qr_codes_enabled`** (NEU, Sprint-11-Nachbesserung): schaltet die
 gesamte QR-Code-Funktion für diese Veranstaltung ein/aus (Default

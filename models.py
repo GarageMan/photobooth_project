@@ -160,6 +160,9 @@ class UiState:
     admin_event_prefix: str = ""
     admin_event_wifi_ssid: str = ""
     admin_event_wifi_password: str = ""
+    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext (bisher
+    # fest im Code, siehe state_machine._main_menu_model/config.py).
+    admin_event_welcome_text: str = ""
     admin_event_qr_enabled: bool = True
     admin_event_gallery_enabled: bool = True
     # Momentaufnahme beim Betreten aus ADMIN_MENU - fuer "Abbrechen"/Idle-
@@ -168,6 +171,7 @@ class UiState:
     admin_event_entry_prefix: str = ""
     admin_event_entry_wifi_ssid: str = ""
     admin_event_entry_wifi_password: str = ""
+    admin_event_entry_welcome_text: str = ""
     admin_event_entry_qr_enabled: bool = True
     admin_event_entry_gallery_enabled: bool = True
     # Tastatur-Screen: welches Feld wird gerade bearbeitet ("" = keins),

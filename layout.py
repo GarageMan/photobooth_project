@@ -92,6 +92,8 @@ class LayoutRects:
     admin_event_prefix_row: pygame.Rect
     admin_event_wifi_ssid_row: pygame.Rect
     admin_event_wifi_password_row: pygame.Rect
+    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
+    admin_event_welcome_text_row: pygame.Rect
     admin_event_qr_toggle: pygame.Rect
     admin_event_gallery_toggle: pygame.Rect
     admin_event_wallpaper_button: pygame.Rect
@@ -150,13 +152,22 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # INSTRUCTIONS/TERMS. Unterkante bleibt bei 0.975 (ca. 18px Rand
     # bei 720px Hoehe); durch die groessere Buttonhoehe (0.155,
     # Etappe 5) waechst der Button nach OBEN statt tiefer zu rutschen.
+    #
+    # GEAENDERT (Nutzer-Feedback): jetzt horizontal zentriert statt rechts
+    # ausgerichtet - macht auf einen Blick klar, dass dies die einzige
+    # Hauptaktion auf dem Screen ist (der DE/EN-Umschalter unten ist
+    # bewusst kein gleichrangiger zweiter Button, siehe language_toggle
+    # unten).
     text_view_lower_y = 0.82
-    text_view_back = rect(1 - margin_x - button_w, text_view_lower_y, button_w, button_h)
-    # NEU (Nutzer-Feedback): DE/EN-Umschalter unten links, gleiche Zeile/
-    # Hoehe wie text_view_back, aber schmaler (0.16 statt button_w=0.28) -
-    # reicht fuer ein kurzes "DE"/"EN"-Label locker.
+    text_view_back = rect((1 - button_w) / 2.0, text_view_lower_y, button_w, button_h)
+    # GEAENDERT (Nutzer-Feedback): DE/EN-Umschalter jetzt rechts aussen statt
+    # links (der jetzt zentrierte text_view_back liess links wieder Platz,
+    # aber "weiter nach rechts aussen" gewuenscht) - spiegelbildlich zur
+    # bisherigen text_view_back-Position, gleiche Zeile/Hoehe, weiterhin
+    # schmaler (0.16 statt button_w=0.28), reicht fuer ein kurzes
+    # "DE"/"EN"-Label locker.
     language_toggle_w = 0.16
-    language_toggle = rect(margin_x, text_view_lower_y, language_toggle_w, button_h)
+    language_toggle = rect(1 - margin_x - language_toggle_w, text_view_lower_y, language_toggle_w, button_h)
 
     # Hauptmenue: 4 Buttons diagonal versetzt, in der unteren Bildschirmhaelfte.
     # War frueher 3 Buttons bei diag_w=0.28 (0.06/0.36/0.66) - fuer den 4.
@@ -326,7 +337,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
     )
     admin_camera_page_next = admin_camera_page_prev
 
-    # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Sieben Zeilen (vier
+    # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Acht Zeilen (fuenf
     # Textfelder, zwei Schalter, ein Wallpaper-Button) uebereinander -
     # eigene, schmalere Randbreite als margin_x (0.10), damit auf einer
     # Zeile spuerbar mehr Platz fuer Label+Wert bleibt (Sichtpruefung auf
@@ -337,19 +348,21 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # gezeichnet (siehe renderer._title_font_for/render()) und reichte bei
     # 720px Bildschirmhoehe bis ca. 137px runter, ueberlappte also die erste
     # Zeile. Titel bleibt (bewusst NICHT entfernt, Nutzerwunsch), stattdessen
-    # ruecken die Zeilen darunter. event_row_h/_step dafuer etwas verkleinert
-    # (0.075/0.088 -> 0.068/0.078), sonst waere kein Platz mehr fuer den
-    # Hinweistext ("Titel/Praefix/WLAN/..." siehe renderer.
-    # _draw_admin_event_settings) zwischen letzter Zeile und der Speichern/
-    # Abbrechen-Reihe geblieben. Letzte Zeile (Wallpaper-Button, Index 6)
-    # endet damit bei 0.21+6*0.078+0.068=0.746 - der Hinweistext sitzt in der
-    # verbleibenden Luecke bis lower_y=0.80 (Sichtpruefung auf echter
-    # Hardware empfohlen, wie beim Kamera-Menue).
+    # ruecken die Zeilen darunter.
+    #
+    # GEAENDERT (Nutzer-Feedback): neue Zeile "Willkommenstext" (Index 4,
+    # zwischen WLAN-Passwort und den Schaltern) noetig - event_row_h/_step
+    # dafuer nochmal verkleinert (0.068/0.078 -> 0.063/0.072, gleiches
+    # Seitenverhaeltnis wie zuvor), damit acht statt sieben Zeilen in denselben
+    # Bereich passen. Letzte Zeile (Wallpaper-Button, jetzt Index 7) endet
+    # damit bei 0.21+7*0.072+0.063=0.777 - knapper Rand bis lower_y=0.80 als
+    # zuvor (Sichtpruefung auf echter Hardware empfohlen, wie beim
+    # Kamera-Menue).
     event_margin_x = 0.06
     event_row_w = 1 - 2 * event_margin_x
-    event_row_h = 0.068
+    event_row_h = 0.063
     event_row_y0 = 0.21
-    event_row_step = 0.078
+    event_row_step = 0.072
 
     def _event_row(index: int) -> pygame.Rect:
         return rect(event_margin_x, event_row_y0 + index * event_row_step, event_row_w, event_row_h)
@@ -358,24 +371,26 @@ def build_layout(width: int, height: int) -> LayoutRects:
     admin_event_prefix_row = _event_row(1)
     admin_event_wifi_ssid_row = _event_row(2)
     admin_event_wifi_password_row = _event_row(3)
-    admin_event_qr_toggle = _event_row(4)
-    admin_event_gallery_toggle = _event_row(5)
-    # GEAENDERT (Nutzer-Feedback): Zeile 6 war bisher ein einzelner voller
-    # Button ("Wallpaper von USB laden"). Der jetzt entfallene Hinweistext
-    # darunter (siehe renderer._draw_admin_event_settings, ENTFERNT) hat
-    # keinen Platz fuer eine ganz neue Zeile hinterlassen (nur ~0.054 bis
-    # lower_y=0.80) - die neue "Standardwerte"-Taste teilt sich stattdessen
-    # dieselbe Zeile mit "Wallpaper von USB laden" (je Haelfte, gleiches
-    # Zwei-Button-Prinzip wie admin_camera_cancel/admin_camera_save).
-    _admin_event_row6 = _event_row(6)
-    _admin_event_row6_gap = round(0.015 * width)
-    _admin_event_row6_half_w = (_admin_event_row6.width - _admin_event_row6_gap) // 2
+    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
+    admin_event_welcome_text_row = _event_row(4)
+    admin_event_qr_toggle = _event_row(5)
+    admin_event_gallery_toggle = _event_row(6)
+    # GEAENDERT (Nutzer-Feedback): Zeile 7 war bisher ein einzelner voller
+    # Button ("Wallpaper von USB laden"). Der entfallene Hinweistext darunter
+    # (siehe renderer._draw_admin_event_settings, ENTFERNT) hat keinen Platz
+    # fuer eine ganz neue Zeile hinterlassen - die "Standardwerte"-Taste
+    # teilt sich stattdessen dieselbe Zeile mit "Wallpaper von USB laden"
+    # (je Haelfte, gleiches Zwei-Button-Prinzip wie admin_camera_cancel/
+    # admin_camera_save).
+    _admin_event_row7 = _event_row(7)
+    _admin_event_row7_gap = round(0.015 * width)
+    _admin_event_row7_half_w = (_admin_event_row7.width - _admin_event_row7_gap) // 2
     admin_event_wallpaper_button = pygame.Rect(
-        _admin_event_row6.x, _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
+        _admin_event_row7.x, _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
     )
     admin_event_defaults_button = pygame.Rect(
-        _admin_event_row6.x + _admin_event_row6_half_w + _admin_event_row6_gap,
-        _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
+        _admin_event_row7.x + _admin_event_row7_half_w + _admin_event_row7_gap,
+        _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
     )
     # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Umschalter fuer die
     # WLAN-Passwort-Zeile - das Passwort steht jetzt immer als Klartext da,
@@ -494,6 +509,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_prefix_row=admin_event_prefix_row,
         admin_event_wifi_ssid_row=admin_event_wifi_ssid_row,
         admin_event_wifi_password_row=admin_event_wifi_password_row,
+        admin_event_welcome_text_row=admin_event_welcome_text_row,
         admin_event_qr_toggle=admin_event_qr_toggle,
         admin_event_gallery_toggle=admin_event_gallery_toggle,
         admin_event_wallpaper_button=admin_event_wallpaper_button,
@@ -597,6 +613,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_edit_prefix": rects.admin_event_prefix_row,
             "admin_event_edit_wifi_ssid": rects.admin_event_wifi_ssid_row,
             "admin_event_edit_wifi_password": rects.admin_event_wifi_password_row,
+            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
+            "admin_event_edit_welcome_text": rects.admin_event_welcome_text_row,
             "admin_event_toggle_qr": rects.admin_event_qr_toggle,
             "admin_event_toggle_gallery": rects.admin_event_gallery_toggle,
             "admin_event_wallpaper": rects.admin_event_wallpaper_button,

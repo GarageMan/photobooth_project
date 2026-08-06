@@ -514,6 +514,14 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.ui.admin_event_wifi_password, "geheim123")
         self.assertEqual(result.model.ui.admin_event_entry_wifi_password, "geheim123")
 
+    def test_ready_fills_welcome_text_draft_and_snapshot(self) -> None:
+        # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext -
+        # gleiches Draft-/Snapshot-Muster wie alle anderen Textfelder.
+        self._go_to_admin_event_settings()
+        result = self._fill_ready(welcome_text="Willkommen bei unserem Fest!")
+        self.assertEqual(result.model.ui.admin_event_welcome_text, "Willkommen bei unserem Fest!")
+        self.assertEqual(result.model.ui.admin_event_entry_welcome_text, "Willkommen bei unserem Fest!")
+
     # -- Feld bearbeiten (Textfelder) ----------------------------------------
 
     def test_field_edit_opens_text_entry_with_current_value_preset(self) -> None:
@@ -525,6 +533,26 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_EVENT_TEXT_ENTRY)
         self.assertEqual(result.model.ui.admin_event_edit_field, "title")
         self.assertEqual(result.model.ui.admin_event_text_buffer, "Testfest")
+
+    def test_welcome_text_field_edit_opens_text_entry_and_can_be_saved(self) -> None:
+        # NEU (Nutzer-Feedback): "welcome_text" nutzt denselben generischen
+        # Feld-Bearbeitungs-Mechanismus wie title/prefix/wifi_* - keine
+        # Sonderbehandlung noetig.
+        self._go_to_admin_event_settings()
+        self._fill_ready(welcome_text="Altes Motto")
+        result = self.transition(
+            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "welcome_text"},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_TEXT_ENTRY)
+        self.assertEqual(result.model.ui.admin_event_edit_field, "welcome_text")
+        self.assertEqual(result.model.ui.admin_event_text_buffer, "Altes Motto")
+        for _ in range(20):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        for char in "Neues Motto!":
+            self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": char})
+        result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_welcome_text, "Neues Motto!")
 
     def test_text_entry_char_and_submit_writes_field(self) -> None:
         self._go_to_admin_event_settings()
@@ -623,6 +651,7 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.ui.admin_event_prefix, DEFAULT_EVENT_VALUES["prefix"])
         self.assertEqual(result.model.ui.admin_event_wifi_ssid, DEFAULT_EVENT_VALUES["wifi_ssid"])
         self.assertEqual(result.model.ui.admin_event_wifi_password, DEFAULT_EVENT_VALUES["wifi_password"])
+        self.assertEqual(result.model.ui.admin_event_welcome_text, DEFAULT_EVENT_VALUES["welcome_text"])
         self.assertEqual(result.model.ui.admin_event_qr_enabled, DEFAULT_EVENT_VALUES["qr_enabled"])
         self.assertEqual(result.model.ui.admin_event_gallery_enabled, DEFAULT_EVENT_VALUES["gallery_enabled"])
 
@@ -684,6 +713,22 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         # verwerfen - die Action ist ein No-Op, wenn nie eines ausgewaehlt
         # wurde, wird aber trotzdem immer angehaengt.
         self.assertIn("discard_pending_wallpaper", result.actions)
+
+    def test_cancel_reverts_welcome_text(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready(welcome_text="Ursprünglicher Text")
+        self.transition(
+            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "welcome_text"},
+        )
+        for _ in range(40):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
+        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "X"})
+        self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=12.5)
+        self.assertEqual(self.model.ui.admin_event_welcome_text, "X")
+        result = self.transition(EventType.TAP_BACK, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertNotIn("save_event_config", result.actions)
+        self.assertEqual(result.model.ui.admin_event_welcome_text, "Ursprünglicher Text")
 
     def test_idle_timeout_reverts_like_cancel(self) -> None:
         self._go_to_admin_event_settings()

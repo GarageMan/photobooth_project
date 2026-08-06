@@ -1,0 +1,867 @@
+diff --git a/README.md b/README.md
+index 8eacd9f..cec48bd 100644
+--- a/README.md
++++ b/README.md
+@@ -165,11 +165,11 @@ automatisch, ohne App-Neustart.
+ ## Service-Menü
+ 
+ Über eine versteckte Tipp-Geste im Hauptmenü plus PIN erreichbar (siehe
+-[Sicherheit / Härtung](#sicherheit--härtung)). Sieben Punkte im
++[Sicherheit / Härtung](#sicherheit--härtung)). Acht Punkte im
+ 2×4-Raster (`admin_menu.py`, seit Sprint 11 — vorher 2×3, siehe
+-"Kamera-Einstellungen" unten; die neue Zeile wurde bewusst OBERHALB von
+-"Zurück"/"Alle Bilder löschen" eingefügt, damit deren Eck-Platzierung
+-unverändert bleibt):
++"Kamera-Einstellungen"/"Veranstaltungsdaten" unten; die neue Zeile
++wurde bewusst OBERHALB von "Zurück"/"Alle Bilder löschen" eingefügt,
++damit deren Eck-Platzierung unverändert bleibt):
+ 
+ | Punkt | Zweck |
+ |---|---|
+@@ -178,6 +178,7 @@ unverändert bleibt):
+ | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
+ | Herunterfahren | Bestätigter Poweroff mit Abschieds-Animation |
+ | Kamera-Einstellungen | ISO/Blende direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
++| Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen", eine "Standardwerte"-Taste füllt den Entwurf mit den Werten aus `event_config_example.json`; Änderungen wirken erst nach einem Neustart der App |
+ | Zurück | Zurück ins Hauptmenü |
+ | Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
+ 
+@@ -433,11 +434,11 @@ Wichtige Felder:
+ 
+ ### Event-Parameter (`event_config.json`)
+ 
+-Titel, Foto-Präfix und Gäste-WLAN-Passwort ändern sich mit jeder
+-Veranstaltung und liegen daher **nicht** im Code, sondern in
+-`event_config.json` im Hauptverzeichnis (nicht versioniert, siehe
+-`.gitignore`) — analog zu `local_secrets.py`. Einmalig aus der
+-Beispieldatei anlegen:
++Titel, Foto-Präfix, Gäste-WLAN-Passwort und der Hauptmenü-Willkommens-
++text ändern sich mit jeder Veranstaltung und liegen daher **nicht** im
++Code, sondern in `event_config.json` im Hauptverzeichnis (nicht
++versioniert, siehe `.gitignore`) — analog zu `local_secrets.py`.
++Einmalig aus der Beispieldatei anlegen:
+ 
+ ```bash
+ cp event_config_example.json event_config.json
+@@ -449,6 +450,7 @@ nano event_config.json
+   "event_title": "Minas Geburtstags-Fotobox",
+   "photo_prefix": "mina_",
+   "guest_wifi_password": "...",
++  "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
+   "qr_codes_enabled": true
+ }
+ ```
+@@ -461,6 +463,16 @@ aufsetzen. Das Gäste-WLAN-Passwort kam ursprünglich aus
+ übergangsweise noch der alte Wert aus `local_secrets.py`, bevor ein
+ Platzhalter verwendet wird.
+ 
++**`welcome_text`** (NEU, Nutzer-Feedback): der Begrüßungstext im
++Hauptmenü (früher fest im Code als "Lass dich zur Erinnerung an die
++Veranstaltung fotografieren!"). Über den Admin-Screen "Veranstaltungs-
++daten" bearbeitbar (Feld "Willkommenstext", max. 80 Zeichen). Die
++Schriftgröße wird passend zur verfügbaren Kartenbreite berechnet —
++bewusst NICHT in `event_config.json` mitgespeichert, sondern bei jedem
++Programmstart neu ermittelt (`renderer.Renderer.__post_init__`), damit
++derselbe Text auf unterschiedlich großen Bildschirmen (Test-PC vs.
++echter Pi-Bildschirm) jeweils richtig eingepasst wird.
++
+ **`qr_codes_enabled`** (NEU, Sprint-11-Nachbesserung): schaltet die
+ gesamte QR-Code-Funktion für diese Veranstaltung ein/aus (Default
+ `true`, fehlt der Schlüssel bleibt bisheriges Verhalten). Auf `false`
+diff --git a/app.py b/app.py
+index e3d7ebf..d3a3583 100644
+--- a/app.py
++++ b/app.py
+@@ -663,6 +663,10 @@ class PhotoboothApp:
+             "admin_event_edit_wifi_password": AppEvent(
+                 EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "wifi_password"}, source="touch",
+             ),
++            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
++            "admin_event_edit_welcome_text": AppEvent(
++                EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": "welcome_text"}, source="touch",
++            ),
+             "admin_event_toggle_qr": AppEvent(
+                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "qr"}, source="touch",
+             ),
+@@ -1802,6 +1806,7 @@ class PhotoboothApp:
+                     "prefix": self.config.photo_prefix,
+                     "wifi_ssid": self.config.network.guest_wifi_ssid,
+                     "wifi_password": self.config.network.guest_wifi_password,
++                    "welcome_text": self.config.main_menu_welcome_text,
+                     "qr_enabled": self.config.qr_codes_enabled,
+                     "gallery_enabled": self.config.gallery_enabled,
+                 },
+@@ -1820,6 +1825,7 @@ class PhotoboothApp:
+             "photo_prefix": ui.admin_event_prefix,
+             "guest_wifi_ssid": ui.admin_event_wifi_ssid,
+             "guest_wifi_password": ui.admin_event_wifi_password,
++            "welcome_text": ui.admin_event_welcome_text,
+             "qr_codes_enabled": ui.admin_event_qr_enabled,
+             "gallery_enabled": ui.admin_event_gallery_enabled,
+         }
+diff --git a/config.py b/config.py
+index 2cce7a0..1ab16fd 100644
+--- a/config.py
++++ b/config.py
+@@ -182,6 +182,18 @@ QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
+ # gemeinsam (UND-verknuepft).
+ GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
+ 
++# NEU (Nutzer-Feedback): Hauptmenue-Willkommenstext - bisher fest im Code
++# (state_machine._main_menu_model), jetzt ueber den Admin-Screen
++# "Veranstaltungsdaten" editierbar (siehe event_config_service.
++# DEFAULT_EVENT_VALUES fuer denselben Fallback-Text bei der "Standardwerte"-
++# Taste). Die zu diesem Text passende Schriftgroesse/Kartenhoehe wird
++# bewusst NICHT hier, sondern erst in renderer.Renderer.__post_init__
++# berechnet - das haengt von der tatsaechlichen Bildschirmaufloesung ab
++# (siehe dortiger Kommentar), config.py bleibt bewusst frei von pygame.
++MAIN_MENU_WELCOME_TEXT = str(
++    _event_config.get("welcome_text") or "Lass dich zur Erinnerung an die Veranstaltung fotografieren!"
++)
++
+ # NEU (Etappe 8, Feedback): erkennt, ob die Event-Konfiguration noch auf den
+ # generischen Platzhaltern steht - entweder weil data/event_config.json
+ # komplett fehlt, oder weil sie 1:1 aus event_config_example.json kopiert
+@@ -503,6 +515,9 @@ class AppConfig:
+     # NEU (Sprint 11): kommt aus data/event_config.json (Fallback True),
+     # siehe GALLERY_ENABLED oben.
+     gallery_enabled: bool = GALLERY_ENABLED
++    # NEU (Nutzer-Feedback): kommt aus data/event_config.json, siehe
++    # MAIN_MENU_WELCOME_TEXT oben.
++    main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
+ 
+     def ensure_directories(self) -> None:
+         for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):
+diff --git a/event_config_example.json b/event_config_example.json
+index 5152a4d..6fe911b 100644
+--- a/event_config_example.json
++++ b/event_config_example.json
+@@ -3,6 +3,7 @@
+   "photo_prefix": "foto_",
+   "guest_wifi_ssid": "Fotobox_Gast",
+   "guest_wifi_password": "BITTE_ANPASSEN",
++  "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
+   "qr_codes_enabled": true,
+   "gallery_enabled": true
+ }
+diff --git a/event_config_service.py b/event_config_service.py
+index b145e35..4fb0f6a 100644
+--- a/event_config_service.py
++++ b/event_config_service.py
+@@ -57,6 +57,10 @@ DEFAULT_EVENT_VALUES: dict = {
+     "prefix": "foto_",
+     "wifi_ssid": "Fotobox_Gast",
+     "wifi_password": "BITTE_ANPASSEN",
++    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext -
++    # derselbe Text, der bisher fest in state_machine._main_menu_model()
++    # stand (siehe config.MAIN_MENU_WELCOME_TEXT fuer den Lade-Fallback).
++    "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
+     "qr_enabled": True,
+     "gallery_enabled": True,
+ }
+diff --git a/layout.py b/layout.py
+index 59162a3..dca26db 100644
+--- a/layout.py
++++ b/layout.py
+@@ -92,6 +92,8 @@ class LayoutRects:
+     admin_event_prefix_row: pygame.Rect
+     admin_event_wifi_ssid_row: pygame.Rect
+     admin_event_wifi_password_row: pygame.Rect
++    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
++    admin_event_welcome_text_row: pygame.Rect
+     admin_event_qr_toggle: pygame.Rect
+     admin_event_gallery_toggle: pygame.Rect
+     admin_event_wallpaper_button: pygame.Rect
+@@ -150,13 +152,22 @@ def build_layout(width: int, height: int) -> LayoutRects:
+     # INSTRUCTIONS/TERMS. Unterkante bleibt bei 0.975 (ca. 18px Rand
+     # bei 720px Hoehe); durch die groessere Buttonhoehe (0.155,
+     # Etappe 5) waechst der Button nach OBEN statt tiefer zu rutschen.
++    #
++    # GEAENDERT (Nutzer-Feedback): jetzt horizontal zentriert statt rechts
++    # ausgerichtet - macht auf einen Blick klar, dass dies die einzige
++    # Hauptaktion auf dem Screen ist (der DE/EN-Umschalter unten ist
++    # bewusst kein gleichrangiger zweiter Button, siehe language_toggle
++    # unten).
+     text_view_lower_y = 0.82
+-    text_view_back = rect(1 - margin_x - button_w, text_view_lower_y, button_w, button_h)
+-    # NEU (Nutzer-Feedback): DE/EN-Umschalter unten links, gleiche Zeile/
+-    # Hoehe wie text_view_back, aber schmaler (0.16 statt button_w=0.28) -
+-    # reicht fuer ein kurzes "DE"/"EN"-Label locker.
++    text_view_back = rect((1 - button_w) / 2.0, text_view_lower_y, button_w, button_h)
++    # GEAENDERT (Nutzer-Feedback): DE/EN-Umschalter jetzt rechts aussen statt
++    # links (der jetzt zentrierte text_view_back liess links wieder Platz,
++    # aber "weiter nach rechts aussen" gewuenscht) - spiegelbildlich zur
++    # bisherigen text_view_back-Position, gleiche Zeile/Hoehe, weiterhin
++    # schmaler (0.16 statt button_w=0.28), reicht fuer ein kurzes
++    # "DE"/"EN"-Label locker.
+     language_toggle_w = 0.16
+-    language_toggle = rect(margin_x, text_view_lower_y, language_toggle_w, button_h)
++    language_toggle = rect(1 - margin_x - language_toggle_w, text_view_lower_y, language_toggle_w, button_h)
+ 
+     # Hauptmenue: 4 Buttons diagonal versetzt, in der unteren Bildschirmhaelfte.
+     # War frueher 3 Buttons bei diag_w=0.28 (0.06/0.36/0.66) - fuer den 4.
+@@ -326,7 +337,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
+     )
+     admin_camera_page_next = admin_camera_page_prev
+ 
+-    # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Sieben Zeilen (vier
++    # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Acht Zeilen (fuenf
+     # Textfelder, zwei Schalter, ein Wallpaper-Button) uebereinander -
+     # eigene, schmalere Randbreite als margin_x (0.10), damit auf einer
+     # Zeile spuerbar mehr Platz fuer Label+Wert bleibt (Sichtpruefung auf
+@@ -337,19 +348,21 @@ def build_layout(width: int, height: int) -> LayoutRects:
+     # gezeichnet (siehe renderer._title_font_for/render()) und reichte bei
+     # 720px Bildschirmhoehe bis ca. 137px runter, ueberlappte also die erste
+     # Zeile. Titel bleibt (bewusst NICHT entfernt, Nutzerwunsch), stattdessen
+-    # ruecken die Zeilen darunter. event_row_h/_step dafuer etwas verkleinert
+-    # (0.075/0.088 -> 0.068/0.078), sonst waere kein Platz mehr fuer den
+-    # Hinweistext ("Titel/Praefix/WLAN/..." siehe renderer.
+-    # _draw_admin_event_settings) zwischen letzter Zeile und der Speichern/
+-    # Abbrechen-Reihe geblieben. Letzte Zeile (Wallpaper-Button, Index 6)
+-    # endet damit bei 0.21+6*0.078+0.068=0.746 - der Hinweistext sitzt in der
+-    # verbleibenden Luecke bis lower_y=0.80 (Sichtpruefung auf echter
+-    # Hardware empfohlen, wie beim Kamera-Menue).
++    # ruecken die Zeilen darunter.
++    #
++    # GEAENDERT (Nutzer-Feedback): neue Zeile "Willkommenstext" (Index 4,
++    # zwischen WLAN-Passwort und den Schaltern) noetig - event_row_h/_step
++    # dafuer nochmal verkleinert (0.068/0.078 -> 0.063/0.072, gleiches
++    # Seitenverhaeltnis wie zuvor), damit acht statt sieben Zeilen in denselben
++    # Bereich passen. Letzte Zeile (Wallpaper-Button, jetzt Index 7) endet
++    # damit bei 0.21+7*0.072+0.063=0.777 - knapper Rand bis lower_y=0.80 als
++    # zuvor (Sichtpruefung auf echter Hardware empfohlen, wie beim
++    # Kamera-Menue).
+     event_margin_x = 0.06
+     event_row_w = 1 - 2 * event_margin_x
+-    event_row_h = 0.068
++    event_row_h = 0.063
+     event_row_y0 = 0.21
+-    event_row_step = 0.078
++    event_row_step = 0.072
+ 
+     def _event_row(index: int) -> pygame.Rect:
+         return rect(event_margin_x, event_row_y0 + index * event_row_step, event_row_w, event_row_h)
+@@ -358,24 +371,26 @@ def build_layout(width: int, height: int) -> LayoutRects:
+     admin_event_prefix_row = _event_row(1)
+     admin_event_wifi_ssid_row = _event_row(2)
+     admin_event_wifi_password_row = _event_row(3)
+-    admin_event_qr_toggle = _event_row(4)
+-    admin_event_gallery_toggle = _event_row(5)
+-    # GEAENDERT (Nutzer-Feedback): Zeile 6 war bisher ein einzelner voller
+-    # Button ("Wallpaper von USB laden"). Der jetzt entfallene Hinweistext
+-    # darunter (siehe renderer._draw_admin_event_settings, ENTFERNT) hat
+-    # keinen Platz fuer eine ganz neue Zeile hinterlassen (nur ~0.054 bis
+-    # lower_y=0.80) - die neue "Standardwerte"-Taste teilt sich stattdessen
+-    # dieselbe Zeile mit "Wallpaper von USB laden" (je Haelfte, gleiches
+-    # Zwei-Button-Prinzip wie admin_camera_cancel/admin_camera_save).
+-    _admin_event_row6 = _event_row(6)
+-    _admin_event_row6_gap = round(0.015 * width)
+-    _admin_event_row6_half_w = (_admin_event_row6.width - _admin_event_row6_gap) // 2
++    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
++    admin_event_welcome_text_row = _event_row(4)
++    admin_event_qr_toggle = _event_row(5)
++    admin_event_gallery_toggle = _event_row(6)
++    # GEAENDERT (Nutzer-Feedback): Zeile 7 war bisher ein einzelner voller
++    # Button ("Wallpaper von USB laden"). Der entfallene Hinweistext darunter
++    # (siehe renderer._draw_admin_event_settings, ENTFERNT) hat keinen Platz
++    # fuer eine ganz neue Zeile hinterlassen - die "Standardwerte"-Taste
++    # teilt sich stattdessen dieselbe Zeile mit "Wallpaper von USB laden"
++    # (je Haelfte, gleiches Zwei-Button-Prinzip wie admin_camera_cancel/
++    # admin_camera_save).
++    _admin_event_row7 = _event_row(7)
++    _admin_event_row7_gap = round(0.015 * width)
++    _admin_event_row7_half_w = (_admin_event_row7.width - _admin_event_row7_gap) // 2
+     admin_event_wallpaper_button = pygame.Rect(
+-        _admin_event_row6.x, _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
++        _admin_event_row7.x, _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
+     )
+     admin_event_defaults_button = pygame.Rect(
+-        _admin_event_row6.x + _admin_event_row6_half_w + _admin_event_row6_gap,
+-        _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
++        _admin_event_row7.x + _admin_event_row7_half_w + _admin_event_row7_gap,
++        _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
+     )
+     # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Umschalter fuer die
+     # WLAN-Passwort-Zeile - das Passwort steht jetzt immer als Klartext da,
+@@ -494,6 +509,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
+         admin_event_prefix_row=admin_event_prefix_row,
+         admin_event_wifi_ssid_row=admin_event_wifi_ssid_row,
+         admin_event_wifi_password_row=admin_event_wifi_password_row,
++        admin_event_welcome_text_row=admin_event_welcome_text_row,
+         admin_event_qr_toggle=admin_event_qr_toggle,
+         admin_event_gallery_toggle=admin_event_gallery_toggle,
+         admin_event_wallpaper_button=admin_event_wallpaper_button,
+@@ -597,6 +613,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
+             "admin_event_edit_prefix": rects.admin_event_prefix_row,
+             "admin_event_edit_wifi_ssid": rects.admin_event_wifi_ssid_row,
+             "admin_event_edit_wifi_password": rects.admin_event_wifi_password_row,
++            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
++            "admin_event_edit_welcome_text": rects.admin_event_welcome_text_row,
+             "admin_event_toggle_qr": rects.admin_event_qr_toggle,
+             "admin_event_toggle_gallery": rects.admin_event_gallery_toggle,
+             "admin_event_wallpaper": rects.admin_event_wallpaper_button,
+diff --git a/models.py b/models.py
+index c4d1e0e..b2f0710 100644
+--- a/models.py
++++ b/models.py
+@@ -160,6 +160,9 @@ class UiState:
+     admin_event_prefix: str = ""
+     admin_event_wifi_ssid: str = ""
+     admin_event_wifi_password: str = ""
++    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext (bisher
++    # fest im Code, siehe state_machine._main_menu_model/config.py).
++    admin_event_welcome_text: str = ""
+     admin_event_qr_enabled: bool = True
+     admin_event_gallery_enabled: bool = True
+     # Momentaufnahme beim Betreten aus ADMIN_MENU - fuer "Abbrechen"/Idle-
+@@ -168,6 +171,7 @@ class UiState:
+     admin_event_entry_prefix: str = ""
+     admin_event_entry_wifi_ssid: str = ""
+     admin_event_entry_wifi_password: str = ""
++    admin_event_entry_welcome_text: str = ""
+     admin_event_entry_qr_enabled: bool = True
+     admin_event_entry_gallery_enabled: bool = True
+     # Tastatur-Screen: welches Feld wird gerade bearbeitet ("" = keins),
+diff --git a/renderer.py b/renderer.py
+index eac12c3..b9763a8 100644
+--- a/renderer.py
++++ b/renderer.py
+@@ -187,6 +187,36 @@ class Renderer:
+         # fuer verkleinerte Varianten von font_title, siehe _title_font_for().
+         self._title_font_cache: dict[tuple[str, int], pygame.font.Font] = {}
+ 
++        # NEU (Nutzer-Feedback): Schriftgroesse + Kartenhoehe fuer den
++        # Hauptmenue-Willkommenstext (config.main_menu_welcome_text) werden
++        # EINMALIG hier bei Programmstart berechnet und zwischengespeichert,
++        # statt bei JEDEM Frame neu ueber _fit_text_font() ermittelt zu
++        # werden (MAIN_MENU ist der am laengsten sichtbare Screen ueberhaupt
++        # - eine woertlich pro Frame wiederholte Verkleinerungsschleife waere
++        # dort unnoetig verschwenderisch). Bewusst NICHT in event_config.json
++        # persistiert (auch wenn der Text selbst dort liegt, siehe config.py):
++        # die Berechnung haengt von der tatsaechlichen Bildschirmaufloesung
++        # ab (self.config.screen.width/height - beim PC-Test 1280x720
++        # Querformat, auf dem Pi ggf. anders) - ein auf einem Geraet
++        # vorberechneter Pixelwert waere auf einem andersgrossen Bildschirm
++        # falsch. Der Neustart, den eine Textaenderung ohnehin erfordert
++        # (siehe _draw_admin_event_saved-Hinweistext), berechnet die Werte
++        # beim naechsten Programmstart automatisch auf dem dann tatsaechlich
++        # laufenden Geraet neu - kein manueller Zusatzschritt noetig.
++        # card_padding_x/_y muessen zu den Defaults von _draw_text_card()
++        # passen (siehe dortiger Aufruf unten in render()).
++        self._main_menu_welcome_card_padding_x = 40
++        _main_menu_welcome_card_padding_y = 20
++        _main_menu_welcome_max_w = (
++            self.config.screen.width - 60 - 40 - 2 * self._main_menu_welcome_card_padding_x
++        )
++        self.font_main_menu_welcome = self._fit_text_font(
++            self.config.main_menu_welcome_text, self.font_status_main_menu, _main_menu_welcome_max_w,
++        )
++        self.main_menu_welcome_card_height = (
++            self.font_main_menu_welcome.get_linesize() + 2 * _main_menu_welcome_card_padding_y
++        )
++
+     def render(
+         self,
+         model: AppModel,
+@@ -521,21 +551,17 @@ class Renderer:
+             status_color = (40, 40, 45) if model.state == AppState.MAIN_MENU else (255, 220, 120)
+             status_font = self.font_status_main_menu if model.state == AppState.MAIN_MENU else self.font_body
+             if model.state == AppState.MAIN_MENU:
+-                # NEU (Lesbarkeit): der Willkommenstext ("Lass dich zur
+-                # Erinnerung an die Veranstaltung fotografieren!") ist bei
+-                # der um 50% vergroesserten Schrift nur noch knapp schmaler
+-                # als der Bildschirm - eine automatische Verkleinerung
+-                # (gleiche Technik wie bei Button-Labels in _draw_button())
+-                # verhindert ein Abschneiden am rechten Rand, falls die
+-                # Systemschrift auf der eingesetzten Hardware geringfuegig
+-                # breiter rendert als hier getestet. Die Kartenpolsterung
+-                # (2x card_padding_x) wird beim Fitting mit beruecksichtigt,
+-                # damit die fertige Karte nicht ueber den Bildschirmrand
+-                # hinausragt.
+-                card_padding_x = 40
+-                status_font = self._fit_text_font(
+-                    model.ui.status_text, status_font, self.config.screen.width - 60 - 40 - 2 * card_padding_x,
+-                )
++                # GEAENDERT (Nutzer-Feedback): die Schriftgroesse fuer den
++                # (jetzt ueber "Veranstaltungsdaten" editierbaren)
++                # Willkommenstext wird nicht mehr JEDEN Frame neu ueber
++                # _fit_text_font() ermittelt, sondern einmalig bei
++                # Programmstart berechnet und gecacht - siehe
++                # self.font_main_menu_welcome/__post_init__. status_text ist
++                # bei MAIN_MENU immer identisch mit config.
++                # main_menu_welcome_text (einzige Quelle, siehe
++                # state_machine._main_menu_model), der Cache passt also immer.
++                card_padding_x = self._main_menu_welcome_card_padding_x
++                status_font = self.font_main_menu_welcome
+                 # NEU (Nutzer-Feedback, Lesbarkeit): der Begruessungstext lag
+                 # bisher direkt auf dem (teils unruhigen) Eventfoto im
+                 # Hintergrund - eine weisse, abgerundete Karte mit Schatten
+@@ -1396,7 +1422,16 @@ class Renderer:
+         QR-Karte fuer GENAU dieses Foto (app._generate_gallery_qr
+         erzeugt qr_surface passend zum aktuell ausgewaehlten Foto). Schliesst
+         sich automatisch nach config.timeouts.gallery_qr_seconds oder per
+-        "Zurück" (siehe state_machine._handle_gallery_photo_qr)."""
++        "Zurück" (siehe state_machine._handle_gallery_photo_qr).
++
++        GEAENDERT (Nutzer-Feedback): QR-Karte steht jetzt RECHTS, links
++        daneben stehen SSID/Passwort des Gaeste-WLANs im Klartext - ohne
++        das WLAN kann das Handy den QR-Code (er zeigt auf eine lokale
++        Fotobox-Adresse) ohnehin nicht erreichen, die Zugangsdaten gehoeren
++        also direkt neben den Code. Der bisherige Hinweistext unter der
++        Karte ("Mit dem Handy scannen...") entfaellt komplett (Nutzer-
++        Feedback: wer mit einem QR-Code nichts anfangen kann, ist in diesem
++        Menue ohnehin falsch am Platz)."""
+         width, height = self.config.screen.width, self.config.screen.height
+ 
+         # Dezente Abdunkelung, damit die weisse QR-Karte auf jedem Foto
+@@ -1406,29 +1441,50 @@ class Renderer:
+         overlay.fill((0, 0, 0, 120))
+         self.screen.blit(overlay, (0, 0))
+ 
+-        # GEAENDERT (Sprint-11-Nachbesserung): komplett neu vermessen, nach
+-        # Feedback-Screenshots mit zwei Ueberlappungen - (1) die Ueberschrift
+-        # kollidierte mit dem generischen Fotobox-Titel oben links (behoben
+-        # durch Aufnahme in text_screens, siehe render()) und (2) der
+-        # "Zurück"-Button (rects.back, unten LINKS, Bereich ca. 0.80-0.955
+-        # der Bildschirmhoehe) ueberlappte mit dem Hinweistext darunter. Die
+-        # Karte war deshalb zunaechst kleiner (0.34 statt 0.5 der
+-        # Bildschirmhoehe) - auf Nutzer-Feedback hin wieder etwas vergroessert
+-        # (0.38), bei gleichzeitig schmalerer weisser Umrandung (siehe
+-        # _draw_qr_card), sodass weiterhin alle drei Elemente in klar
+-        # getrennten Zonen bleiben: Ueberschrift oben, Karte in der Mitte,
+-        # Hinweistext knapp darunter mit Abstand zum "Zurück"-Button.
+         self._blit_center("QR-Code für dieses Foto", self.font_status_main_menu, (255, 255, 255), round(0.14 * height))
+ 
+-        center = (width // 2, round(height * 0.44))
+-        card_side = round(height * 0.38)
+-        max_size = (card_side, card_side)
+-        self._draw_qr_card(qr_surface, center, max_size)
+-
+-        self._blit_center(
+-            "Mit dem Handy scannen, um dieses Bild herunterzuladen.",
+-            self.font_body, (220, 220, 220), round(height * 0.70),
+-        )
++        # Vertikale Mitte fuer Karte + Text - gleicher Bereich wie zuvor
++        # (unterhalb der Ueberschrift, oberhalb des "Zurück"-Buttons unten
++        # links bei ca. 0.80 der Bildschirmhoehe).
++        center_y = round(height * 0.46)
++
++        # GEAENDERT (Nutzer-Feedback): Karte jetzt rechtsbuendig (gleicher
++        # Rand wie die Buttons unten, margin_x=0.10 aus layout.py) statt
++        # bildschirmmittig - links davon bleibt Platz fuer die WLAN-Zeilen.
++        # Die Kartengroesse orientiert sich weiterhin an der Bildschirmhoehe
++        # (wie zuvor: 0.38), wird aber zusaetzlich auf die tatsaechlich
++        # verfuegbare rechte Haelfte begrenzt, damit die Karte auch auf
++        # einem schmaleren (z.B. Hochkant-) Bildschirm nicht in den Text
++        # hineinragt.
++        margin_x = round(0.10 * width)
++        available_w = width - 2 * margin_x
++        card_side = round(min(0.38 * height, available_w * 0.42))
++        card_center = (width - margin_x - card_side // 2, center_y)
++        self._draw_qr_card(qr_surface, card_center, (card_side, card_side))
++
++        # WLAN-Zugangsdaten links neben der Karte - Klartext, damit Gaeste
++        # sie direkt ablesen und eintippen koennen, ohne vorher scannen zu
++        # muessen (manche Handys fragen vor dem WLAN-Beitritt trotzdem noch
++        # nach dem Passwort).
++        text_left_x = margin_x
++        text_right_edge = card_center[0] - card_side // 2 - round(0.04 * width)
++        text_max_w = max(100, text_right_edge - text_left_x)
++        wifi_lines = [
++            "So kommst du ins Gäste-WLAN:",
++            "",
++            f"Netzwerk: {self.config.network.guest_wifi_ssid}",
++            f"Passwort: {self.config.network.guest_wifi_password}",
++        ]
++        rendered = [self._wrap_text(line, self.font_body, text_max_w) or [""] for line in wifi_lines]
++        flat_lines = [line for group in rendered for line in group]
++        line_height = self.font_body.get_linesize()
++        total_h = len(flat_lines) * line_height
++        text_top = center_y - total_h // 2
++        y = text_top
++        for line in flat_lines:
++            if line:
++                self._draw_text(line, self.font_body, (230, 230, 230), (text_left_x, y))
++            y += line_height
+ 
+     def _draw_save_confirmation(self, model: AppModel) -> None:
+         """NEU (Sprint 11, Feature 3): AppState.QR_DISPLAY zeigt seit diesem
+@@ -2474,6 +2530,8 @@ class Renderer:
+             (self.layout.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix or "-"),
+             (self.layout.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid or "-"),
+             (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", ui.admin_event_wifi_password or "-"),
++            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
++            (self.layout.admin_event_welcome_text_row, "Willkommenstext", ui.admin_event_welcome_text or "-"),
+         )
+         for rect, label, value in rows:
+             pygame.draw.rect(self.screen, (45, 50, 60), rect, border_radius=10)
+@@ -3495,28 +3553,76 @@ class Renderer:
+     # eigene, kleinere Konstanten statt der grossen Standard-Buttons
+     # (button_w/button_h in layout.py), da sie zusaetzlich zur ohnehin
+     # vorhandenen Button-Reihe innerhalb des Textbereichs schweben.
+-    _SCROLL_INDICATOR_W = 150
++    # GEAENDERT (Nutzer-Feedback): quadratischer statt breiter Button (vorher
++    # Text-Label "Runter"/"Hoch", jetzt ein gezeichnetes Pfeil-Symbol, siehe
++    # _draw_scroll_icon_button).
++    # GEAENDERT (Nutzer-Feedback, 2. Runde): urspruenglich beide Tasten
++    # nebeneinander unten links geplant gewesen - auf Nutzer-Wunsch jetzt
++    # stattdessen je EINE Taste an einer Bildschirmecke rechts: "Runter"
++    # unten rechts, "Hoch" oben rechts (siehe _draw_scroll_indicators). Der
++    # GAP wird dadurch nicht mehr gebraucht, bleibt aber als Konstante
++    # stehen (harmlos, falls spaeter doch wieder nebeneinander noetig).
++    _SCROLL_INDICATOR_W = 70
+     _SCROLL_INDICATOR_H = 66
++    _SCROLL_INDICATOR_GAP = 10
+     _SCROLL_INDICATOR_PAD = 12
+ 
++    def _draw_scroll_icon_button(self, rect: pygame.Rect, direction: str) -> None:
++        """Zeichnet einen Scroll-Indikator-Button mit einem gezeichneten
++        Pfeil-Symbol (Dreieck) statt einem Text-Label.
++
++        NEU (Nutzer-Feedback): urspruenglich mit den Text-Labels "Runter"/
++        "Hoch" umgesetzt - sollten durch ein Symbol ersetzt werden. Unicode-
++        Pfeilzeichen (z.B. "▼"/"▲") werden von pygames Standardschrift
++        (Font(None, size)) NICHT als echter Pfeil dargestellt, sondern als
++        leeres Ersatzkaestchen (per Eigenpruefung anhand der tatsaechlich
++        gerenderten Pixel bestaetigt - anders als z.B. "v"/"A"). Deshalb wird
++        hier stattdessen ein echtes Dreieck ueber pygame.draw.polygon
++        gezeichnet - gleiche "von Hand gezeichnetes Symbol"-Technik wie an
++        anderen Stellen dieser App (z.B. die Kamera-/Datei-Symbole der
++        Uebertragungs-Animation).
++        """
++        shadow_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
++        pygame.draw.rect(
++            shadow_surface, (*self._SHADOW_COLOR, self._SHADOW_ALPHA), shadow_surface.get_rect(), border_radius=14,
++        )
++        self.screen.blit(shadow_surface, (rect.x + self._SHADOW_OFFSET, rect.y + self._SHADOW_OFFSET))
++        pygame.draw.rect(self.screen, (60, 65, 90), rect, border_radius=14)
++        pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=14)
++
++        cx, cy = rect.center
++        tri_half_w = round(rect.width * 0.22)
++        tri_half_h = round(rect.height * 0.16)
++        if direction == "down":
++            points = [(cx - tri_half_w, cy - tri_half_h), (cx + tri_half_w, cy - tri_half_h), (cx, cy + tri_half_h)]
++        else:
++            points = [(cx - tri_half_w, cy + tri_half_h), (cx + tri_half_w, cy + tri_half_h), (cx, cy - tri_half_h)]
++        pygame.draw.polygon(self.screen, (255, 255, 255), points)
++
+     def _draw_scroll_indicators(
+         self, viewport: pygame.Rect, offset: int, max_scroll: int, offset_attr_name: str,
+     ) -> None:
+-        """Zeichnet optionale "Runter"/"Hoch"-Buttons als sichtbare, antippbare
+-        Scroll-Indikatoren - zusaetzlich zur bestehenden Wisch-Geste (siehe
+-        app._handle_pygame_event) nutzbar.
++        """Zeichnet optionale Runter-/Hoch-Symbol-Buttons als sichtbare,
++        antippbare Scroll-Indikatoren - zusaetzlich zur bestehenden
++        Wisch-Geste (siehe app._handle_pygame_event) nutzbar.
+ 
+         NEU (Nutzer-Feedback: "Ist das machbar?" - ja, ueber dieses Muster):
+-        Bewusst INNERHALB der Ecken von `viewport` platziert (unten links /
+-        oben rechts relativ zum sichtbaren TEXTBEREICH), nicht relativ zum
+-        gesamten Bildschirm oder zur screen-spezifischen Button-Reihe darunter.
+-        Grund: die Button-Reihe sieht je nach Screen unterschiedlich aus -
+-        bei ADMIN_STATUS liegt "Zurück" z.B. exakt an der Bildschirm-Position
+-        unten links, die dieser Button sonst haette. Eine Positionierung
++        Bewusst INNERHALB der Ecken von `viewport` platziert (relativ zum
++        sichtbaren TEXTBEREICH), nicht relativ zum gesamten Bildschirm oder
++        zur screen-spezifischen Button-Reihe darunter. Grund: die
++        Button-Reihe sieht je nach Screen unterschiedlich aus - bei
++        ADMIN_STATUS liegt "Zurück" z.B. exakt an der Bildschirm-Position
++        unten links, die ein Scroll-Button sonst haette. Eine Positionierung
+         relativ zum ohnehin je Screen individuell berechneten `viewport` ist
+         dagegen fuer alle 5 scrollbaren Screens automatisch
+         ueberlappungsfrei, ohne Sonderfaelle je Screen.
+ 
++        GEAENDERT (Nutzer-Feedback, 2. Runde): "Runter" steht jetzt UNTEN
++        RECHTS, "Hoch" OBEN RECHTS in der jeweiligen Ecke des Viewports
++        (vorher: beide nebeneinander unten links) - beide bewusst an
++        derselben (rechten) Bildschirmseite, nur oben/unten getrennt, damit
++        keine der beiden je nach Scroll-Stand "herumspringt".
++
+         "Runter" erscheint nur, wenn noch nach unten gescrollt werden kann
+         (offset < max_scroll), "Hoch" nur, wenn bereits nach unten gescrollt
+         wurde (offset > 0) - identische Sichtbarkeitslogik wie die generische
+@@ -3526,14 +3632,17 @@ class Renderer:
+         zurueckgesetzt.
+         """
+         w, h, pad = self._SCROLL_INDICATOR_W, self._SCROLL_INDICATOR_H, self._SCROLL_INDICATOR_PAD
+-        if offset < max_scroll:
+-            down_rect = pygame.Rect(viewport.left + pad, viewport.bottom - h - pad, w, h)
+-            self._draw_button("Runter", down_rect, (60, 65, 90), font_size=30)
++        x = viewport.right - w - pad
++        show_down = offset < max_scroll
++        show_up = offset > 0
++        if show_down:
++            down_rect = pygame.Rect(x, viewport.bottom - h - pad, w, h)
++            self._draw_scroll_icon_button(down_rect, "down")
+             self.scroll_down_hitbox = down_rect
+             self.scroll_down_offset_attr = offset_attr_name
+-        if offset > 0:
+-            up_rect = pygame.Rect(viewport.right - w - pad, viewport.top + pad, w, h)
+-            self._draw_button("Hoch", up_rect, (60, 65, 90), font_size=30)
++        if show_up:
++            up_rect = pygame.Rect(x, viewport.top + pad, w, h)
++            self._draw_scroll_icon_button(up_rect, "up")
+             self.scroll_up_hitbox = up_rect
+             self.scroll_up_offset_attr = offset_attr_name
+ 
+diff --git a/state_machine.py b/state_machine.py
+index 9cbae50..551ef0e 100644
+--- a/state_machine.py
++++ b/state_machine.py
+@@ -19,8 +19,16 @@ _MAX_PIN_LENGTH = 12
+ # editierbaren Textfelder, dazu ihre jeweilige Laengenobergrenze - grosszuegig
+ # genug fuer sinnvolle Werte, aber verhindert unbegrenztes Anwachsen des
+ # Puffers (gleicher Grund wie _MAX_PIN_LENGTH oben).
+-_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password")
+-_ADMIN_EVENT_FIELD_MAX_LENGTH = {"title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63}
++_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password", "welcome_text")
++_ADMIN_EVENT_FIELD_MAX_LENGTH = {
++    "title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63,
++    # NEU (Nutzer-Feedback): grosszuegiger als die uebrigen Felder - ist ein
++    # ganzer Satz, kein einzelnes Wort/Name. Wird auf dem Hauptmenue ueber
++    # die automatische Schriftverkleinerung (siehe renderer.Renderer.
++    # __post_init__/_fit_text_font) trotzdem immer lesbar dargestellt, auch
++    # wenn der Text die volle Laenge ausnutzt.
++    "welcome_text": 80,
++}
+ # Anzeige-Beschriftung je Feld fuer die Kopfzeile des Tastatur-Screens (siehe
+ # _go_admin_event_text_entry) - rein kosmetisch, keine Geschaeftslogik.
+ _ADMIN_EVENT_FIELD_LABELS = {
+@@ -28,6 +36,7 @@ _ADMIN_EVENT_FIELD_LABELS = {
+     "prefix": "Datei-Präfix",
+     "wifi_ssid": "WLAN-SSID",
+     "wifi_password": "WLAN-Passwort",
++    "welcome_text": "Willkommenstext",
+ }
+ # Datei-Praefix landet direkt im Dateinamen gespeicherter Fotos (siehe
+ # hw_capture_provider.py) - deshalb auf ein sicheres Zeichenset beschraenkt,
+@@ -643,6 +652,7 @@ class StateMachine:
+                 admin_event_prefix=str(payload.get("prefix", "")),
+                 admin_event_wifi_ssid=str(payload.get("wifi_ssid", "")),
+                 admin_event_wifi_password=str(payload.get("wifi_password", "")),
++                admin_event_welcome_text=str(payload.get("welcome_text", "")),
+                 admin_event_qr_enabled=bool(payload.get("qr_enabled", True)),
+                 admin_event_gallery_enabled=bool(payload.get("gallery_enabled", True)),
+             )
+@@ -651,6 +661,7 @@ class StateMachine:
+                 admin_event_entry_prefix=changes["admin_event_prefix"],
+                 admin_event_entry_wifi_ssid=changes["admin_event_wifi_ssid"],
+                 admin_event_entry_wifi_password=changes["admin_event_wifi_password"],
++                admin_event_entry_welcome_text=changes["admin_event_welcome_text"],
+                 admin_event_entry_qr_enabled=changes["admin_event_qr_enabled"],
+                 admin_event_entry_gallery_enabled=changes["admin_event_gallery_enabled"],
+             )
+@@ -683,6 +694,7 @@ class StateMachine:
+                 admin_event_prefix=DEFAULT_EVENT_VALUES["prefix"],
+                 admin_event_wifi_ssid=DEFAULT_EVENT_VALUES["wifi_ssid"],
+                 admin_event_wifi_password=DEFAULT_EVENT_VALUES["wifi_password"],
++                admin_event_welcome_text=DEFAULT_EVENT_VALUES["welcome_text"],
+                 admin_event_qr_enabled=DEFAULT_EVENT_VALUES["qr_enabled"],
+                 admin_event_gallery_enabled=DEFAULT_EVENT_VALUES["gallery_enabled"],
+             )
+@@ -715,6 +727,7 @@ class StateMachine:
+                 admin_event_prefix=model.ui.admin_event_entry_prefix,
+                 admin_event_wifi_ssid=model.ui.admin_event_entry_wifi_ssid,
+                 admin_event_wifi_password=model.ui.admin_event_entry_wifi_password,
++                admin_event_welcome_text=model.ui.admin_event_entry_welcome_text,
+                 admin_event_qr_enabled=model.ui.admin_event_entry_qr_enabled,
+                 admin_event_gallery_enabled=model.ui.admin_event_entry_gallery_enabled,
+             )
+@@ -740,12 +753,14 @@ class StateMachine:
+             admin_event_prefix="",
+             admin_event_wifi_ssid="",
+             admin_event_wifi_password="",
++            admin_event_welcome_text="",
+             admin_event_qr_enabled=True,
+             admin_event_gallery_enabled=True,
+             admin_event_entry_title="",
+             admin_event_entry_prefix="",
+             admin_event_entry_wifi_ssid="",
+             admin_event_entry_wifi_password="",
++            admin_event_entry_welcome_text="",
+             admin_event_entry_qr_enabled=True,
+             admin_event_entry_gallery_enabled=True,
+             admin_event_edit_field="",
+@@ -1640,7 +1655,10 @@ class StateMachine:
+             model.ui,
+             selected_gallery_index=None,
+             countdown_value=None,
+-            status_text="Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
++            # GEAENDERT (Nutzer-Feedback): kommt jetzt aus event_config.json
++            # (Admin-Screen "Veranstaltungsdaten", Feld "Willkommenstext"),
++            # nicht mehr fest im Code - siehe config.MAIN_MENU_WELCOME_TEXT.
++            status_text=self.config.main_menu_welcome_text,
+             error_text=None,
+             pin_entry="",                       # GEAENDERT (3.2): getippte PIN nie liegen lassen
+         )
+diff --git a/test/test_layout.py b/test/test_layout.py
+index 538fdcd..865e3bb 100644
+--- a/test/test_layout.py
++++ b/test/test_layout.py
+@@ -60,7 +60,8 @@ class PinKeypadWidthTestCase(unittest.TestCase):
+ 
+ class LanguageToggleTestCase(unittest.TestCase):
+     """NEU (Nutzer-Feedback): DE/EN-Umschalter auf ANLEITUNG/BEDINGUNGEN,
+-    unten links, ueberlappungsfrei zum "Zurueck"/"Verstanden"-Button."""
++    unten rechts (weiter aussen, siehe Nutzer-Feedback), ueberlappungsfrei
++    zum jetzt zentrierten "Zurueck"/"Verstanden"-Button."""
+ 
+     def setUp(self) -> None:
+         self.rects = build_layout(WIDTH, HEIGHT)
+@@ -68,9 +69,11 @@ class LanguageToggleTestCase(unittest.TestCase):
+     def test_language_toggle_does_not_overlap_text_view_back(self) -> None:
+         self.assertFalse(self.rects.language_toggle.colliderect(self.rects.text_view_back))
+ 
+-    def test_language_toggle_is_bottom_left(self) -> None:
+-        # Links vom Bildschirm, in derselben Zeile wie "Zurueck"/"Verstanden".
+-        self.assertLess(self.rects.language_toggle.left, WIDTH // 2)
++    def test_language_toggle_is_bottom_right(self) -> None:
++        # GEAENDERT (Nutzer-Feedback): jetzt rechts aussen statt links,
++        # in derselben Zeile wie "Zurueck"/"Verstanden" (das seinerseits
++        # jetzt zentriert ist statt rechts auszurichten).
++        self.assertGreater(self.rects.language_toggle.left, WIDTH // 2)
+         self.assertEqual(self.rects.language_toggle.top, self.rects.text_view_back.top)
+ 
+     def test_language_toggle_fits_on_screen(self) -> None:
+@@ -90,5 +93,62 @@ class LanguageToggleTestCase(unittest.TestCase):
+         self.assertIn("back", mapping)
+ 
+ 
++class TextViewBackCenteredTestCase(unittest.TestCase):
++    """NEU (Nutzer-Feedback): "Zurueck"/"Verstanden" auf ANLEITUNG/
++    BEDINGUNGEN steht jetzt horizontal zentriert statt rechtsbuendig."""
++
++    def setUp(self) -> None:
++        self.rects = build_layout(WIDTH, HEIGHT)
++
++    def test_text_view_back_is_horizontally_centered(self) -> None:
++        screen_center_x = WIDTH // 2
++        rect_center_x = self.rects.text_view_back.centerx
++        self.assertAlmostEqual(rect_center_x, screen_center_x, delta=2)
++
++    def test_text_view_back_fits_on_screen(self) -> None:
++        screen_rect = __import__("pygame").Rect(0, 0, WIDTH, HEIGHT)
++        self.assertTrue(screen_rect.contains(self.rects.text_view_back))
++
++
++class AdminEventWelcomeTextRowTestCase(unittest.TestCase):
++    """NEU (Nutzer-Feedback): 8. Zeile "Willkommenstext" auf dem
++    Veranstaltungsdaten-Screen, zwischen WLAN-Passwort und den Schaltern."""
++
++    def setUp(self) -> None:
++        self.rects = build_layout(WIDTH, HEIGHT)
++
++    def test_row_exists_and_is_below_wifi_password_row(self) -> None:
++        self.assertGreater(
++            self.rects.admin_event_welcome_text_row.top, self.rects.admin_event_wifi_password_row.top,
++        )
++
++    def test_row_is_above_qr_toggle_row(self) -> None:
++        self.assertLess(
++            self.rects.admin_event_welcome_text_row.top, self.rects.admin_event_qr_toggle.top,
++        )
++
++    def test_all_admin_event_rows_fit_on_screen_without_overlap(self) -> None:
++        rows = [
++            self.rects.admin_event_title_row,
++            self.rects.admin_event_prefix_row,
++            self.rects.admin_event_wifi_ssid_row,
++            self.rects.admin_event_wifi_password_row,
++            self.rects.admin_event_welcome_text_row,
++            self.rects.admin_event_qr_toggle,
++            self.rects.admin_event_gallery_toggle,
++        ]
++        screen_rect = __import__("pygame").Rect(0, 0, WIDTH, HEIGHT)
++        for rect in rows:
++            self.assertTrue(screen_rect.contains(rect))
++        for i, a in enumerate(rows):
++            for b in rows[i + 1:]:
++                self.assertFalse(a.colliderect(b))
++
++    def test_button_rects_for_admin_event_settings_includes_welcome_text_row(self) -> None:
++        mapping = button_rects_for_state(AppState.ADMIN_EVENT_SETTINGS, self.rects)
++        self.assertIn("admin_event_edit_welcome_text", mapping)
++        self.assertEqual(mapping["admin_event_edit_welcome_text"], self.rects.admin_event_welcome_text_row)
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/test/test_state_machine_admin.py b/test/test_state_machine_admin.py
+index cb1ce85..b4e4be9 100644
+--- a/test/test_state_machine_admin.py
++++ b/test/test_state_machine_admin.py
+@@ -514,6 +514,14 @@ class AdminEventSettingsTestCase(unittest.TestCase):
+         self.assertEqual(result.model.ui.admin_event_wifi_password, "geheim123")
+         self.assertEqual(result.model.ui.admin_event_entry_wifi_password, "geheim123")
+ 
++    def test_ready_fills_welcome_text_draft_and_snapshot(self) -> None:
++        # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext -
++        # gleiches Draft-/Snapshot-Muster wie alle anderen Textfelder.
++        self._go_to_admin_event_settings()
++        result = self._fill_ready(welcome_text="Willkommen bei unserem Fest!")
++        self.assertEqual(result.model.ui.admin_event_welcome_text, "Willkommen bei unserem Fest!")
++        self.assertEqual(result.model.ui.admin_event_entry_welcome_text, "Willkommen bei unserem Fest!")
++
+     # -- Feld bearbeiten (Textfelder) ----------------------------------------
+ 
+     def test_field_edit_opens_text_entry_with_current_value_preset(self) -> None:
+@@ -526,6 +534,26 @@ class AdminEventSettingsTestCase(unittest.TestCase):
+         self.assertEqual(result.model.ui.admin_event_edit_field, "title")
+         self.assertEqual(result.model.ui.admin_event_text_buffer, "Testfest")
+ 
++    def test_welcome_text_field_edit_opens_text_entry_and_can_be_saved(self) -> None:
++        # NEU (Nutzer-Feedback): "welcome_text" nutzt denselben generischen
++        # Feld-Bearbeitungs-Mechanismus wie title/prefix/wifi_* - keine
++        # Sonderbehandlung noetig.
++        self._go_to_admin_event_settings()
++        self._fill_ready(welcome_text="Altes Motto")
++        result = self.transition(
++            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "welcome_text"},
++        )
++        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_TEXT_ENTRY)
++        self.assertEqual(result.model.ui.admin_event_edit_field, "welcome_text")
++        self.assertEqual(result.model.ui.admin_event_text_buffer, "Altes Motto")
++        for _ in range(20):
++            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
++        for char in "Neues Motto!":
++            self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": char})
++        result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
++        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
++        self.assertEqual(result.model.ui.admin_event_welcome_text, "Neues Motto!")
++
+     def test_text_entry_char_and_submit_writes_field(self) -> None:
+         self._go_to_admin_event_settings()
+         self._fill_ready()
+@@ -623,6 +651,7 @@ class AdminEventSettingsTestCase(unittest.TestCase):
+         self.assertEqual(result.model.ui.admin_event_prefix, DEFAULT_EVENT_VALUES["prefix"])
+         self.assertEqual(result.model.ui.admin_event_wifi_ssid, DEFAULT_EVENT_VALUES["wifi_ssid"])
+         self.assertEqual(result.model.ui.admin_event_wifi_password, DEFAULT_EVENT_VALUES["wifi_password"])
++        self.assertEqual(result.model.ui.admin_event_welcome_text, DEFAULT_EVENT_VALUES["welcome_text"])
+         self.assertEqual(result.model.ui.admin_event_qr_enabled, DEFAULT_EVENT_VALUES["qr_enabled"])
+         self.assertEqual(result.model.ui.admin_event_gallery_enabled, DEFAULT_EVENT_VALUES["gallery_enabled"])
+ 
+@@ -685,6 +714,22 @@ class AdminEventSettingsTestCase(unittest.TestCase):
+         # wurde, wird aber trotzdem immer angehaengt.
+         self.assertIn("discard_pending_wallpaper", result.actions)
+ 
++    def test_cancel_reverts_welcome_text(self) -> None:
++        self._go_to_admin_event_settings()
++        self._fill_ready(welcome_text="Ursprünglicher Text")
++        self.transition(
++            EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "welcome_text"},
++        )
++        for _ in range(40):
++            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=11.5)
++        self.transition(EventType.TEXT_ENTRY_CHAR, now_offset=12.0, payload={"char": "X"})
++        self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=12.5)
++        self.assertEqual(self.model.ui.admin_event_welcome_text, "X")
++        result = self.transition(EventType.TAP_BACK, now_offset=13.0)
++        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
++        self.assertNotIn("save_event_config", result.actions)
++        self.assertEqual(result.model.ui.admin_event_welcome_text, "Ursprünglicher Text")
++
+     def test_idle_timeout_reverts_like_cancel(self) -> None:
+         self._go_to_admin_event_settings()
+         self._fill_ready(title="Altes Fest")

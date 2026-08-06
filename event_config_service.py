@@ -57,6 +57,10 @@ DEFAULT_EVENT_VALUES: dict = {
     "prefix": "foto_",
     "wifi_ssid": "Fotobox_Gast",
     "wifi_password": "BITTE_ANPASSEN",
+    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext -
+    # derselbe Text, der bisher fest in state_machine._main_menu_model()
+    # stand (siehe config.MAIN_MENU_WELCOME_TEXT fuer den Lade-Fallback).
+    "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
     "qr_enabled": True,
     "gallery_enabled": True,
 }

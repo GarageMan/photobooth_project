@@ -19,8 +19,16 @@ _MAX_PIN_LENGTH = 12
 # editierbaren Textfelder, dazu ihre jeweilige Laengenobergrenze - grosszuegig
 # genug fuer sinnvolle Werte, aber verhindert unbegrenztes Anwachsen des
 # Puffers (gleicher Grund wie _MAX_PIN_LENGTH oben).
-_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password")
-_ADMIN_EVENT_FIELD_MAX_LENGTH = {"title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63}
+_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password", "welcome_text")
+_ADMIN_EVENT_FIELD_MAX_LENGTH = {
+    "title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63,
+    # NEU (Nutzer-Feedback): grosszuegiger als die uebrigen Felder - ist ein
+    # ganzer Satz, kein einzelnes Wort/Name. Wird auf dem Hauptmenue ueber
+    # die automatische Schriftverkleinerung (siehe renderer.Renderer.
+    # __post_init__/_fit_text_font) trotzdem immer lesbar dargestellt, auch
+    # wenn der Text die volle Laenge ausnutzt.
+    "welcome_text": 80,
+}
 # Anzeige-Beschriftung je Feld fuer die Kopfzeile des Tastatur-Screens (siehe
 # _go_admin_event_text_entry) - rein kosmetisch, keine Geschaeftslogik.
 _ADMIN_EVENT_FIELD_LABELS = {
@@ -28,6 +36,7 @@ _ADMIN_EVENT_FIELD_LABELS = {
     "prefix": "Datei-Präfix",
     "wifi_ssid": "WLAN-SSID",
     "wifi_password": "WLAN-Passwort",
+    "welcome_text": "Willkommenstext",
 }
 # Datei-Praefix landet direkt im Dateinamen gespeicherter Fotos (siehe
 # hw_capture_provider.py) - deshalb auf ein sicheres Zeichenset beschraenkt,
@@ -643,6 +652,7 @@ class StateMachine:
                 admin_event_prefix=str(payload.get("prefix", "")),
                 admin_event_wifi_ssid=str(payload.get("wifi_ssid", "")),
                 admin_event_wifi_password=str(payload.get("wifi_password", "")),
+                admin_event_welcome_text=str(payload.get("welcome_text", "")),
                 admin_event_qr_enabled=bool(payload.get("qr_enabled", True)),
                 admin_event_gallery_enabled=bool(payload.get("gallery_enabled", True)),
             )
@@ -651,6 +661,7 @@ class StateMachine:
                 admin_event_entry_prefix=changes["admin_event_prefix"],
                 admin_event_entry_wifi_ssid=changes["admin_event_wifi_ssid"],
                 admin_event_entry_wifi_password=changes["admin_event_wifi_password"],
+                admin_event_entry_welcome_text=changes["admin_event_welcome_text"],
                 admin_event_entry_qr_enabled=changes["admin_event_qr_enabled"],
                 admin_event_entry_gallery_enabled=changes["admin_event_gallery_enabled"],
             )
@@ -683,6 +694,7 @@ class StateMachine:
                 admin_event_prefix=DEFAULT_EVENT_VALUES["prefix"],
                 admin_event_wifi_ssid=DEFAULT_EVENT_VALUES["wifi_ssid"],
                 admin_event_wifi_password=DEFAULT_EVENT_VALUES["wifi_password"],
+                admin_event_welcome_text=DEFAULT_EVENT_VALUES["welcome_text"],
                 admin_event_qr_enabled=DEFAULT_EVENT_VALUES["qr_enabled"],
                 admin_event_gallery_enabled=DEFAULT_EVENT_VALUES["gallery_enabled"],
             )
@@ -715,6 +727,7 @@ class StateMachine:
                 admin_event_prefix=model.ui.admin_event_entry_prefix,
                 admin_event_wifi_ssid=model.ui.admin_event_entry_wifi_ssid,
                 admin_event_wifi_password=model.ui.admin_event_entry_wifi_password,
+                admin_event_welcome_text=model.ui.admin_event_entry_welcome_text,
                 admin_event_qr_enabled=model.ui.admin_event_entry_qr_enabled,
                 admin_event_gallery_enabled=model.ui.admin_event_entry_gallery_enabled,
             )
@@ -740,12 +753,14 @@ class StateMachine:
             admin_event_prefix="",
             admin_event_wifi_ssid="",
             admin_event_wifi_password="",
+            admin_event_welcome_text="",
             admin_event_qr_enabled=True,
             admin_event_gallery_enabled=True,
             admin_event_entry_title="",
             admin_event_entry_prefix="",
             admin_event_entry_wifi_ssid="",
             admin_event_entry_wifi_password="",
+            admin_event_entry_welcome_text="",
             admin_event_entry_qr_enabled=True,
             admin_event_entry_gallery_enabled=True,
             admin_event_edit_field="",
@@ -1640,7 +1655,10 @@ class StateMachine:
             model.ui,
             selected_gallery_index=None,
             countdown_value=None,
-            status_text="Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
+            # GEAENDERT (Nutzer-Feedback): kommt jetzt aus event_config.json
+            # (Admin-Screen "Veranstaltungsdaten", Feld "Willkommenstext"),
+            # nicht mehr fest im Code - siehe config.MAIN_MENU_WELCOME_TEXT.
+            status_text=self.config.main_menu_welcome_text,
             error_text=None,
             pin_entry="",                       # GEAENDERT (3.2): getippte PIN nie liegen lassen
         )

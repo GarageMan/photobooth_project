@@ -3,6 +3,7 @@
   "photo_prefix": "foto_",
   "guest_wifi_ssid": "Fotobox_Gast",
   "guest_wifi_password": "BITTE_ANPASSEN",
+  "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
   "qr_codes_enabled": true,
   "gallery_enabled": true
 }

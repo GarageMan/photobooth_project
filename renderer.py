@@ -187,6 +187,36 @@ class Renderer:
         # fuer verkleinerte Varianten von font_title, siehe _title_font_for().
         self._title_font_cache: dict[tuple[str, int], pygame.font.Font] = {}
 
+        # NEU (Nutzer-Feedback): Schriftgroesse + Kartenhoehe fuer den
+        # Hauptmenue-Willkommenstext (config.main_menu_welcome_text) werden
+        # EINMALIG hier bei Programmstart berechnet und zwischengespeichert,
+        # statt bei JEDEM Frame neu ueber _fit_text_font() ermittelt zu
+        # werden (MAIN_MENU ist der am laengsten sichtbare Screen ueberhaupt
+        # - eine woertlich pro Frame wiederholte Verkleinerungsschleife waere
+        # dort unnoetig verschwenderisch). Bewusst NICHT in event_config.json
+        # persistiert (auch wenn der Text selbst dort liegt, siehe config.py):
+        # die Berechnung haengt von der tatsaechlichen Bildschirmaufloesung
+        # ab (self.config.screen.width/height - beim PC-Test 1280x720
+        # Querformat, auf dem Pi ggf. anders) - ein auf einem Geraet
+        # vorberechneter Pixelwert waere auf einem andersgrossen Bildschirm
+        # falsch. Der Neustart, den eine Textaenderung ohnehin erfordert
+        # (siehe _draw_admin_event_saved-Hinweistext), berechnet die Werte
+        # beim naechsten Programmstart automatisch auf dem dann tatsaechlich
+        # laufenden Geraet neu - kein manueller Zusatzschritt noetig.
+        # card_padding_x/_y muessen zu den Defaults von _draw_text_card()
+        # passen (siehe dortiger Aufruf unten in render()).
+        self._main_menu_welcome_card_padding_x = 40
+        _main_menu_welcome_card_padding_y = 20
+        _main_menu_welcome_max_w = (
+            self.config.screen.width - 60 - 40 - 2 * self._main_menu_welcome_card_padding_x
+        )
+        self.font_main_menu_welcome = self._fit_text_font(
+            self.config.main_menu_welcome_text, self.font_status_main_menu, _main_menu_welcome_max_w,
+        )
+        self.main_menu_welcome_card_height = (
+            self.font_main_menu_welcome.get_linesize() + 2 * _main_menu_welcome_card_padding_y
+        )
+
     def render(
         self,
         model: AppModel,
@@ -521,21 +551,17 @@ class Renderer:
             status_color = (40, 40, 45) if model.state == AppState.MAIN_MENU else (255, 220, 120)
             status_font = self.font_status_main_menu if model.state == AppState.MAIN_MENU else self.font_body
             if model.state == AppState.MAIN_MENU:
-                # NEU (Lesbarkeit): der Willkommenstext ("Lass dich zur
-                # Erinnerung an die Veranstaltung fotografieren!") ist bei
-                # der um 50% vergroesserten Schrift nur noch knapp schmaler
-                # als der Bildschirm - eine automatische Verkleinerung
-                # (gleiche Technik wie bei Button-Labels in _draw_button())
-                # verhindert ein Abschneiden am rechten Rand, falls die
-                # Systemschrift auf der eingesetzten Hardware geringfuegig
-                # breiter rendert als hier getestet. Die Kartenpolsterung
-                # (2x card_padding_x) wird beim Fitting mit beruecksichtigt,
-                # damit die fertige Karte nicht ueber den Bildschirmrand
-                # hinausragt.
-                card_padding_x = 40
-                status_font = self._fit_text_font(
-                    model.ui.status_text, status_font, self.config.screen.width - 60 - 40 - 2 * card_padding_x,
-                )
+                # GEAENDERT (Nutzer-Feedback): die Schriftgroesse fuer den
+                # (jetzt ueber "Veranstaltungsdaten" editierbaren)
+                # Willkommenstext wird nicht mehr JEDEN Frame neu ueber
+                # _fit_text_font() ermittelt, sondern einmalig bei
+                # Programmstart berechnet und gecacht - siehe
+                # self.font_main_menu_welcome/__post_init__. status_text ist
+                # bei MAIN_MENU immer identisch mit config.
+                # main_menu_welcome_text (einzige Quelle, siehe
+                # state_machine._main_menu_model), der Cache passt also immer.
+                card_padding_x = self._main_menu_welcome_card_padding_x
+                status_font = self.font_main_menu_welcome
                 # NEU (Nutzer-Feedback, Lesbarkeit): der Begruessungstext lag
                 # bisher direkt auf dem (teils unruhigen) Eventfoto im
                 # Hintergrund - eine weisse, abgerundete Karte mit Schatten
@@ -1396,7 +1422,16 @@ class Renderer:
         QR-Karte fuer GENAU dieses Foto (app._generate_gallery_qr
         erzeugt qr_surface passend zum aktuell ausgewaehlten Foto). Schliesst
         sich automatisch nach config.timeouts.gallery_qr_seconds oder per
-        "Zurück" (siehe state_machine._handle_gallery_photo_qr)."""
+        "Zurück" (siehe state_machine._handle_gallery_photo_qr).
+
+        GEAENDERT (Nutzer-Feedback): QR-Karte steht jetzt RECHTS, links
+        daneben stehen SSID/Passwort des Gaeste-WLANs im Klartext - ohne
+        das WLAN kann das Handy den QR-Code (er zeigt auf eine lokale
+        Fotobox-Adresse) ohnehin nicht erreichen, die Zugangsdaten gehoeren
+        also direkt neben den Code. Der bisherige Hinweistext unter der
+        Karte ("Mit dem Handy scannen...") entfaellt komplett (Nutzer-
+        Feedback: wer mit einem QR-Code nichts anfangen kann, ist in diesem
+        Menue ohnehin falsch am Platz)."""
         width, height = self.config.screen.width, self.config.screen.height
 
         # Dezente Abdunkelung, damit die weisse QR-Karte auf jedem Foto
@@ -1406,29 +1441,50 @@ class Renderer:
         overlay.fill((0, 0, 0, 120))
         self.screen.blit(overlay, (0, 0))
 
-        # GEAENDERT (Sprint-11-Nachbesserung): komplett neu vermessen, nach
-        # Feedback-Screenshots mit zwei Ueberlappungen - (1) die Ueberschrift
-        # kollidierte mit dem generischen Fotobox-Titel oben links (behoben
-        # durch Aufnahme in text_screens, siehe render()) und (2) der
-        # "Zurück"-Button (rects.back, unten LINKS, Bereich ca. 0.80-0.955
-        # der Bildschirmhoehe) ueberlappte mit dem Hinweistext darunter. Die
-        # Karte war deshalb zunaechst kleiner (0.34 statt 0.5 der
-        # Bildschirmhoehe) - auf Nutzer-Feedback hin wieder etwas vergroessert
-        # (0.38), bei gleichzeitig schmalerer weisser Umrandung (siehe
-        # _draw_qr_card), sodass weiterhin alle drei Elemente in klar
-        # getrennten Zonen bleiben: Ueberschrift oben, Karte in der Mitte,
-        # Hinweistext knapp darunter mit Abstand zum "Zurück"-Button.
         self._blit_center("QR-Code für dieses Foto", self.font_status_main_menu, (255, 255, 255), round(0.14 * height))
 
-        center = (width // 2, round(height * 0.44))
-        card_side = round(height * 0.38)
-        max_size = (card_side, card_side)
-        self._draw_qr_card(qr_surface, center, max_size)
+        # Vertikale Mitte fuer Karte + Text - gleicher Bereich wie zuvor
+        # (unterhalb der Ueberschrift, oberhalb des "Zurück"-Buttons unten
+        # links bei ca. 0.80 der Bildschirmhoehe).
+        center_y = round(height * 0.46)
 
-        self._blit_center(
-            "Mit dem Handy scannen, um dieses Bild herunterzuladen.",
-            self.font_body, (220, 220, 220), round(height * 0.70),
-        )
+        # GEAENDERT (Nutzer-Feedback): Karte jetzt rechtsbuendig (gleicher
+        # Rand wie die Buttons unten, margin_x=0.10 aus layout.py) statt
+        # bildschirmmittig - links davon bleibt Platz fuer die WLAN-Zeilen.
+        # Die Kartengroesse orientiert sich weiterhin an der Bildschirmhoehe
+        # (wie zuvor: 0.38), wird aber zusaetzlich auf die tatsaechlich
+        # verfuegbare rechte Haelfte begrenzt, damit die Karte auch auf
+        # einem schmaleren (z.B. Hochkant-) Bildschirm nicht in den Text
+        # hineinragt.
+        margin_x = round(0.10 * width)
+        available_w = width - 2 * margin_x
+        card_side = round(min(0.38 * height, available_w * 0.42))
+        card_center = (width - margin_x - card_side // 2, center_y)
+        self._draw_qr_card(qr_surface, card_center, (card_side, card_side))
+
+        # WLAN-Zugangsdaten links neben der Karte - Klartext, damit Gaeste
+        # sie direkt ablesen und eintippen koennen, ohne vorher scannen zu
+        # muessen (manche Handys fragen vor dem WLAN-Beitritt trotzdem noch
+        # nach dem Passwort).
+        text_left_x = margin_x
+        text_right_edge = card_center[0] - card_side // 2 - round(0.04 * width)
+        text_max_w = max(100, text_right_edge - text_left_x)
+        wifi_lines = [
+            "So kommst du ins Gäste-WLAN:",
+            "",
+            f"Netzwerk: {self.config.network.guest_wifi_ssid}",
+            f"Passwort: {self.config.network.guest_wifi_password}",
+        ]
+        rendered = [self._wrap_text(line, self.font_body, text_max_w) or [""] for line in wifi_lines]
+        flat_lines = [line for group in rendered for line in group]
+        line_height = self.font_body.get_linesize()
+        total_h = len(flat_lines) * line_height
+        text_top = center_y - total_h // 2
+        y = text_top
+        for line in flat_lines:
+            if line:
+                self._draw_text(line, self.font_body, (230, 230, 230), (text_left_x, y))
+            y += line_height
 
     def _draw_save_confirmation(self, model: AppModel) -> None:
         """NEU (Sprint 11, Feature 3): AppState.QR_DISPLAY zeigt seit diesem
@@ -2474,6 +2530,8 @@ class Renderer:
             (self.layout.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix or "-"),
             (self.layout.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid or "-"),
             (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", ui.admin_event_wifi_password or "-"),
+            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
+            (self.layout.admin_event_welcome_text_row, "Willkommenstext", ui.admin_event_welcome_text or "-"),
         )
         for rect, label, value in rows:
             pygame.draw.rect(self.screen, (45, 50, 60), rect, border_radius=10)
@@ -3495,27 +3553,75 @@ class Renderer:
     # eigene, kleinere Konstanten statt der grossen Standard-Buttons
     # (button_w/button_h in layout.py), da sie zusaetzlich zur ohnehin
     # vorhandenen Button-Reihe innerhalb des Textbereichs schweben.
-    _SCROLL_INDICATOR_W = 150
+    # GEAENDERT (Nutzer-Feedback): quadratischer statt breiter Button (vorher
+    # Text-Label "Runter"/"Hoch", jetzt ein gezeichnetes Pfeil-Symbol, siehe
+    # _draw_scroll_icon_button).
+    # GEAENDERT (Nutzer-Feedback, 2. Runde): urspruenglich beide Tasten
+    # nebeneinander unten links geplant gewesen - auf Nutzer-Wunsch jetzt
+    # stattdessen je EINE Taste an einer Bildschirmecke rechts: "Runter"
+    # unten rechts, "Hoch" oben rechts (siehe _draw_scroll_indicators). Der
+    # GAP wird dadurch nicht mehr gebraucht, bleibt aber als Konstante
+    # stehen (harmlos, falls spaeter doch wieder nebeneinander noetig).
+    _SCROLL_INDICATOR_W = 70
     _SCROLL_INDICATOR_H = 66
+    _SCROLL_INDICATOR_GAP = 10
     _SCROLL_INDICATOR_PAD = 12
+
+    def _draw_scroll_icon_button(self, rect: pygame.Rect, direction: str) -> None:
+        """Zeichnet einen Scroll-Indikator-Button mit einem gezeichneten
+        Pfeil-Symbol (Dreieck) statt einem Text-Label.
+
+        NEU (Nutzer-Feedback): urspruenglich mit den Text-Labels "Runter"/
+        "Hoch" umgesetzt - sollten durch ein Symbol ersetzt werden. Unicode-
+        Pfeilzeichen (z.B. "▼"/"▲") werden von pygames Standardschrift
+        (Font(None, size)) NICHT als echter Pfeil dargestellt, sondern als
+        leeres Ersatzkaestchen (per Eigenpruefung anhand der tatsaechlich
+        gerenderten Pixel bestaetigt - anders als z.B. "v"/"A"). Deshalb wird
+        hier stattdessen ein echtes Dreieck ueber pygame.draw.polygon
+        gezeichnet - gleiche "von Hand gezeichnetes Symbol"-Technik wie an
+        anderen Stellen dieser App (z.B. die Kamera-/Datei-Symbole der
+        Uebertragungs-Animation).
+        """
+        shadow_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(
+            shadow_surface, (*self._SHADOW_COLOR, self._SHADOW_ALPHA), shadow_surface.get_rect(), border_radius=14,
+        )
+        self.screen.blit(shadow_surface, (rect.x + self._SHADOW_OFFSET, rect.y + self._SHADOW_OFFSET))
+        pygame.draw.rect(self.screen, (60, 65, 90), rect, border_radius=14)
+        pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=14)
+
+        cx, cy = rect.center
+        tri_half_w = round(rect.width * 0.22)
+        tri_half_h = round(rect.height * 0.16)
+        if direction == "down":
+            points = [(cx - tri_half_w, cy - tri_half_h), (cx + tri_half_w, cy - tri_half_h), (cx, cy + tri_half_h)]
+        else:
+            points = [(cx - tri_half_w, cy + tri_half_h), (cx + tri_half_w, cy + tri_half_h), (cx, cy - tri_half_h)]
+        pygame.draw.polygon(self.screen, (255, 255, 255), points)
 
     def _draw_scroll_indicators(
         self, viewport: pygame.Rect, offset: int, max_scroll: int, offset_attr_name: str,
     ) -> None:
-        """Zeichnet optionale "Runter"/"Hoch"-Buttons als sichtbare, antippbare
-        Scroll-Indikatoren - zusaetzlich zur bestehenden Wisch-Geste (siehe
-        app._handle_pygame_event) nutzbar.
+        """Zeichnet optionale Runter-/Hoch-Symbol-Buttons als sichtbare,
+        antippbare Scroll-Indikatoren - zusaetzlich zur bestehenden
+        Wisch-Geste (siehe app._handle_pygame_event) nutzbar.
 
         NEU (Nutzer-Feedback: "Ist das machbar?" - ja, ueber dieses Muster):
-        Bewusst INNERHALB der Ecken von `viewport` platziert (unten links /
-        oben rechts relativ zum sichtbaren TEXTBEREICH), nicht relativ zum
-        gesamten Bildschirm oder zur screen-spezifischen Button-Reihe darunter.
-        Grund: die Button-Reihe sieht je nach Screen unterschiedlich aus -
-        bei ADMIN_STATUS liegt "Zurück" z.B. exakt an der Bildschirm-Position
-        unten links, die dieser Button sonst haette. Eine Positionierung
+        Bewusst INNERHALB der Ecken von `viewport` platziert (relativ zum
+        sichtbaren TEXTBEREICH), nicht relativ zum gesamten Bildschirm oder
+        zur screen-spezifischen Button-Reihe darunter. Grund: die
+        Button-Reihe sieht je nach Screen unterschiedlich aus - bei
+        ADMIN_STATUS liegt "Zurück" z.B. exakt an der Bildschirm-Position
+        unten links, die ein Scroll-Button sonst haette. Eine Positionierung
         relativ zum ohnehin je Screen individuell berechneten `viewport` ist
         dagegen fuer alle 5 scrollbaren Screens automatisch
         ueberlappungsfrei, ohne Sonderfaelle je Screen.
+
+        GEAENDERT (Nutzer-Feedback, 2. Runde): "Runter" steht jetzt UNTEN
+        RECHTS, "Hoch" OBEN RECHTS in der jeweiligen Ecke des Viewports
+        (vorher: beide nebeneinander unten links) - beide bewusst an
+        derselben (rechten) Bildschirmseite, nur oben/unten getrennt, damit
+        keine der beiden je nach Scroll-Stand "herumspringt".
 
         "Runter" erscheint nur, wenn noch nach unten gescrollt werden kann
         (offset < max_scroll), "Hoch" nur, wenn bereits nach unten gescrollt
@@ -3526,14 +3632,17 @@ class Renderer:
         zurueckgesetzt.
         """
         w, h, pad = self._SCROLL_INDICATOR_W, self._SCROLL_INDICATOR_H, self._SCROLL_INDICATOR_PAD
-        if offset < max_scroll:
-            down_rect = pygame.Rect(viewport.left + pad, viewport.bottom - h - pad, w, h)
-            self._draw_button("Runter", down_rect, (60, 65, 90), font_size=30)
+        x = viewport.right - w - pad
+        show_down = offset < max_scroll
+        show_up = offset > 0
+        if show_down:
+            down_rect = pygame.Rect(x, viewport.bottom - h - pad, w, h)
+            self._draw_scroll_icon_button(down_rect, "down")
             self.scroll_down_hitbox = down_rect
             self.scroll_down_offset_attr = offset_attr_name
-        if offset > 0:
-            up_rect = pygame.Rect(viewport.right - w - pad, viewport.top + pad, w, h)
-            self._draw_button("Hoch", up_rect, (60, 65, 90), font_size=30)
+        if show_up:
+            up_rect = pygame.Rect(x, viewport.top + pad, w, h)
+            self._draw_scroll_icon_button(up_rect, "up")
             self.scroll_up_hitbox = up_rect
             self.scroll_up_offset_attr = offset_attr_name
 
