@@ -5,6 +5,7 @@ from dataclasses import replace
 from admin_usb_export import ExportConflict
 from config import AppConfig
 from events import AppEvent, EventType
+from event_config_service import DEFAULT_EVENT_VALUES  # NEU (Nutzer-Feedback): "Standardwerte"-Taste
 from models import AppModel, SessionState, TimerState, TransitionResult, UiState
 from states import AppState
 from admin_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine Logik/Dateizugriff - umbenannt (Sprint 11, vormals shutdown_service.py)
@@ -395,8 +396,13 @@ class StateMachine:
             return self._go_admin_shutdown_confirm(model, now)
         if event.type == EventType.TAP_ADMIN_STATUS:          # NEU (4.3)
             return self._go_admin_status(model, now)
-        if event.type == EventType.TAP_ADMIN_RESTART_APP:     # NEU (4.3)
-            return self._go_admin_restart_pending(model, now)
+        if event.type == EventType.TAP_ADMIN_RESTART_APP:
+            # GEAENDERT (Nutzer-Feedback): fuehrt nicht mehr direkt in
+            # ADMIN_RESTART_PENDING, sondern zuerst zu einer Sicherheits-
+            # abfrage (siehe _go_admin_restart_confirm) - gleiche
+            # Begruendung wie beim Herunterfahren: ein Fehltipp im
+            # Service-Menue soll nicht sofort einen Neustart auslösen.
+            return self._go_admin_restart_confirm(model, now)
         if event.type == EventType.TAP_ADMIN_DELETE_ALL:      # NEU (4.4)
             return self._go_admin_delete_confirm(model, now)
         if event.type == EventType.TAP_ADMIN_USB_EXPORT:      # NEU (4.6)
@@ -628,6 +634,23 @@ class StateMachine:
                 ui = replace(model.ui, admin_event_gallery_enabled=not model.ui.admin_event_gallery_enabled)
             else:
                 return TransitionResult(model=model)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_DEFAULTS:
+            # NEU (Nutzer-Feedback): befuellt nur den Entwurf (admin_event_*),
+            # NICHT den Entry-Snapshot (admin_event_entry_*) - "Abbrechen"
+            # macht das Einsetzen der Standardwerte also weiterhin rueckgaengig,
+            # genau wie jede andere Feldaenderung auf diesem Screen. Erst
+            # "Speichern" schreibt tatsaechlich.
+            ui = replace(
+                model.ui,
+                admin_event_title=DEFAULT_EVENT_VALUES["title"],
+                admin_event_prefix=DEFAULT_EVENT_VALUES["prefix"],
+                admin_event_wifi_ssid=DEFAULT_EVENT_VALUES["wifi_ssid"],
+                admin_event_wifi_password=DEFAULT_EVENT_VALUES["wifi_password"],
+                admin_event_qr_enabled=DEFAULT_EVENT_VALUES["qr_enabled"],
+                admin_event_gallery_enabled=DEFAULT_EVENT_VALUES["gallery_enabled"],
+            )
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
             return TransitionResult(model=model.evolve(ui=ui, timers=timers))
         if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT:
@@ -901,6 +924,22 @@ class StateMachine:
         # der Loesch-Sicherheitsabfrage).
         if event.type in {
             EventType.TAP_ADMIN_SHUTDOWN_ABORT,
+            EventType.TAP_BACK,
+            EventType.IDLE_TIMEOUT,
+        }:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (Nutzer-Feedback): Sicherheitsabfrage vor dem App-Neustart -
+    # gleiches Prinzip wie _handle_admin_shutdown_confirm.
+    def _handle_admin_restart_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_RESTART_CONFIRM:
+            return self._go_admin_restart_pending(model, now)
+        # Jeder andere Ausstieg (Nein, Zurueck, Untaetigkeit) fuehrt zurueck
+        # ins Menue, OHNE neu zu starten - Idle-Timeout ist hier bewusst
+        # erlaubt, gleiche Begruendung wie bei der Herunterfahren-Abfrage.
+        if event.type in {
+            EventType.TAP_ADMIN_RESTART_ABORT,
             EventType.TAP_BACK,
             EventType.IDLE_TIMEOUT,
         }:
@@ -1182,6 +1221,19 @@ class StateMachine:
         )
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_SHUTDOWN_CONFIRM, ui=ui, timers=timers))
+
+    # NEU (Nutzer-Feedback): Sicherheitsabfrage vor dem App-Neustart -
+    # gleiches Prinzip wie _go_admin_shutdown_confirm. Bewusst NICHT fuer
+    # "Jetzt neu starten" auf ADMIN_EVENT_SAVED (siehe _handle_admin_event_saved) -
+    # dort ist "Speichern" bereits die bewusste Handlung.
+    def _go_admin_restart_confirm(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Fotobox wirklich neu starten?",
+            error_text=None,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_RESTART_CONFIRM, ui=ui, timers=timers))
 
     def _go_admin_delete_confirm(self, model: AppModel, now: float) -> TransitionResult:
         ui = replace(

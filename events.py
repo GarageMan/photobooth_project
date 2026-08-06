@@ -112,6 +112,11 @@ class EventType(Enum):
     TAP_ADMIN_EVENT_FIELD_EDIT = auto()
     # payload: {"field": "qr"|"gallery"} - kippt den jeweiligen Schalter.
     TAP_ADMIN_EVENT_TOGGLE = auto()
+    # NEU (Nutzer-Feedback): "Standardwerte"-Taste - fuellt den Entwurf mit
+    # event_config_service.DEFAULT_EVENT_VALUES, OHNE zu speichern (das
+    # bleibt weiterhin "Speichern"/"Abbrechen" vorbehalten, gleiches Prinzip
+    # wie jede andere Feldaenderung auf diesem Screen).
+    TAP_ADMIN_EVENT_DEFAULTS = auto()
     # ENTFERNT (Nutzer-Feedback): TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE -
     # das WLAN-Passwort steht jetzt immer als Klartext da, kein Umschalter
     # mehr noetig.
@@ -171,6 +176,10 @@ class EventType(Enum):
     # damit sich die beiden Sicherheitsabfragen nicht vermischen.
     TAP_ADMIN_SHUTDOWN_CONFIRM = auto()
     TAP_ADMIN_SHUTDOWN_ABORT = auto()
+    # NEU (Nutzer-Feedback): Ja/Nein der Sicherheitsabfrage vor dem App-
+    # Neustart - gleiches Prinzip wie TAP_ADMIN_SHUTDOWN_CONFIRM/_ABORT.
+    TAP_ADMIN_RESTART_CONFIRM = auto()
+    TAP_ADMIN_RESTART_ABORT = auto()
     # --- USB-Export (Etappe 4a) ---
     # Platzbedarf ist berechnet; payload["lines"] enthaelt die Anzeige.
     ADMIN_USB_INFO_READY = auto()

@@ -67,6 +67,27 @@ class Renderer:
         # Lesbarkeits-Update (42/84).
         self.font_body_admin = pygame.font.Font(None, 42)
         self.font_status_admin = pygame.font.Font(None, 84)
+        # NEU (Nutzer-Feedback): dicktengleiche Schrift fuer den Eingabe-
+        # Puffer der Bildschirmtastatur (zwischen den beiden Linien, siehe
+        # _draw_admin_event_text_entry) - macht z.B. WLAN-Passwoerter besser
+        # lesbar/abzaehlbar, da jedes Zeichen gleich breit ist (wie
+        # Consolas/Terminal auf einem PC). pygame.font.Font(None, ...) laedt
+        # immer die proportionale Standardschrift, daher hier stattdessen
+        # ueber match_font() nach einer auf dem System installierten
+        # Monospace-Schrift gesucht - mit mehreren Kandidaten, da sich Name/
+        # Verfuegbarkeit zwischen dieser Sandbox und dem Raspberry Pi
+        # unterscheiden koennen. match_font() wirft nie, sondern liefert
+        # bestenfalls None - dann faellt dieser Font wie gehabt auf die
+        # eingebaute Standardschrift zurueck (nie ein Absturz).
+        _mono_path = None
+        for _mono_name in (
+            "dejavusansmono", "liberationmono", "freemono", "notosansmono",
+            "consolas", "couriernew", "menlo",
+        ):
+            _mono_path = pygame.font.match_font(_mono_name)
+            if _mono_path:
+                break
+        self.font_body_admin_mono = pygame.font.Font(_mono_path, 42)
         # Grosse Ziffer fuer den Cinema-Countdown - bewusst proportional zur
         # Bildschirmhoehe (nicht fix), damit sie auf jeder Aufloesung den
         # Kreis dominant ausfuellt statt "verloren" zu wirken.
@@ -134,6 +155,13 @@ class Renderer:
         # usb_conflicts_scroll_offset/usb_conflict_row_hitboxes oben.
         self.wallpaper_pick_scroll_offset: int = 0
         self.wallpaper_pick_row_hitboxes: list[tuple[pygame.Rect, str]] = []
+        # NEU (Nutzer-Feedback, Bugfix): Scroll-Position der Diagnose-Zeilen
+        # (ADMIN_STATUS) - gleiches Prinzip wie usb_conflicts_scroll_offset.
+        # Wurde noetig, weil die Zeilenanzahl inzwischen (Speicherplatz-
+        # Alarm, Gaeste-WLAN, ...) ueber die urspruenglich angenommenen
+        # "fuenf kurze Zeilen" hinausgewachsen ist und ohne Scrollen unten
+        # aus dem Bild lief (siehe _draw_admin_status).
+        self.admin_status_scroll_offset: int = 0
         self._last_rendered_state: AppState | None = None
         # NEU (Nutzer-Feedback, Screenshot "Dateien mit abweichendem Inhalt
         # gef[unden]" ragte rechts ueber den Bildschirmrand hinaus): Cache
@@ -162,6 +190,10 @@ class Renderer:
         # Auswahlliste.
         if model.state == AppState.ADMIN_EVENT_WALLPAPER_PICK and self._last_rendered_state != AppState.ADMIN_EVENT_WALLPAPER_PICK:
             self.wallpaper_pick_scroll_offset = 0
+        # NEU (Nutzer-Feedback, Bugfix): jeder neue Diagnose-Aufruf beginnt
+        # oben, nicht an einer alten Scroll-Position.
+        if model.state == AppState.ADMIN_STATUS and self._last_rendered_state != AppState.ADMIN_STATUS:
+            self.admin_status_scroll_offset = 0
         # Neuer Countdown-Durchlauf (State-Wechsel IN COUNTDOWN hinein) -
         # zufaellig ein neues "bitte laecheln"-Bild fuer diesen Durchlauf
         # ziehen, damit es bei jedem Foto wechselt statt immer gleich zu sein.
@@ -267,6 +299,9 @@ class Renderer:
         if model.state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)
             self._draw_admin_shutdown_confirm(model)
 
+        if model.state == AppState.ADMIN_RESTART_CONFIRM:  # NEU (Nutzer-Feedback)
+            self._draw_admin_restart_confirm(model)
+
         if model.state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
             self._draw_admin_delete_confirm(model)
 
@@ -336,6 +371,7 @@ class Renderer:
             # Screenshot-Eigenpruefung gefunden).
             AppState.ADMIN_CAMERA_SETTINGS,
             AppState.ADMIN_SHUTDOWN_CONFIRM,  # NEU (Sprint-11-Nachbesserung)
+            AppState.ADMIN_RESTART_CONFIRM,  # NEU (Nutzer-Feedback)
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,                # NEU (4.4)
             AppState.ADMIN_DELETE_DONE,                                                  # NEU (4.4)
             AppState.ADMIN_USB_WAIT, AppState.ADMIN_USB_CHECK, AppState.ADMIN_USB_READY, # NEU (4.6)
@@ -1928,6 +1964,12 @@ class Renderer:
             self._draw_button(
                 "Wallpaper von USB laden", self.layout.admin_event_wallpaper_button, (0, 90, 130), font_size=30,
             )
+            # NEU (Nutzer-Feedback): "Standardwerte"-Taste - teilt sich die
+            # Zeile mit "Wallpaper von USB laden" (siehe layout.py), gleiche
+            # Schriftgroesse fuer ein einheitliches Bild.
+            self._draw_button(
+                "Standardwerte", self.layout.admin_event_defaults_button, (90, 70, 0), font_size=30,
+            )
             # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Button - das
             # WLAN-Passwort steht jetzt immer als Klartext da.
         elif state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
@@ -1953,6 +1995,12 @@ class Renderer:
             # ADMIN_DELETE_CONFIRM - "Nein" links neutral, "Ja" rechts rot.
             self._draw_button("Nein, abbrechen", self.layout.left, (70, 70, 75))
             self._draw_button("Ja, herunterfahren", self.layout.right, (160, 0, 0))
+        elif state == AppState.ADMIN_RESTART_CONFIRM:
+            # NEU (Nutzer-Feedback): "Nein" links neutral wie ueberall sonst,
+            # "Ja" rechts in gedaempftem Orange statt Rot - ein Neustart ist
+            # deutlich weniger "gefaehrlich" als Herunterfahren/Loeschen.
+            self._draw_button("Nein, abbrechen", self.layout.left, (70, 70, 75))
+            self._draw_button("Ja, neu starten", self.layout.right, (170, 100, 0))
         elif state == AppState.ADMIN_DELETE_CONFIRM:
             # NEU (4.4): "Nein" links neutral-grau, "Ja" rechts deutlich rot -
             # die gefaehrliche Wahl soll nicht wie die naheliegende aussehen.
@@ -2004,20 +2052,40 @@ class Renderer:
             self._draw_button(item.label, rects[item.key], color)
 
     def _draw_admin_status(self, model: AppModel) -> None:
-        # NEU (4.3): einfache Zeilenliste, kein Scrollen noetig - fuenf
-        # kurze Zeilen passen bequem zwischen Titel und "Zurueck"-Button.
+        # GEAENDERT (Nutzer-Feedback, Bugfix): urspruenglich als "fuenf kurze
+        # Zeilen, kein Scrollen noetig" angelegt - die Diagnose ist seither
+        # um mehrere Zeilen gewachsen (Speicherplatz-Alarm, Gaeste-WLAN, ...)
+        # und lief dadurch unten aus dem sichtbaren Bereich (die letzte
+        # Zeile lag teils hinter dem "Zurueck"-Button bzw. komplett ausserhalb
+        # des Bildschirms). Jetzt scrollbar - gleiches Clip-/Scroll-Muster
+        # wie _draw_admin_usb_conflicts (Swipe-Handling siehe
+        # app_with_hw._handle_pygame_event, ADMIN_STATUS-Zweig).
         # NEU (Feedback): Service-Menue, nur fuer Lutz - font_body_admin
         # (urspruengliche Groesse) statt der fuer Gaeste vergroesserten
         # font_body.
         width, height = self.config.screen.width, self.config.screen.height
-        y = round(0.22 * height)
+        top = round(0.22 * height)
+        bottom = round(0.77 * height)
         line_height = self.font_body_admin.get_linesize() + 14
+
         if not model.ui.admin_status_lines:
-            self._draw_text("Ermittle Status ...", self.font_body_admin, (200, 200, 200), (60, y))
+            self._draw_text("Ermittle Status ...", self.font_body_admin, (200, 200, 200), (60, top))
             return
-        for line in model.ui.admin_status_lines:
-            self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
+
+        lines = model.ui.admin_status_lines
+        viewport = pygame.Rect(0, top, width, bottom - top)
+        total_height = len(lines) * line_height
+        max_scroll = max(0, total_height - viewport.height)
+        self.admin_status_scroll_offset = max(0, min(self.admin_status_scroll_offset, max_scroll))
+
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(viewport)
+        y = top - self.admin_status_scroll_offset
+        for line in lines:
+            if y + line_height >= top and y <= bottom:
+                self._draw_text(line, self.font_body_admin, (230, 230, 230), (60, y))
             y += line_height
+        self.screen.set_clip(previous_clip)
 
     def _draw_admin_camera_settings(self, model: AppModel, preview_frame: pygame.Surface | None) -> None:
         """GEAENDERT (Kamera-Menue 2.0, Nutzer-Feedback nach Sprint 11):
@@ -2144,7 +2212,6 @@ class Renderer:
         von USB laden" sowie "Speichern"/"Abbrechen" werden bereits von
         _draw_buttons() gezeichnet, hier nicht nochmal."""
         ui = model.ui
-        height = self.config.screen.height
 
         # GEAENDERT (Nutzer-Feedback): WLAN-Passwort steht jetzt immer im
         # Klartext da - kein Masken-/Sichtbarkeits-Umschalter mehr.
@@ -2177,22 +2244,10 @@ class Renderer:
                 (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
             )
 
-        # Hinweis: Titel/Praefix/WLAN/Schalter wirken erst nach einem
-        # Neustart der App (AppConfig ist ein frozen Dataclass, siehe
-        # config.py) - der Text erwaehnt bewusst KEIN "Wallpaper", das bleibt
-        # weiterhin die eine Ausnahme (wirkt sofort). GEAENDERT (Nutzer-
-        # Feedback, Bugfix): "sofort" heisst jetzt aber erst ab dem Klick auf
-        # "Speichern" hier auf der Uebersicht, nicht mehr schon direkt nach
-        # dem USB-Import wie bisher - siehe event_config_service.
-        # promote_pending_wallpaper/app_with_hw._save_admin_event_settings.
-        # GEAENDERT (Nutzer-Feedback): leuchtendes Orange statt dezentem
-        # Grau, und tiefer positioniert (0.773 statt 0.745), da die Zeilen
-        # darueber wegen der Titel-Ueberlappungs-Korrektur (siehe layout.py,
-        # event_row_y0) enger zusammengerueckt sind.
-        self._blit_center(
-            "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
-            self.font_small, (255, 165, 0), round(0.773 * height),
-        )
+        # ENTFERNT (Nutzer-Feedback): der Hinweis "Titel/Praefix/WLAN/
+        # Schalter wirken erst nach einem Neustart der App." stand hier
+        # redundant zur Speichern-Bestaetigungsseite (_draw_admin_event_saved)
+        # - dort ist er jetzt die einzige, dafuer deutlich groessere Stelle.
 
     def _draw_admin_event_text_entry(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): eine gemeinsame QWERTZ-Tastatur fuer
@@ -2213,20 +2268,33 @@ class Renderer:
 
         buffer = ui.admin_event_text_buffer
         display_text = buffer + "|"
-        text_cy = round(0.075 * height)
+        # GEAENDERT (Nutzer-Feedback, Bugfix): text_cy sass bisher bei 0.075
+        # (54px) - direkt im Bereich der Bildschirm-Ueberschrift (status_text,
+        # z.B. "WLAN-Passwort", gezeichnet bei y=60..135, siehe render()) und
+        # ueberlappte dadurch sowohl den Titel als auch die erste
+        # Tastaturreihe. 0.26 laesst nach dem Titel (Ende ~0.19) genug Luft;
+        # kb_y0 in layout.py wurde passend mit nach unten verschoben.
+        text_cy = round(0.26 * height)
         # NEU (Nutzer-Feedback): Linie jetzt auch OBERHALB des Eingabetexts,
         # nicht mehr nur darunter - rahmt das Eingabefeld symmetrisch ein.
-        half_line_gap = self.font_body_admin.get_linesize() // 2 + 10
+        # GEAENDERT (Nutzer-Feedback): Puffertext nutzt jetzt font_body_admin_
+        # mono (dicktengleich) statt font_body_admin - der Zeilenabstand
+        # richtet sich daher nach dessen (groesserer) Zeilenhoehe, sonst
+        # wuerden die Linien den jetzt hoeheren Text knapp schneiden.
+        half_line_gap = self.font_body_admin_mono.get_linesize() // 2 + 10
         line_y_above = text_cy - half_line_gap
         line_y_below = text_cy + half_line_gap
         for line_y in (line_y_above, line_y_below):
             pygame.draw.line(
                 self.screen, (120, 120, 130), (round(0.15 * width), line_y), (round(0.85 * width), line_y), 2,
             )
-        self._blit_center(display_text, self.font_body_admin, (255, 255, 255), text_cy)
+        self._blit_center(display_text, self.font_body_admin_mono, (255, 255, 255), text_cy)
 
         if model.ui.error_text:
-            self._blit_center(model.ui.error_text, self.font_small, (255, 120, 120), round(0.105 * height))
+            # GEAENDERT (Nutzer-Feedback, Bugfix): ebenfalls von 0.105 (im
+            # Titelbereich) nach unten verschoben - zwischen Titel und
+            # Eingabefeld statt darueber.
+            self._blit_center(model.ui.error_text, self.font_small, (255, 120, 120), round(0.21 * height))
 
         labels = {"backspace": "DEL", "submit": "Speichern", "cancel": "Abbrechen", "shift": "Umschalt", "space": "Leertaste"}
         colors = {
@@ -2245,9 +2313,13 @@ class Renderer:
             elif ui.admin_event_keyboard_shift and name in KEYBOARD_SHIFT_MAP:
                 # NEU (Nutzer-Feedback): Sonderzeichen-Ebene (Ziffern/,.-).
                 label = KEYBOARD_SHIFT_MAP[name]
-            elif ui.admin_event_keyboard_shift and name.isalpha() and name.isascii():
-                # Umschalt wirkt bewusst nur auf a-z - ä/ö/ü bleiben
-                # unveraendert klein.
+            elif ui.admin_event_keyboard_shift and name.isalpha():
+                # GEAENDERT (Nutzer-Feedback, Bugfix): frueher isascii()-
+                # Zusatzbedingung liess ae/oe/ue bewusst klein - laut
+                # Feedback sollen sie sich wie a-z verhalten. str.upper()
+                # wandelt sie korrekt in Ae/Oe/Ue um, muss also nur noch mit
+                # app_with_hw._map_admin_event_text_entry_click (tatsaechliche
+                # Zeichenausgabe) im Einklang gehalten werden.
                 label = name.upper()
             else:
                 label = name
@@ -2345,7 +2417,17 @@ class Renderer:
         event_config_service.promote_pending_wallpaper), ist also kein
         Sonderfall mehr. Farbe passend zum leuchtenden Orange in
         _draw_admin_event_settings. "Jetzt neu starten"/"Später" werden
-        bereits von _draw_buttons() gezeichnet."""
+        bereits von _draw_buttons() gezeichnet.
+
+        GEAENDERT (Nutzer-Feedback): der Dateiname (z.B. "event_config.json
+        gespeichert.") steckte bisher in ui.admin_event_save_message - fuer
+        den Admin keine relevante Information, siehe
+        app_with_hw._save_admin_event_settings (ersetzt die Meldung dort im
+        Erfolgsfall durch ein einfaches "Gespeichert."). Ausserdem: der
+        Neustart-Hinweis ist jetzt die EINZIGE Stelle, an der er noch
+        erscheint (auf der Uebersicht ADMIN_EVENT_SETTINGS wurde er als
+        redundant entfernt) - deshalb deutlich groesser (font_body_admin
+        statt font_small), damit er nicht uebersehen wird."""
         ui = model.ui
         height = self.config.screen.height
         color = (150, 230, 170) if ui.admin_event_save_ok else (255, 150, 150)
@@ -2355,7 +2437,7 @@ class Renderer:
         if ui.admin_event_save_ok:
             self._blit_center(
                 "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
-                self.font_small, (255, 165, 0), round(0.45 * height),
+                self.font_body_admin, (255, 165, 0), round(0.48 * height),
             )
 
     def _draw_centered_in_range(
@@ -2914,8 +2996,25 @@ class Renderer:
         # genug Luft bleibt.
         height = self.config.screen.height
         self._blit_center(model.ui.status_text or "Wirklich herunterfahren?", self.font_status_admin, (255, 210, 210), round(0.30 * height))
-        hint = "Die Fotobox kann danach nur direkt am Gehäuse wieder gestartet werden."
+        # GEAENDERT (Nutzer-Feedback): praeziserer Hinweis, WIE die Fotobox
+        # wieder gestartet wird (Hauptschalter im Gehaeuse) statt der
+        # bisherigen, vageren Formulierung "nur direkt am Gehaeuse".
+        hint = "Die Fotobox kann nach dem Herunterfahren über den Hauptschalter im Gehäuse neu gestartet werden."
         self._blit_center(hint, self.font_body_admin, (230, 170, 170), round(0.30 * height) + self.font_status_admin.get_linesize() + 16)
+
+    def _draw_admin_restart_confirm(self, model: AppModel) -> None:
+        # NEU (Nutzer-Feedback): gleiche Gestaltung wie
+        # _draw_admin_shutdown_confirm, mit einem sachlicheren Hinweistext -
+        # ein App-Neustart ist (anders als Herunterfahren) folgenlos und
+        # laeuft automatisch durch (siehe start_fotobox.sh).
+        height = self.config.screen.height
+        self._blit_center(
+            model.ui.status_text or "Wirklich neu starten?", self.font_status_admin, (255, 225, 180), round(0.30 * height),
+        )
+        hint = "Die App beendet sich kurz und startet automatisch von selbst wieder."
+        self._blit_center(
+            hint, self.font_body_admin, (220, 195, 160), round(0.30 * height) + self.font_status_admin.get_linesize() + 16,
+        )
 
     def _draw_admin_delete_running(self, model: AppModel) -> None:
         # GEAENDERT (4.9): Fortschrittsbalken wie beim Export, aber in Rot.
@@ -3309,6 +3408,12 @@ class Renderer:
             # NEU (Sprint-11-Nachbesserung): gleiches Warnrot wie
             # ADMIN_DELETE_CONFIRM - beide sind "gefaehrliche" Sicherheitsabfragen.
             AppState.ADMIN_SHUTDOWN_CONFIRM: (55, 8, 8),
+            # NEU (Nutzer-Feedback): eigener, gedaempft-oranger statt roter
+            # Ton - ein Neustart ist eine deutlich weniger "gefaehrliche"
+            # Bestaetigung als Herunterfahren/Loeschen (folgenlos, laeuft
+            # automatisch durch), soll sich aber trotzdem klar von den
+            # ruhigen blaugrauen Admin-Screens abheben.
+            AppState.ADMIN_RESTART_CONFIRM: (45, 32, 8),
             # NEU (4.4): kraeftiges Dunkelrot als unuebersehbares Warnsignal,
             # deutlich abgesetzt vom ruhigen Blaugrau der uebrigen Admin-Screens.
             AppState.ADMIN_DELETE_CONFIRM: (55, 8, 8),

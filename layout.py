@@ -89,6 +89,9 @@ class LayoutRects:
     admin_event_qr_toggle: pygame.Rect
     admin_event_gallery_toggle: pygame.Rect
     admin_event_wallpaper_button: pygame.Rect
+    # NEU (Nutzer-Feedback): "Standardwerte"-Taste - teilt sich die vormals
+    # volle Zeile mit admin_event_wallpaper_button (siehe unten).
+    admin_event_defaults_button: pygame.Rect
     # NEU (Veranstaltungsdaten): Bildschirmtastatur (QWERTZ) fuer
     # ADMIN_EVENT_TEXT_ENTRY - gemeinsam fuer alle vier Textfelder, analog
     # zu pin_keys, aber mit beliebigem Text statt nur Ziffern. Schluessel:
@@ -338,7 +341,23 @@ def build_layout(width: int, height: int) -> LayoutRects:
     admin_event_wifi_password_row = _event_row(3)
     admin_event_qr_toggle = _event_row(4)
     admin_event_gallery_toggle = _event_row(5)
-    admin_event_wallpaper_button = _event_row(6)
+    # GEAENDERT (Nutzer-Feedback): Zeile 6 war bisher ein einzelner voller
+    # Button ("Wallpaper von USB laden"). Der jetzt entfallene Hinweistext
+    # darunter (siehe renderer._draw_admin_event_settings, ENTFERNT) hat
+    # keinen Platz fuer eine ganz neue Zeile hinterlassen (nur ~0.054 bis
+    # lower_y=0.80) - die neue "Standardwerte"-Taste teilt sich stattdessen
+    # dieselbe Zeile mit "Wallpaper von USB laden" (je Haelfte, gleiches
+    # Zwei-Button-Prinzip wie admin_camera_cancel/admin_camera_save).
+    _admin_event_row6 = _event_row(6)
+    _admin_event_row6_gap = round(0.015 * width)
+    _admin_event_row6_half_w = (_admin_event_row6.width - _admin_event_row6_gap) // 2
+    admin_event_wallpaper_button = pygame.Rect(
+        _admin_event_row6.x, _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
+    )
+    admin_event_defaults_button = pygame.Rect(
+        _admin_event_row6.x + _admin_event_row6_half_w + _admin_event_row6_gap,
+        _admin_event_row6.y, _admin_event_row6_half_w, _admin_event_row6.height,
+    )
     # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Umschalter fuer die
     # WLAN-Passwort-Zeile - das Passwort steht jetzt immer als Klartext da,
     # ein Sichtbarkeits-Umschalter ist nicht mehr noetig (siehe renderer.py).
@@ -352,11 +371,23 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # (-> ;:_ - der Unterstrich wird als Trennzeichen im Datei-Praefix
     # gebraucht). ae/oe/ue bleiben bewusst unveraendert (siehe
     # app_with_hw._map_admin_event_text_entry_click/renderer.py).
-    kb_key_h = 0.10
+    # GEAENDERT (Nutzer-Feedback, Bugfix): kb_y0 stand bisher bei 0.12 -
+    # direkt im Bereich der Bildschirm-Ueberschrift (status_text, z.B.
+    # "WLAN-Passwort", gezeichnet bei y=60..135px, siehe renderer.render())
+    # und ueberlappte dadurch sichtbar die erste Tastaturreihe. Jetzt auf
+    # 0.33 verschoben (unterhalb von Titel + Eingabefeld, siehe renderer.
+    # _draw_admin_event_text_entry, text_cy=0.26, jetzt mit der hoeheren
+    # Monospace-Schrift font_body_admin_mono), kb_key_h dafuer leicht
+    # verkleinert (0.10 -> 0.088), damit alle sechs Reihen (vier Buchstaben-/
+    # Ziffernreihen + Umschalt/Leertaste/DEL + Abbrechen/Speichern) trotzdem
+    # mit Rand unterhalb 1.0 bleiben (Rechnung: 0.33 + 6*0.088 + 5*0.012 =
+    # 0.33 + 0.528 + 0.06 = 0.918 - laesst knapp 8% des Bildschirms als
+    # Rand am unteren Rand frei).
+    kb_key_h = 0.088
     kb_key_w = (kb_key_h * height) / width
     kb_gap_y = 0.012
     kb_gap_x = (kb_gap_y * height) / width
-    kb_y0 = 0.12
+    kb_y0 = 0.33
     _KEYBOARD_ROWS: tuple[tuple[str, ...], ...] = (
         ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
         ("q", "w", "e", "r", "t", "z", "u", "i", "o", "p", "ü"),
@@ -446,6 +477,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_qr_toggle=admin_event_qr_toggle,
         admin_event_gallery_toggle=admin_event_gallery_toggle,
         admin_event_wallpaper_button=admin_event_wallpaper_button,
+        admin_event_defaults_button=admin_event_defaults_button,
         keyboard_keys=keyboard_keys,
     )
 
@@ -546,6 +578,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_toggle_qr": rects.admin_event_qr_toggle,
             "admin_event_toggle_gallery": rects.admin_event_gallery_toggle,
             "admin_event_wallpaper": rects.admin_event_wallpaper_button,
+            # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
+            "admin_event_defaults": rects.admin_event_defaults_button,
             "admin_event_save": rects.left,
             "back": rects.right,
         }
@@ -578,6 +612,9 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
     if state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)
         # Gleiches Prinzip wie ADMIN_DELETE_CONFIRM: "Nein" bewusst LINKS.
         return {"admin_shutdown_abort": rects.left, "admin_shutdown_confirm": rects.right}
+    if state == AppState.ADMIN_RESTART_CONFIRM:  # NEU (Nutzer-Feedback)
+        # Gleiches Prinzip wie ADMIN_SHUTDOWN_CONFIRM.
+        return {"admin_restart_abort": rects.left, "admin_restart_confirm": rects.right}
     if state == AppState.ADMIN_DELETE_CONFIRM:   # NEU (4.4)
         # "Nein" bewusst LINKS (die harmlose Wahl an der Stelle, an der
         # sonst die Standardaktion liegt), "Ja, loeschen" rechts.

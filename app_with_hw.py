@@ -324,6 +324,16 @@ class PhotoboothApp:
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN:
+            # NEU (Nutzer-Feedback): NUR die linke Maustaste/den eigentlichen
+            # Touch-Kontakt (button 1) als Tap-Start werten. SDL meldet ein
+            # Mausrad-Scrollen (z.B. per VNC-Client vom PC aus) ebenfalls als
+            # MOUSEBUTTONDOWN/-UP mit button 4/5 - ohne diese Pruefung wurde
+            # jeder Rad-"Klick" wie ein Antippen an der aktuellen Mausposition
+            # behandelt und loeste dort einen Tastendruck aus. Echte Touch-
+            # Ereignisse auf dem Pi melden immer button==1, daher keine
+            # Regression fuer den eigentlichen Touchscreen.
+            if event.button != 1:
+                return
             # Nur Startposition merken - NICHT sofort einen Klick/Tap ausloesen.
             # Wuerde hier schon gemappt (wie frueher), feuert bei der Galerie
             # ein Tap auf ein Thumbnail sofort TAP_FULLSCREEN_PHOTO, noch bevor
@@ -337,7 +347,7 @@ class PhotoboothApp:
                 self._gesture_detector.on_touch_down(event.pos, time.monotonic())
             return
 
-        if event.type == pygame.MOUSEBUTTONUP and self.touch_start_x is not None:
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.touch_start_x is not None:
             dx = event.pos[0] - self.touch_start_x
             dy = event.pos[1] - (self.touch_start_y or event.pos[1])
             start_pos = (self.touch_start_x, self.touch_start_y)
@@ -437,6 +447,18 @@ class PhotoboothApp:
                 if dy > 60:
                     self.renderer.wallpaper_pick_scroll_offset = max(
                         0, self.renderer.wallpaper_pick_scroll_offset - 150
+                    )
+                    return
+            elif self.model.state == AppState.ADMIN_STATUS:
+                # NEU (Nutzer-Feedback, Bugfix): gleiches Prinzip wie
+                # ADMIN_USB_CONFLICTS - die Diagnosezeilen sind inzwischen
+                # zu lang fuer eine Seite, siehe renderer._draw_admin_status.
+                if dy < -60:
+                    self.renderer.admin_status_scroll_offset += 150
+                    return
+                if dy > 60:
+                    self.renderer.admin_status_scroll_offset = max(
+                        0, self.renderer.admin_status_scroll_offset - 150
                     )
                     return
 
@@ -571,6 +593,10 @@ class PhotoboothApp:
             # Herunterfahren - gleiches Prinzip wie admin_delete_confirm/_abort.
             "admin_shutdown_confirm": AppEvent(EventType.TAP_ADMIN_SHUTDOWN_CONFIRM, source="touch"),
             "admin_shutdown_abort":   AppEvent(EventType.TAP_ADMIN_SHUTDOWN_ABORT, source="touch"),
+            # NEU (Nutzer-Feedback): Sicherheitsabfrage vor dem App-Neustart -
+            # gleiches Prinzip wie admin_shutdown_confirm/_abort.
+            "admin_restart_confirm": AppEvent(EventType.TAP_ADMIN_RESTART_CONFIRM, source="touch"),
+            "admin_restart_abort":   AppEvent(EventType.TAP_ADMIN_RESTART_ABORT, source="touch"),
             # NEU (4.6): "Weiter" der USB-Bildschirme.
             "usb_continue":   AppEvent(EventType.TAP_ADMIN_USB_CONTINUE, source="touch"),
             "usb_clear":      AppEvent(EventType.TAP_ADMIN_USB_CLEAR, source="touch"),    # NEU (4.7)
@@ -628,6 +654,8 @@ class PhotoboothApp:
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "gallery"}, source="touch",
             ),
             "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
+            # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
+            "admin_event_defaults": AppEvent(EventType.TAP_ADMIN_EVENT_DEFAULTS, source="touch"),
             "admin_event_save": AppEvent(EventType.TAP_ADMIN_EVENT_SAVE, source="touch"),
             "admin_event_restart_now": AppEvent(EventType.TAP_ADMIN_EVENT_RESTART_NOW, source="touch"),
             # NEU (Nutzer-Feedback): statische Buttons des Wallpaper-
@@ -703,11 +731,16 @@ class PhotoboothApp:
                 return AppEvent(EventType.TEXT_ENTRY_CHAR, payload={"char": " "}, source="touch")
             # GEAENDERT (Nutzer-Feedback): Umschalt wirkt jetzt zusaetzlich
             # ueber KEYBOARD_SHIFT_MAP auf Ziffern/,.-  (deutsche QWERTZ-
-            # Sonderzeichen-Ebene) - ae/oe/ue bleiben weiterhin unveraendert.
+            # Sonderzeichen-Ebene). GEAENDERT (Nutzer-Feedback, Bugfix):
+            # ae/oe/ue wurden bisher durch den isascii()-Check bewusst
+            # ausgeschlossen (blieben immer klein) - das war nicht das
+            # gewuenschte Verhalten. str.upper() wandelt Umlaute in Python
+            # korrekt um ("ä" -> "Ä" usw.), daher reicht jetzt ein reiner
+            # isalpha()-Check ohne isascii().
             shift = self.model.ui.admin_event_keyboard_shift
             if shift and name in KEYBOARD_SHIFT_MAP:
                 char = KEYBOARD_SHIFT_MAP[name]
-            elif shift and name.isalpha() and name.isascii():
+            elif shift and name.isalpha():
                 char = name.upper()
             else:
                 char = name
@@ -946,6 +979,11 @@ class PhotoboothApp:
             # NEU (Sprint-11-Nachbesserung): Sicherheitsabfrage vor dem
             # Herunterfahren - gleiche Begruendung wie ADMIN_DELETE_CONFIRM.
             AppState.ADMIN_SHUTDOWN_CONFIRM,
+            # NEU (Nutzer-Feedback): Sicherheitsabfrage vor dem App-Neustart -
+            # gleiche Begruendung wie ADMIN_SHUTDOWN_CONFIRM. (Bewusst OHNE
+            # ADMIN_RESTART_PENDING - der hat weiterhin seinen eigenen, nicht
+            # abbrechbaren Timer, siehe oben.)
+            AppState.ADMIN_RESTART_CONFIRM,
             # NEU (4.4): Sicherheitsabfrage vor dem Loeschen - bleibt sie
             # unbeantwortet stehen, ist "nicht loeschen" die richtige
             # Annahme. (Bewusst OHNE ADMIN_DELETE_RUNNING/_DONE: dort ist
@@ -1770,6 +1808,14 @@ class PhotoboothApp:
             "gallery_enabled": ui.admin_event_gallery_enabled,
         }
         ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
+        if ok:
+            # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
+            # Erfolg "event_config.json gespeichert." zurueck - der
+            # Dateiname ist fuer den Admin keine relevante Information
+            # (siehe _draw_admin_event_saved). Der Fehlerfall behaelt
+            # bewusst die Original-Meldung samt Dateiname/Fehlergrund, das
+            # ist beim Fehlersuchen hilfreich.
+            message = "Gespeichert."
         # NEU (Nutzer-Feedback, Bugfix): ein per Auswahlliste zwischen-
         # gelagertes Wallpaper (admin_event_wallpaper_pending) wird JETZT,
         # bei erfolgreichem "Speichern" - und nur jetzt - zum echten
@@ -2120,6 +2166,13 @@ class PhotoboothApp:
             # NEU (4.3): gruen wie waehrend der Kamera-Verarbeitung -
             # signalisiert "es passiert gerade etwas", kein neuer Effekt noetig.
             effect = LedEffect.CAPTURE_PROCESSING
+        elif state == AppState.ADMIN_RESTART_CONFIRM:
+            # NEU (Nutzer-Feedback): bewusst die ruhige Welle statt des roten
+            # Warnblinkens von ADMIN_SHUTDOWN_CONFIRM/ADMIN_DELETE_CONFIRM -
+            # ein App-Neustart ist (anders als Herunterfahren oder
+            # unwiderrufliches Loeschen) folgenlos/jederzeit wiederholbar,
+            # das Warnblinken waere hier unangemessen dramatisch.
+            effect = LedEffect.INSTRUCTIONS_WAVE
         elif state in {
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,
             # NEU (Sprint-11-Nachbesserung): gleiches Warnblinken fuer die
@@ -2236,6 +2289,9 @@ class PhotoboothApp:
             # NEU (Sprint-11-Nachbesserung): waehrend der Herunterfahren-
             # Sicherheitsabfrage darf der Taster nichts ausloesen.
             AppState.ADMIN_SHUTDOWN_CONFIRM,
+            # NEU (Nutzer-Feedback): gleiches Prinzip fuer die Neustart-
+            # Sicherheitsabfrage.
+            AppState.ADMIN_RESTART_CONFIRM,
             # NEU (4.4): waehrend Abfrage, Loeschlauf und Ergebnis darf der
             # Taster nichts ausloesen.
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,

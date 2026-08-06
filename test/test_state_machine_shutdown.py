@@ -312,5 +312,56 @@ class AdminShutdownConfirmTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_MENU)
 
 
+class AdminRestartConfirmTestCase(unittest.TestCase):
+    """NEU (Nutzer-Feedback): Sicherheitsabfrage vor 'App neu starten' -
+    gleiches Prinzip wie AdminShutdownConfirmTestCase oben. 'Ja' fuehrt zu
+    ADMIN_RESTART_PENDING, jeder andere Ausstieg (Nein/Zurueck/Idle) zurueck
+    ins Menue, OHNE neu zu starten."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_restart_confirm(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        result = self.transition(EventType.TAP_ADMIN_RESTART_APP, now_offset=now_offset + 2.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_RESTART_CONFIRM)
+
+    def test_confirm_leads_to_restart_pending(self) -> None:
+        self._go_to_admin_restart_confirm()
+        result = self.transition(EventType.TAP_ADMIN_RESTART_CONFIRM, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_RESTART_PENDING)
+
+    def test_abort_returns_to_admin_menu_without_restarting(self) -> None:
+        self._go_to_admin_restart_confirm()
+        result = self.transition(EventType.TAP_ADMIN_RESTART_ABORT, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    def test_back_returns_to_admin_menu_without_restarting(self) -> None:
+        self._go_to_admin_restart_confirm()
+        result = self.transition(EventType.TAP_BACK, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+    def test_idle_timeout_returns_to_admin_menu_without_restarting(self) -> None:
+        self._go_to_admin_restart_confirm()
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=40.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+
+
 if __name__ == "__main__":
     unittest.main()

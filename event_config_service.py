@@ -43,6 +43,24 @@ _MAX_WALLPAPER_BYTES = 30 * 1024 * 1024
 # Verzeichnis wie das echte "hauptmenu_wallpaper.png" (assets_dir).
 WALLPAPER_PENDING_FILENAME = "hauptmenu_wallpaper.pending.png"
 
+# NEU (Nutzer-Feedback): Werte fuer die "Standardwerte"-Taste auf dem
+# Veranstaltungsdaten-Screen (fuellt den gerade in Bearbeitung befindlichen
+# Entwurf, OHNE selbst zu speichern - "Speichern"/"Abbrechen" bleiben wie
+# gewohnt zustaendig). Bewusst dieselben Werte wie in
+# event_config_example.json (die Vorlage fuer eine frische Installation),
+# NICHT die Fallback-Konstanten aus config.py - deren WLAN-Passwort-
+# Platzhalter (_PLACEHOLDER = "BITTE_local_secrets.py_ANLEGEN") stammt noch
+# aus der Zeit vor der Veranstaltungsdaten-Umstellung und waere hier
+# irrefuehrend.
+DEFAULT_EVENT_VALUES: dict = {
+    "title": "Fotobox",
+    "prefix": "foto_",
+    "wifi_ssid": "Fotobox_Gast",
+    "wifi_password": "BITTE_ANPASSEN",
+    "qr_enabled": True,
+    "gallery_enabled": True,
+}
+
 
 def save_event_config(path: Path, data: dict) -> tuple[bool, str]:
     """Schreibt data als JSON nach path - atomar (Temp-Datei im selben

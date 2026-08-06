@@ -97,6 +97,15 @@ class AppState(Enum):
     # Menuepunkt "App neu starten") oder "Spaeter" (zurueck ins
     # Service-Menue, Werte greifen erst beim naechsten Neustart).
     ADMIN_EVENT_SAVED = auto()
+    # NEU (Nutzer-Feedback): Sicherheitsabfrage vor dem eigentlichen App-
+    # Neustart ueber den Menuepunkt "App neu starten" - ein Fehltipp im
+    # Service-Menue fuehrte bisher SOFORT (ohne Rueckfrage) in
+    # ADMIN_RESTART_PENDING. Gleiches Sicherheitsprinzip wie
+    # ADMIN_SHUTDOWN_CONFIRM, nur fuer den Neustart statt das Herunterfahren.
+    # Bewusst NICHT fuer "Jetzt neu starten" auf ADMIN_EVENT_SAVED - dort ist
+    # das Speichern bereits die bewusste, gerade eben getroffene Handlung,
+    # eine zweite Rueckfrage waere dort nur laestig.
+    ADMIN_RESTART_CONFIRM = auto()
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen nach "App neu
     # starten" - gibt sichtbares Feedback, bevor die App sich beendet
     # (die Auto-Restart-Schleife in start_fotobox.sh startet sie danach

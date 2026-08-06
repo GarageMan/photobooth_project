@@ -606,6 +606,45 @@ class AdminEventSettingsTestCase(unittest.TestCase):
     # das WLAN-Passwort wird nicht mehr maskiert, es gibt kein "Anzeigen"
     # mehr und damit auch kein TAP_ADMIN_EVENT_TOGGLE_PASSWORD_VISIBLE.
 
+    # -- Standardwerte ----------------------------------------------------------
+
+    def test_defaults_fills_draft_with_default_event_values(self) -> None:
+        # NEU (Nutzer-Feedback): "Standardwerte"-Taste - befuellt NUR den
+        # Entwurf (admin_event_*), siehe naechster Test fuer den Snapshot.
+        from event_config_service import DEFAULT_EVENT_VALUES
+
+        self._go_to_admin_event_settings()
+        self._fill_ready(
+            title="Altes Fest", prefix="alt_", wifi_ssid="Alt-WLAN", wifi_password="altespw",
+            qr_enabled=False, gallery_enabled=False,
+        )
+        result = self.transition(EventType.TAP_ADMIN_EVENT_DEFAULTS, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_event_title, DEFAULT_EVENT_VALUES["title"])
+        self.assertEqual(result.model.ui.admin_event_prefix, DEFAULT_EVENT_VALUES["prefix"])
+        self.assertEqual(result.model.ui.admin_event_wifi_ssid, DEFAULT_EVENT_VALUES["wifi_ssid"])
+        self.assertEqual(result.model.ui.admin_event_wifi_password, DEFAULT_EVENT_VALUES["wifi_password"])
+        self.assertEqual(result.model.ui.admin_event_qr_enabled, DEFAULT_EVENT_VALUES["qr_enabled"])
+        self.assertEqual(result.model.ui.admin_event_gallery_enabled, DEFAULT_EVENT_VALUES["gallery_enabled"])
+
+    def test_defaults_does_not_touch_snapshot_so_cancel_still_reverts(self) -> None:
+        # WICHTIG: "Standardwerte" ist nur eine Entwurfsaenderung wie jede
+        # andere - "Abbrechen" muss sie danach genau wie eine manuelle
+        # Aenderung wieder verwerfen koennen.
+        self._go_to_admin_event_settings()
+        self._fill_ready(title="Altes Fest")
+        self.transition(EventType.TAP_ADMIN_EVENT_DEFAULTS, now_offset=11.0)
+        self.assertNotEqual(self.model.ui.admin_event_title, "Altes Fest")
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertEqual(result.model.ui.admin_event_title, "Altes Fest")
+
+    def test_defaults_does_not_trigger_save(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_DEFAULTS, now_offset=11.0)
+        self.assertNotIn("save_event_config", result.actions)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+
     # -- Speichern / Abbrechen -------------------------------------------------
 
     def test_save_triggers_action_and_stays_in_state(self) -> None:
@@ -835,6 +874,11 @@ class AdminRestartPendingTestCase(unittest.TestCase):
         return result
 
     def _go_to_restart_pending(self, now_offset: float = 5.2) -> None:
+        # GEAENDERT (Nutzer-Feedback): TAP_ADMIN_RESTART_APP fuehrt seit der
+        # Sicherheitsabfrage nicht mehr direkt in ADMIN_RESTART_PENDING,
+        # sondern zuerst in ADMIN_RESTART_CONFIRM - dieser Helfer bestaetigt
+        # die Abfrage mit, damit alle bestehenden Tests unten unveraendert
+        # denselben Endzustand (ADMIN_RESTART_PENDING) sehen wie vorher.
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
         self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
         self.transition(
@@ -842,7 +886,9 @@ class AdminRestartPendingTestCase(unittest.TestCase):
             now_offset=now_offset + 1.0,
             payload={"pin_result": PinResult.ACCEPTED},
         )
-        result = self.transition(EventType.TAP_ADMIN_RESTART_APP, now_offset=now_offset + 2.0)
+        confirm = self.transition(EventType.TAP_ADMIN_RESTART_APP, now_offset=now_offset + 2.0)
+        self.assertEqual(confirm.model.state, AppState.ADMIN_RESTART_CONFIRM)
+        result = self.transition(EventType.TAP_ADMIN_RESTART_CONFIRM, now_offset=now_offset + 2.5)
         self.assertEqual(result.model.state, AppState.ADMIN_RESTART_PENDING)
 
     def test_timeout_triggers_restart_action(self) -> None:
@@ -860,7 +906,11 @@ class AdminRestartPendingTestCase(unittest.TestCase):
 
     def test_restart_deadline_is_set_not_idle_deadline(self) -> None:
         self._go_to_restart_pending(now_offset=5.2)
-        expected = self.now + 7.2 + self.config.timeouts.admin_restart_delay_seconds
+        # GEAENDERT (Nutzer-Feedback): der tatsaechliche Uebergang nach
+        # ADMIN_RESTART_PENDING passiert jetzt bei now_offset+2.5 (Bestaetigen
+        # der Sicherheitsabfrage), nicht mehr bei now_offset+2.0 (Tap auf
+        # "App neu starten" selbst) - siehe _go_to_restart_pending.
+        expected = self.now + 7.7 + self.config.timeouts.admin_restart_delay_seconds
         self.assertAlmostEqual(self.model.timers.admin_restart_deadline, expected)
         self.assertIsNone(self.model.timers.idle_deadline)
 
@@ -1012,6 +1062,8 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         # state_machine._go_admin_camera_settings/_go_admin_shutdown_confirm).
         "ADMIN_CAMERA_SETTINGS",
         "ADMIN_SHUTDOWN_CONFIRM",
+        # NEU (Nutzer-Feedback): gleiche Begruendung wie ADMIN_SHUTDOWN_CONFIRM.
+        "ADMIN_RESTART_CONFIRM",
         # NEU (Veranstaltungsdaten): bewusst OHNE ADMIN_EVENT_WALLPAPER_PICK_LOADING
         # - der laeuft nicht abbrechbar (analog ADMIN_USB_CHECK), bekommt
         # deshalb keine idle_deadline. ADMIN_EVENT_WALLPAPER_PICK (die
