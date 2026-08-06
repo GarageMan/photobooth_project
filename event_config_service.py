@@ -37,13 +37,13 @@ _WALLPAPER_SUFFIXES = (".png", ".jpg", ".jpeg")
 # jedem ueblichen Format grosszuegig genug.
 _MAX_WALLPAPER_BYTES = 30 * 1024 * 1024
 
-# NEU (Nutzer-Feedback): Zwischenablage-Dateiname fuer ein per Auswahlliste
+# Zwischenablage-Dateiname fuer ein per Auswahlliste
 # gepicktes, aber noch NICHT uebernommenes Wallpaper (siehe
 # promote_pending_wallpaper/discard_pending_wallpaper) - liegt im selben
 # Verzeichnis wie das echte "hauptmenu_wallpaper.png" (assets_dir).
 WALLPAPER_PENDING_FILENAME = "hauptmenu_wallpaper.pending.png"
 
-# NEU (Nutzer-Feedback): Werte fuer die "Standardwerte"-Taste auf dem
+# Werte fuer die "Standardwerte"-Taste auf dem
 # Veranstaltungsdaten-Screen (fuellt den gerade in Bearbeitung befindlichen
 # Entwurf, OHNE selbst zu speichern - "Speichern"/"Abbrechen" bleiben wie
 # gewohnt zustaendig). Bewusst dieselben Werte wie in
@@ -57,7 +57,7 @@ DEFAULT_EVENT_VALUES: dict = {
     "prefix": "foto_",
     "wifi_ssid": "Fotobox_Gast",
     "wifi_password": "BITTE_ANPASSEN",
-    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext -
+    # editierbarer Hauptmenue-Willkommenstext -
     # derselbe Text, der bisher fest in state_machine._main_menu_model()
     # stand (siehe config.MAIN_MENU_WELCOME_TEXT fuer den Lade-Fallback).
     "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
