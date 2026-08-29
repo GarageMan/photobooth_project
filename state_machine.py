@@ -393,22 +393,21 @@ class StateMachine:
         if event.type == EventType.TAP_ABORT_DELETE:
             return TransitionResult(model=model.evolve(state=AppState.REVIEW), actions=("set_led_review",))
         if event.type in {EventType.TAP_CONFIRM_DELETE, EventType.DELETE_TIMEOUT}:
-            # GEAENDERT (Sprint-11-Nachbesserung): nicht mehr zurueck ins
-            # Hauptmenue, sondern direkt in den Countdown - der Gast war
-            # mit der Aufnahme unzufrieden und will in aller Regel sofort
-            # ein neues Foto aufnehmen, ohne erneut ueber PHOTO_INTRO/
-            # PHOTO_PREVIEW gehen zu muessen. Die Live-Vorschau lief seit
-            # dem Uebergang COUNTDOWN->CAPTURE_PENDING nicht mehr (siehe
-            # _handle_countdown, "stop_preview") und wird hier deshalb
-            # explizit neu gestartet - _go_countdown() selbst tut das
-            # bewusst nicht, weil es sonst auf dem regulaeren Weg von
-            # PHOTO_PREVIEW aus die dort bereits laufende Vorschau unnoetig
-            # neu starten wuerde.
+            # GEAENDERT (Rueck-Nachbesserung nach Lutz' Feedback): zurueck
+            # ins Fotografieren-Menue (PHOTO_INTRO), nicht mehr direkt in
+            # den Countdown. Der direkte Sprung (Sprint-11-Nachbesserung,
+            # sollte ein sofortiges Neuaufnehmen ohne Zwischenschritt
+            # ermoeglichen) hat sich in der Praxis als zu abrupt erwiesen.
+            # Nutzt dieselbe _go_photo_intro()-Route wie z.B.
+            # _handle_qr_display bei TAP_CANCEL/QR_TIMEOUT - die Live-
+            # Vorschau bleibt dabei aus (PHOTO_INTRO zeigt kein Live-Bild,
+            # siehe _go_photo_intro: "stop_preview"), der Gast muss erst
+            # wieder "Countdown starten" antippen.
             session = replace(model.session, current_photo_path=None)
-            countdown_result = self._go_countdown(model.evolve(session=session), now)
+            intro_result = self._go_photo_intro(model.evolve(session=session), now)
             return TransitionResult(
-                model=countdown_result.model,
-                actions=("delete_photo", "start_preview") + countdown_result.actions,
+                model=intro_result.model,
+                actions=("delete_photo",) + intro_result.actions,
             )
         return TransitionResult(model=model)
 

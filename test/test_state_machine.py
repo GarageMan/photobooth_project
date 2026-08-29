@@ -182,23 +182,25 @@ class StateMachineTestCase(unittest.TestCase):
         result = self.transition(EventType.TAP_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.7)
         self.assertEqual(result.model.state, AppState.DELETE_CONFIRM)
 
-    def test_delete_confirm_returns_to_countdown(self) -> None:
-        # GEAENDERT (Sprint-11-Nachbesserung): frueher ging es zurueck ins
-        # Hauptmenue, jetzt direkt in einen neuen Countdown, damit der Gast
-        # ohne Umweg ueber PHOTO_INTRO/PHOTO_PREVIEW ein neues Foto aufnehmen
-        # kann. Live-Vorschau muss dabei explizit neu gestartet werden, da
-        # sie seit COUNTDOWN->CAPTURE_PENDING nicht mehr lief.
+    def test_delete_confirm_returns_to_photo_intro(self) -> None:
+        # GEAENDERT (Rueck-Nachbesserung nach Lutz' Feedback): der direkte
+        # Sprung in einen neuen Countdown (Sprint-11-Nachbesserung) erwies
+        # sich in der Praxis als zu abrupt und wurde zurueckgenommen -
+        # zurueck geht es jetzt wieder ins Fotografieren-Menue (PHOTO_INTRO),
+        # der Gast muss dort erneut "Countdown starten" antippen. Live-
+        # Vorschau bleibt dabei aus (PHOTO_INTRO zeigt kein Live-Bild).
         self.boot_and_go_to_countdown_menu()
         self.transition(EventType.BUTTON_PRESS, now_offset=self.config.timeouts.boot_seconds + 0.4)
         self.transition(EventType.COUNTDOWN_FINISHED, now_offset=self.config.timeouts.boot_seconds + 4.5)
         self.transition(EventType.CAPTURE_OK, now_offset=self.config.timeouts.boot_seconds + 4.6, payload={"photo_path": "/tmp/test.jpg"})
         self.transition(EventType.TAP_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.7)
         result = self.transition(EventType.TAP_CONFIRM_DELETE, now_offset=self.config.timeouts.boot_seconds + 4.8)
-        self.assertEqual(result.model.state, AppState.COUNTDOWN)
+        self.assertEqual(result.model.state, AppState.PHOTO_INTRO)
         self.assertIsNone(result.model.session.current_photo_path)
         self.assertIn("delete_photo", result.actions)
-        self.assertIn("start_preview", result.actions)
-        self.assertIn("set_led_countdown", result.actions)
+        self.assertIn("stop_preview", result.actions)
+        self.assertIn("set_led_photo_intro", result.actions)
+        self.assertNotIn("start_preview", result.actions)
 
     def test_main_menu_idle_timeout_goes_to_attract_gallery(self) -> None:
         self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
