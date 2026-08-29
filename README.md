@@ -710,9 +710,20 @@ Seite (Feature 2: Lesen, +/- durch die Auswahllisten, Grenzen an den
 Enden, Fehlerfall) ab.
 
 Sprint-11-Nachbesserung (Feedback-Runde nach dem ersten Rollout):
-`test_delete_confirm_returns_to_countdown` prüft den geänderten
-Rücksprung nach "Wirklich löschen" (jetzt `COUNTDOWN` statt `MAIN_MENU`,
-inkl. neu gestarteter Live-Vorschau). Die übrigen Korrekturen dieser
+`test_delete_confirm_returns_to_countdown` prüfte den damals geänderten
+Rücksprung nach "Wirklich löschen" (`COUNTDOWN` statt `MAIN_MENU`, inkl.
+neu gestarteter Live-Vorschau).
+
+**Update (Rück-Nachbesserung):** Der direkte Sprung in den Countdown
+erwies sich in der Praxis als zu abrupt und wurde wieder zurückgenommen —
+`_handle_delete_confirm` führt seither wie vor Sprint 11 zurück ins
+Fotografieren-Menü (`PHOTO_INTRO`, per `_go_photo_intro()`, analog zu
+`_handle_qr_display`), diesmal jedoch bewusst nicht mehr zurück ins
+Hauptmenü. Der Test `test_delete_confirm_returns_to_countdown` ist damit
+überholt und muss auf `PHOTO_INTRO` umgestellt werden (Gesamtzahl der
+Tests entsprechend zu aktualisieren, siehe Kamera-Menü-2.0-Update oben).
+
+Die übrigen Korrekturen dieser
 Runde (Schriftgrößen-Angleichung, Layout-/Overlap-Fixes im Service-Menü
 und in der Foto-QR-Ansicht, die "f/f/…"-Anzeige, die Shredder-Animation)
 sind reine Darstellungs-Änderungen ohne eigene State-Machine-Logik und
@@ -1030,3 +1041,6 @@ Ein DSGVO/GDPR-konformer Hinweistext für den privaten Veranstaltungs-
 kontext liegt als eigener Bildschirm in der App (`TERMS`-State) sowie
 als Dokument im Repository vor
 (`Nutzungsbedingungen_zur_Fotobox.docx`).
+
+
+
