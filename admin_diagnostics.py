@@ -2,7 +2,7 @@
 admin_diagnostics.py
 =====================
 Reine Diagnosefunktionen fuer den "Status / Diagnose"-Punkt im
-Service-Menue (Etappe 4.3). Jede Funktion liefert im Fehlerfall eine
+Service-Menue. Jede Funktion liefert im Fehlerfall eine
 sprechende Fehlerzeile statt eine Ausnahme zu werfen - ein einzelner
 nicht verfuegbarer Wert (z.B. Kamera nicht angeschlossen) soll nicht
 die gesamte Diagnoseseite zum Absturz bringen.

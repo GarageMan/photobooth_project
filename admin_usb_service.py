@@ -43,10 +43,7 @@ DEFAULT_MOUNTPOINT = Path("/mnt/fotobox-usb")
 _MOUNT_OPTIONS = "nosuid,nodev,noexec"
 
 # Zeichensatz-Optionen je Dateisystem. OHNE diese schlaegt das Anlegen von
-# Dateien mit Umlauten auf FAT-Datentraegern fehl - genau das ist im
-# Praxistest passiert ("Standort Koeln_...png" wurde nicht exportiert).
-# udisks2 setzt beim Automount selbst iocharset=utf8; beim eigenen Mount
-# muss man es explizit angeben.
+# Dateien mit Umlauten auf FAT-Datentraegern fehl
 # ntfs-3g und ext4 brauchen nichts davon - sie speichern Namen ohnehin
 # als UTF-8 und wuerden die Optionen mit einem Fehler ablehnen.
 _CHARSET_OPTIONS = {
@@ -306,7 +303,6 @@ def mount_partition(
         detail = message[0] if message else "unbekannter Fehler"
         hint = ""
         if partition.fstype in {"exfat", "ntfs"}:
-            # Der mit Abstand haeufigste Grund bei modernen Sticks.
             hint = " (fehlt exfatprogs / ntfs-3g?)"
         return None, f"Einbinden fehlgeschlagen: {detail[:80]}{hint}"
 
@@ -389,7 +385,7 @@ class UsbCheckResult:
     # Unterscheidet die beiden Fehlerarten, weil sie unterschiedlich
     # behandelt werden: eine zu kleine Kapazitaet ist endgueltig (anderer
     # Stick noetig), zu wenig FREIER Platz laesst sich durch Aufraeumen
-    # beheben (Etappe 4b bietet dafuer das Leeren des Sticks an).
+    # beheben.
     too_small: bool = False
     not_enough_free: bool = False
 

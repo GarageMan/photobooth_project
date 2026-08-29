@@ -19,7 +19,7 @@ except ImportError:
 
 _PLACEHOLDER = "BITTE_local_secrets.py_ANLEGEN"
 
-# GEAENDERT (Sprint 11): SHUTDOWN_PIN -> SERVICE_MENU_PIN (und ebenso fuer
+# SHUTDOWN_PIN -> SERVICE_MENU_PIN (und ebenso fuer
 # die drei Geste-Parameter unten) - die PIN schuetzt den Zugang zum
 # GESAMTEN Service-Menue (Status/Diagnose, USB-Export, Bilder loeschen,
 # Kamera-Einstellungen, Herunterfahren, ...), nicht nur das Herunterfahren,
@@ -80,7 +80,7 @@ LOG_DIR = DATA_DIR / "logs"
 ASSETS_DIR = BASE_DIR / "assets"
 
 
-# --- Etappe 8: konfigurierbare Event-Parameter -----------------------------
+# --- konfigurierbare Event-Parameter -----------------------------
 # Titel, Foto-Praefix und Gaeste-WLAN-Passwort aendern sich JEDE Veranstaltung
 # - anders als PIN/Geheim-Geste (local_secrets.py) sind das keine Geheimnisse,
 # sondern reine Event-Parameter. Damit dafuer nicht bei jeder Party Code
@@ -93,7 +93,7 @@ ASSETS_DIR = BASE_DIR / "assets"
 # "Setup-Dateien" liegen daher konsistent am selben Ort (nicht versioniert,
 # siehe .gitignore und event_config_example.json).
 #
-# GEAENDERT (Veranstaltungsdaten): oeffentlich (kein fuehrender Unterstrich)
+# oeffentlich (kein fuehrender Unterstrich)
 # - app.py braucht den Pfad, um nach einer Aenderung im neuen
 # Admin-Screen "Veranstaltungsdaten" tatsaechlich zurueckzuschreiben (siehe
 # event_config_service.save_event_config). Vorher wurde diese Datei nur
@@ -134,7 +134,7 @@ _event_config = load_event_config(EVENT_CONFIG_PATH)
 EVENT_TITLE = str(_event_config.get("event_title") or "Fotobox")
 PHOTO_PREFIX = str(_event_config.get("photo_prefix") or "foto_")
 
-# GEAENDERT (Veranstaltungsdaten): der Fallback auf ein eventuell noch
+# der Fallback auf ein eventuell noch
 # vorhandenes local_secrets.GUEST_WIFI_PASSWORD ist entfallen - auf
 # ausdruecklichen Wunsch, da das Gaeste-WLAN-Passwort kein Geraete-Geheimnis
 # ist, sondern sich mit jeder Veranstaltung aendert (anders als der
@@ -146,13 +146,13 @@ PHOTO_PREFIX = str(_event_config.get("photo_prefix") or "foto_")
 # direkt in event_config.json) neu eintragen.
 GUEST_WIFI_PASSWORD = str(_event_config.get("guest_wifi_password") or _PLACEHOLDER)
 
-# NEU (Veranstaltungsdaten): bisher hart als "Fotobox_Gast" in
+# bisher hart als "Fotobox_Gast" in
 # renderer._draw_terms verdrahtet - jetzt konfigurierbar. Der Fallback
 # bleibt derselbe Text, damit bestehende Installationen ohne diesen
 # Schluessel in event_config.json unveraendert weiterlaufen.
 GUEST_WIFI_SSID = str(_event_config.get("guest_wifi_ssid") or "Fotobox_Gast")
 
-# NEU (Sprint-11-Nachbesserung): ob QR-Codes fuer diese Veranstaltung
+# ob QR-Codes fuer diese Veranstaltung
 # ueberhaupt erzeugt/angezeigt werden sollen - Speicher-Bestaetigung
 # (state_machine._SAVE_CONFIRMATION_TEXT_*), das Icon/der Doppeltap "QR-Code
 # anfordern" in der Galerie-Vollansicht sowie AppState.GALLERY_PHOTO_QR
@@ -163,7 +163,7 @@ GUEST_WIFI_SSID = str(_event_config.get("guest_wifi_ssid") or "Fotobox_Gast")
 # solange event_config.json diesen Schluessel nicht explizit auf false setzt.
 QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
 
-# NEU (Sprint 11): ob die Galerie (Durchblaettern bisheriger Fotos + Voll-
+# ob die Galerie (Durchblaettern bisheriger Fotos + Voll-
 # ansicht) fuer diese Veranstaltung ueberhaupt angeboten wird. Manche
 # Veranstaltungen wollen/duerfen aus Datenschutz- oder Praesentationsgruenden
 # nicht, dass Gaeste die Fotos anderer Gaeste auf dem Display durchsehen
@@ -182,7 +182,7 @@ QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
 # gemeinsam (UND-verknuepft).
 GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 
-# NEU (Nutzer-Feedback): Hauptmenue-Willkommenstext - bisher fest im Code
+# Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
 # "Veranstaltungsdaten" editierbar (siehe event_config_service.
 # DEFAULT_EVENT_VALUES fuer denselben Fallback-Text bei der "Standardwerte"-
@@ -194,7 +194,7 @@ MAIN_MENU_WELCOME_TEXT = str(
     _event_config.get("welcome_text") or "Lass dich zur Erinnerung an die Veranstaltung fotografieren!"
 )
 
-# NEU (Etappe 8, Feedback): erkennt, ob die Event-Konfiguration noch auf den
+# erkennt, ob die Event-Konfiguration noch auf den
 # generischen Platzhaltern steht - entweder weil data/event_config.json
 # komplett fehlt, oder weil sie 1:1 aus event_config_example.json kopiert
 # wurde, ohne die Werte anzupassen. Gedacht als Hinweis fuer andere GitHub-
@@ -222,7 +222,7 @@ class ScreenConfig:
     width: int = 1280
     height: int = 720
     fullscreen: bool = True
-    # NEU (Etappe 8): kommt aus data/event_config.json (Fallback "Fotobox"),
+    # kommt aus data/event_config.json (Fallback "Fotobox"),
     # nicht mehr fest im Code - siehe load_event_config() oben.
     title: str = EVENT_TITLE
     target_fps: int = 30
@@ -248,7 +248,7 @@ class TimeoutConfig:
     gallery_idle_seconds: float = 180.0
     gallery_fullscreen_idle_seconds: float = 30.0
     review_idle_seconds: float = 180.0
-    # GEAENDERT (Sprint 11, Feature 3): dieser Screen zeigt seit diesem Umbau
+    # dieser Screen zeigt seit diesem Umbau
     # keinen QR-Code mehr, nur noch einen kurzen Hinweistext (siehe
     # state_machine._SAVE_CONFIRMATION_TEXT) - der Name bleibt bewusst
     # unveraendert (kein Enum-Rename, siehe dortiger Kommentar). Von 60s auf
@@ -266,15 +266,15 @@ class TimeoutConfig:
     # muss dieser Timer pausiert werden, sonst reisst er die laufende
     # Aktion mittendrin weg.
     admin_menu_idle_seconds: float = 30.0
-    # NEU (4.3): so lange steht der "App wird neu gestartet ..."-Screen,
+    # so lange steht der "App wird neu gestartet ..."-Screen,
     # bevor die App sich tatsaechlich beendet - reines Feedback, damit der
     # Bildschirm nicht unvermittelt schwarz wird.
     admin_restart_delay_seconds: float = 1.5
-    # NEU (4.6): Wartebildschirm "Bitte USB-Stick einstecken". Bewusst
+    # Wartebildschirm "Bitte USB-Stick einstecken". Bewusst
     # deutlich laenger als admin_menu_idle_seconds - Stick suchen,
     # Gehaeuse aufklappen und einstecken dauert laenger als 30 Sekunden.
     admin_usb_wait_seconds: float = 120.0
-    # NEU (Feedback nach 6c): eigener, deutlich laengerer Idle-Timeout fuer
+    # eigener, deutlich laengerer Idle-Timeout fuer
     # die uebrigen USB-Export-Screens (bereit/Problem/Export fertig/
     # entfernen/Konfliktauswahl) - bewusst GETRENNT von
     # admin_menu_idle_seconds (30s), das fuer die schnellen Admin-
@@ -283,7 +283,7 @@ class TimeoutConfig:
     # Dateien einzeln durchgegangen werden - reissen 30s zu leicht mitten
     # in der Bedienung ab.
     admin_usb_idle_seconds: float = 120.0
-    # NEU (Nutzer-Feedback nach Live-Test, Kamera-Menue 2.0): eigener,
+    # eigener,
     # deutlich laengerer Idle-Timeout fuer die Kamera-Einstellungen -
     # bewusst GETRENNT von admin_menu_idle_seconds (30s, fuer die schnellen
     # Admin-Bestaetigungen gedacht). Auf diesem Screen wird oft laenger
@@ -293,19 +293,19 @@ class TimeoutConfig:
     # state_machine._step_admin_camera_field/_handle_admin_camera_settings),
     # nicht nur beim Betreten des Screens.
     admin_camera_settings_idle_seconds: float = 60.0
-    # NEU (Sprint 11, Feature 4): so lange bleibt der QR-Code eines einzelnen
+    # so lange bleibt der QR-Code eines einzelnen
     # Galerie-Fotos eingeblendet (Doppeltap/Icon in GALLERY_FULLSCREEN),
     # bevor automatisch zurueck zur Fotoansicht gewechselt wird - wie vom
     # Nutzer vorgegeben.
     gallery_qr_seconds: float = 30.0
-    # NEU (Sprint 11, Feature 1): Cold-Start-Schaetzwert fuer die Dauer der
+    # Cold-Start-Schaetzwert fuer die Dauer der
     # Bilduebertragung (Ausloesen + gphoto2-Download), bevor die erste echte
     # Messung vorliegt. Wird danach laufend durch echte Stoppuhr-Messungen
     # ersetzt/verfeinert (siehe capture_timing.py) - steuert Tempo der
     # Uebertragungs-Animation (Datei-Symbol + LED-Punkt), damit beide
     # halbwegs synchron zur tatsaechlichen Uebertragung laufen.
     capture_transfer_estimate_seconds: float = 4.0
-    # NEU (Veranstaltungsdaten): eigene, laengere Idle-Timeouts, gleiches
+    # eigene, laengere Idle-Timeouts, gleiches
     # Prinzip wie admin_camera_settings_idle_seconds oben - bewusst GETRENNT
     # von admin_menu_idle_seconds (30s), da hier laenger gelesen/verglichen
     # bzw. ueber die Bildschirmtastatur getippt wird, was spuerbar mehr Zeit
@@ -340,24 +340,14 @@ class GpioConfig:
 
 @dataclass(frozen=True)
 class NetworkConfig:
-    # NEU: Pi-Adresse von .100 auf .10 umgestellt - Gaeste-DHCP-Pool auf dem
-    # TP-Link liegt jetzt bei .50-.254, .10/.17 (Admin-Laptop) liegen als
-    # feste Reservierungen ausserhalb davon. Portweiterleitungen (22/80/5900)
-    # und Adressreservierung auf dem TP-Link bereits entsprechend angepasst.
     raspi_ip: str = "192.168.0.10"
     photo_url_prefix: str = "http://192.168.0.10/fotos"
     guest_wifi_password: str = GUEST_WIFI_PASSWORD
-    # NEU (Veranstaltungsdaten): siehe GUEST_WIFI_SSID oben.
     guest_wifi_ssid: str = GUEST_WIFI_SSID
 
 
 @dataclass(frozen=True)
 class GalleryConfig:
-    # Hoehe reduziert (war 165): bei grid_columns=4 und dem reservierten
-    # Grid-Bereich in renderer.py (30%-77% der Bildschirmhoehe = ca. 338px)
-    # passte rechnerisch nur eine Zeile Thumbnails hinein. Mit 140px Hoehe
-    # passen zwei Zeilen gleichzeitig auf den Screen, weitere Zeilen sind
-    # per Swipe hoch/runter erreichbar (gallery_scroll_offset).
     thumbnail_size: tuple[int, int] = (240, 140)
     grid_columns: int = 4
     max_fullscreen_cache_items: int = 12
@@ -373,7 +363,7 @@ class GalleryConfig:
     excluded_filenames: frozenset[str] = frozenset({
         "testbild.png", "example_01.jpg", "example_02.jpg", "example_03.jpg",
     })
-    # NEU (Feedback): dieselben drei Beispielbilder wie oben in
+    # dieselben drei Beispielbilder wie oben in
     # excluded_filenames - hier als eigene, geordnete Liste, damit
     # renderer._draw_attract_gallery() weiss, WELCHE Dateien es als
     # Fly-In-Fallback laden soll, wenn noch keine echten Fotos existieren.
@@ -385,7 +375,7 @@ class GalleryConfig:
 
 @dataclass(frozen=True)
 class StorageConfig:
-    # Speicherplatz-Alarm (Feedback nach Etappe 8/Netzwerk-Umstellung):
+    # Speicherplatz-Alarm:
     # bei wenig freiem Speicher warnt zuerst nur Stufe 1 (Text im
     # Hauptmenue), ab critical_threshold_percent greift Stufe 2 (Aufnahme-
     # Sperre + auffaelliges Blinken von Bildschirm und LED). Schwellwerte
@@ -406,7 +396,7 @@ class StorageConfig:
 
 @dataclass(frozen=True)
 class ShutdownConfig:
-    # NEU (Sprint 11): Klassenname/Feldname (AppConfig.shutdown) bewusst
+    # Klassenname/Feldname (AppConfig.shutdown) bewusst
     # unveraendert gelassen, obwohl die PIN laengst den gesamten
     # Service-Bereich schuetzt, nicht nur das Herunterfahren - anders als
     # bei den lokalen Secrets-Variablen (SERVICE_MENU_PIN u.a., siehe
@@ -476,7 +466,7 @@ class AppConfig:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     gallery: GalleryConfig = field(default_factory=GalleryConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
-    # NEU (Feedback): Loesch- UND Kopierschutz - unabhaengig von
+    # Loesch- UND Kopierschutz - unabhaengig von
     # gallery.excluded_filenames (das nur die ANZEIGE betrifft), aber
     # inhaltlich ueberschneidend (dieselben vier Dateien). Wird von
     # app.py sowohl an delete_all_photos() als auch an
@@ -496,26 +486,26 @@ class AppConfig:
     cache_dir: Path = CACHE_DIR
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
-    # NEU (Sprint 11, Feature 1): persistierte Schaetzung der
+    # persistierte Schaetzung der
     # Bilduebertragungsdauer, siehe capture_timing.py.
     capture_timing_file: Path = DATA_DIR / "capture_timing.json"
     # Praefix fuer die Dateinamen der gespeicherten Fotos (siehe
     # hw_capture_provider.py _fetch_image). Ergebnis-Schema:
     # {photo_prefix}{JJJJMMTTHHMMSS}.jpg, z.B. "mina_20260711153045.jpg".
-    # NEU (Etappe 8): kommt aus data/event_config.json (Fallback "foto_"),
+    # kommt aus data/event_config.json (Fallback "foto_"),
     # nicht mehr fest im Code - siehe load_event_config() oben.
     photo_prefix: str = PHOTO_PREFIX
-    # NEU (Etappe 8, Feedback): True, solange Titel oder Gaeste-WLAN-
+    # True, solange Titel oder Gaeste-WLAN-
     # Passwort noch auf den generischen Platzhaltern stehen - siehe
     # NEEDS_EVENT_SETUP oben fuer die genaue Bedingung.
     needs_event_setup: bool = NEEDS_EVENT_SETUP
-    # NEU (Sprint-11-Nachbesserung): kommt aus data/event_config.json
+    # kommt aus data/event_config.json
     # (Fallback True), nicht mehr fest im Code - siehe QR_CODES_ENABLED oben.
     qr_codes_enabled: bool = QR_CODES_ENABLED
-    # NEU (Sprint 11): kommt aus data/event_config.json (Fallback True),
+    # kommt aus data/event_config.json (Fallback True),
     # siehe GALLERY_ENABLED oben.
     gallery_enabled: bool = GALLERY_ENABLED
-    # NEU (Nutzer-Feedback): kommt aus data/event_config.json, siehe
+    # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
 

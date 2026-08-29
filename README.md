@@ -14,6 +14,15 @@ aufgenommener Fotos als Blickfang.
 > Aktuell im Einsatz für private Veranstaltungen.
 > Alle UI-Texte und Code-Kommentare sind auf Deutsch.
 
+## Wer hat das gemacht?
+
+**Product Owner: Lutz** — Idee, Anforderungen, Architekturgrundlagen,
+Menüdesign sowie Tests/Feedback am echten Gerät und in Live-Betrieb bei
+Veranstaltungen.
+
+**Code geschrieben, geprüft und dokumentiert von Claude** (Anthropic),
+auf Basis dieser Vorgaben und in enger Abstimmung mit Lutz.
+
 ## 🆘 Troubleshooting im Notfall (während einer Veranstaltung)
 
 Kurzanleitung für akute Probleme mittendrin — ohne lange Fehlersuche,
@@ -63,6 +72,18 @@ exportieren und danach über „Alle Bilder löschen" leeren (Servicemenü)
 — sobald wieder ausreichend Platz frei ist, verschwindet die Sperre
 automatisch, ohne App-Neustart.
 
+**Nach dem Einschalten erscheint nur der Desktop, die App startet nicht
+von selbst:**
+1. Per SSH einloggen, Log prüfen: `tail -30 ~/photobooth/data/logs/fotobox.log`
+2. Steht dort wiederholt „sudo: Zum Lesen des Passworts ist ein
+   Terminal erforderlich": die passwortlose-sudo-Freigabe passt nicht
+   mehr zum tatsächlichen Aufruf in `start_fotobox.sh` (typischer
+   Auslöser: `app.py` wurde umbenannt/verschoben, siehe
+   [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings))
+   — dort steht auch der Fix.
+3. Boot selbst ungewöhnlich langsam? `systemd-analyze blame` zeigt, welcher
+   Dienst bremst (normal: < 10 s bis `graphical.target`).
+
 **Nichts davon hilft:** Als letzter Ausweg Pi einmal neu starten
 (`sudo reboot`) — dauert ~1–2 Minuten, App startet danach automatisch.
 
@@ -70,6 +91,7 @@ automatisch, ohne App-Neustart.
 
 ## Inhaltsverzeichnis
 
+- [Wer hat das gemacht?](#wer-hat-das-gemacht)
 - [Troubleshooting im Notfall](#-troubleshooting-im-notfall-während-einer-veranstaltung)
 - [Funktionsumfang](#funktionsumfang)
 - [Service-Menü](#service-menü)
@@ -153,14 +175,21 @@ automatisch, ohne App-Neustart.
   Diagnose-Testbild sind vor Löschen und USB-Export geschützt und
   werden im Diagnose-Screen auf Vorhandensein geprüft (siehe
   [Geschützte Dateien](#geschützte-dateien))
-- **Kamera-Einstellungen im Service-Menü** (Sprint 11): ISO und Blende
-  lassen sich direkt über die bestehende USB-Verbindung anpassen
-  (`hw_camera_settings_provider.py`, `AppState.ADMIN_CAMERA_SETTINGS`) —
-  ohne die Kamera aus dem Gehäuse zu nehmen, Kabel zu lösen und danach
-  neu auszurichten. Gültige Werte werden live von der Kamera gelesen
-  (abhängig vom montierten Objektiv); die Kamera sollte im Modus A
-  (Zeitautomatik — Blende wird vorgegeben, die Belichtungszeit berechnet
-  die Kamera selbst) oder M stehen
+- **Kamera-Menü 2.0 im Service-Menü** (Sprint 11, erweitert): zweiseitiges
+  Menü statt nur ISO/Blende — lässt sich direkt über die bestehende
+  USB-Verbindung bedienen (`hw_camera_settings_provider.py`,
+  `AppState.ADMIN_CAMERA_SETTINGS`), ohne die Kamera aus dem Gehäuse zu
+  nehmen, Kabel zu lösen und danach neu auszurichten. Seite 1
+  ("Belichtung"): ISO, Blende, Verschlusszeit (Info-Wert), Belichtungs-
+  korrektur, Belichtungsmessfeld. Seite 2 ("Sonstiges"): Weißabgleich,
+  Bildqualität, Bildgröße, Aufnahmebetrieb (bewusst auf Single Shot/Burst
+  beschränkt, siehe [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings)).
+  Live-Bild-Vorschau läuft während der gesamten Menüzeit mit; „Speichern“
+  übernimmt die Werte, „Abbrechen“ stellt den beim Öffnen aktiven Stand
+  wieder her. Gültige Werte werden live von der Kamera gelesen (abhängig
+  vom montierten Objektiv); die Kamera sollte im Modus A (Zeitautomatik —
+  Blende wird vorgegeben, die Belichtungszeit berechnet die Kamera selbst)
+  oder M stehen
 
 ## Service-Menü
 
@@ -176,8 +205,8 @@ damit deren Eck-Platzierung unverändert bleibt):
 | Status / Diagnose | Speicherplatz, Fotoanzahl, Kamera-Verbindung, Foto-Download-Pfad, Vorhandensein der geschützten Dateien, IP-Adresse, Laufzeit, geschätzte Rest-Kapazität (`admin_diagnostics.py`) |
 | Bilder auf USB-Stick | Export mit SHA256-Verifikation und Konflikterkennung (`admin_usb_export.py`, `admin_usb_service.py`) |
 | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
-| Herunterfahren | Bestätigter Poweroff mit Abschieds-Animation |
-| Kamera-Einstellungen | ISO/Blende direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
+| Herunterfahren | Sicherheitsabfrage ("Fotobox wirklich herunterfahren?", Nein/Ja) vor dem Poweroff — erst nach Bestätigung folgt die (nicht mehr abbrechbare) Abschieds-Animation; Nein/Zurück/Idle-Timeout führen zurück ins Service-Menü (`AppState.ADMIN_SHUTDOWN_CONFIRM`, siehe unten) |
+| Kamera-Einstellungen | Zweiseitiges Kamera-Menü (Belichtung/Sonstiges) direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Details siehe [Funktionsumfang](#funktionsumfang) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
 | Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen", eine "Standardwerte"-Taste füllt den Entwurf mit den Werten aus `event_config_example.json`; Änderungen wirken erst nach einem Neustart der App |
 | Zurück | Zurück ins Hauptmenü |
 | Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
@@ -259,6 +288,30 @@ läuft deshalb ausschließlich über `gphoto2.capture_preview()` per USB
 ein `threading.Lock`, da `gphoto2` nur eine aktive Kamera-Verbindung
 gleichzeitig erlaubt.
 
+### Bestätigte gphoto2/PTP-Konfigurationsnamen (Nikon D3300)
+
+Per `gphoto2 --list-config` und `gphoto2 --get-config` direkt an der
+Kamera geprüft (Kamera-Menü 2.0) — nicht mehr nur aus der
+libgphoto2-Projektdokumentation hergeleitet:
+
+| Einstellung | gphoto2-Name | Bestätigt über |
+|---|---|---|
+| ISO | `iso` | `--list-config` |
+| Blende | `f-number` | `--list-config` |
+| Verschlusszeit (nur lesend) | `shutterspeed` | `--list-config` |
+| Belichtungskorrektur | `exposurecompensation` | `--list-config` |
+| Weißabgleich | `whitebalance` | `--list-config` |
+| Bildqualität | `imagequality` | `--list-config` |
+| Bildgröße | `imagesize` | `--list-config` |
+| Belichtungsmessfeld | `exposuremetermode` | `--get-config`: RADIO, Readonly 0, Choices: Center Weighted / Multi Spot / Center Spot |
+| Aufnahmebetrieb | `capturemode` | `--get-config`: RADIO, Readonly 0, Choices: Single Shot / Burst / Timer / Quick Response Remote / Delayed Remote / Quiet Release |
+
+Die D3300 unterstützt **keinen frei verschiebbaren Spotmess-Punkt** — nur
+eine feste Center-Spot-Messung; "Multi Spot" ist vermutlich gphoto2s
+generische Bezeichnung für Nikons Matrixmessung. Nicht zu verwechseln:
+`focusmetermode` existiert ebenfalls auf der Kamera, betrifft aber das
+AF-Messfeld, nicht die Belichtungsmessung.
+
 ## Architektur
 
 Unidirektionaler Datenfluss nach dem Muster
@@ -294,6 +347,8 @@ CAPTURE_PENDING → REVIEW → DELETE_CONFIRM → QR_DISPLAY`, außerdem
 `SHUTDOWN_GOODBYE`, `GALLERY_PHOTO_QR` (NEU, Sprint 11 — Foto-QR
 on-demand aus `GALLERY_FULLSCREEN`) sowie die Service-Menü-Zustände
 (`ADMIN_MENU`, `ADMIN_STATUS`, `ADMIN_CAMERA_SETTINGS` (NEU, Sprint 11),
+`ADMIN_SHUTDOWN_CONFIRM` (NEU, Sprint-11-Nachbesserung — Sicherheitsabfrage
+vor `SHUTDOWN_GOODBYE`, siehe [Service-Menü](#service-menü)),
 `ADMIN_USB_*`, `ADMIN_DELETE_*`, `ADMIN_RESTART_PENDING` — vollständige,
 autoritative Liste in `states.py`).
 
@@ -312,7 +367,7 @@ autoritative Liste in `states.py`).
 | `hw_button_provider.py` | GPIO-Taster inkl. Taster-LED-Sync |
 | `hw_capture_provider.py` | Kameraauslösung (GPIO/Optokoppler) + gphoto2-Download, läuft im Hintergrund-Thread (siehe `CaptureProgress`, Sprint 11) |
 | `hw_gphoto2_preview_provider.py` | Live-Vorschau per gphoto2 |
-| `hw_camera_settings_provider.py` | NEU (Sprint 11): ISO/Blende direkt über USB lesen/setzen (`camera_lock`-geteilt mit den beiden obigen Providern) |
+| `hw_camera_settings_provider.py` | NEU (Sprint 11, erweitert Kamera-Menü 2.0): ISO, Blende, Belichtungskorrektur, Belichtungsmessfeld, Weißabgleich, Bildqualität, Bildgröße und Aufnahmebetrieb direkt über USB lesen/setzen (`camera_lock`-geteilt mit den beiden obigen Providern); `_filter_drive_choices` schränkt den Aufnahmebetrieb bewusst auf Single Shot/Burst ein |
 | `capture_timing.py` | NEU (Sprint 11): gleitender Mittelwert (EMA) der tatsächlichen Bildübertragungsdauer, persistiert in `data/capture_timing.json` — kalibriert die Übertragungs-Animation/LED-Choreografie |
 | `hw_grabber_provider.py` | (nicht mehr verwendet — HDMI-Grabber-Ansatz wurde verworfen) |
 | `camera_capture.py` / `camera_preview.py` | Provider-Protokolle/Wrapper |
@@ -641,6 +696,7 @@ größere System-Updates) empfehlenswert vorher einmal auszuführen.
 
 ```bash
 python3 -m pytest test_state_machine.py test_state_machine_admin.py \
+    test_state_machine_shutdown.py test_hw_camera_settings_provider.py \
     test_gallery_service.py test_storage_service.py test_storage_alarm.py \
     test_button_service.py test_admin_usb_export.py test_config.py
 ```
@@ -654,9 +710,20 @@ Seite (Feature 2: Lesen, +/- durch die Auswahllisten, Grenzen an den
 Enden, Fehlerfall) ab.
 
 Sprint-11-Nachbesserung (Feedback-Runde nach dem ersten Rollout):
-`test_delete_confirm_returns_to_countdown` prüft den geänderten
-Rücksprung nach "Wirklich löschen" (jetzt `COUNTDOWN` statt `MAIN_MENU`,
-inkl. neu gestarteter Live-Vorschau). Die übrigen Korrekturen dieser
+`test_delete_confirm_returns_to_countdown` prüfte den damals geänderten
+Rücksprung nach "Wirklich löschen" (`COUNTDOWN` statt `MAIN_MENU`, inkl.
+neu gestarteter Live-Vorschau).
+
+**Update (Rück-Nachbesserung):** Der direkte Sprung in den Countdown
+erwies sich in der Praxis als zu abrupt und wurde wieder zurückgenommen —
+`_handle_delete_confirm` führt seither wie vor Sprint 11 zurück ins
+Fotografieren-Menü (`PHOTO_INTRO`, per `_go_photo_intro()`, analog zu
+`_handle_qr_display`), diesmal jedoch bewusst nicht mehr zurück ins
+Hauptmenü. Der Test `test_delete_confirm_returns_to_countdown` ist damit
+überholt und muss auf `PHOTO_INTRO` umgestellt werden (Gesamtzahl der
+Tests entsprechend zu aktualisieren, siehe Kamera-Menü-2.0-Update oben).
+
+Die übrigen Korrekturen dieser
 Runde (Schriftgrößen-Angleichung, Layout-/Overlap-Fixes im Service-Menü
 und in der Foto-QR-Ansicht, die "f/f/…"-Anzeige, die Shredder-Animation)
 sind reine Darstellungs-Änderungen ohne eigene State-Machine-Logik und
@@ -693,7 +760,15 @@ Galerie-Vollansicht folgenlos bleibt. Die Anleitungs-/Bedingungstexte
 selbst (renderer.py) sind wie die übrigen Darstellungs-Änderungen per
 Screenshot-Rendering gegengeprüft, nicht per pytest.
 
-Gesamter Lauf (alle `test_*.py`) zuletzt: **321 Tests, alle grün.**
+**Update (Kamera-Menü 2.0 + Sicherheitsabfrage vor dem Herunterfahren):**
+`test_state_machine_admin.py` und `test_state_machine_shutdown.py`
+erweitert (u. a. um `ADMIN_SHUTDOWN_CONFIRM`: Nein/Ja/Idle-Timeout),
+`test_hw_camera_settings_provider.py` neu (deckt beide Menüseiten sowie
+`_filter_drive_choices` ab). Gesamtzahl seit dem letzten vollständigen
+Lauf noch zu aktualisieren.
+
+Gesamter Lauf (alle `test_*.py`) zuletzt: **321 Tests, alle grün**
+(Stand vor Kamera-Menü 2.0 — siehe Update oben).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -715,13 +790,15 @@ python3 -m py_compile <geänderte_dateien.py>
   `_LED_INDEX_AT_12_OCLOCK`/`_LED_CLOCKWISE` sind ein Platzhalter und
   müssen am echten Ring geprüft/korrigiert werden:
   `sudo python3 hw_led_provider.py capture_transfer`.
-- **gphoto2-ISO/Blende noch nicht an echter Hardware getestet
-  (Sprint 11):** `hw_camera_settings_provider.py` basiert auf der
-  offiziellen libgphoto2-Fähigkeitsliste der D3300 (`iso`/`f-number` als
-  read-write deklariert) und wurde gegen eine simulierte gphoto2-API
-  durchgetestet — ein echter Test am Gerät (inkl. der tatsächlichen
-  Konfig-Widget-Namen, Antwortzeiten und des Verhaltens bei aktivem
-  Live-View, siehe gphoto/gphoto2#491) steht noch aus.
+- **gphoto2-Konfigurationsnamen jetzt an echter Hardware bestätigt
+  (Kamera-Menü 2.0):** siehe
+  [Bestätigte gphoto2/PTP-Konfigurationsnamen](#bestätigte-gphoto2ptp-konfigurationsnamen-nikon-d3300)
+  — nicht mehr nur aus der libgphoto2-Fähigkeitsliste hergeleitet.
+- **Live-Vorschau + gleichzeitige Einstellungsänderung im Kamera-Menü
+  (noch nicht unter Last geprüft):** beide nutzen dieselbe PTP-Sitzung
+  (nur eine gleichzeitig möglich, siehe `camera_lock`) — ob es dabei
+  ruckelt oder sich Änderungen spürbar verzögern, ist am echten Gerät
+  noch nicht verifiziert.
 - **Timing-Gefühl der Übertragungs-Animation:** `capture_timing.py`
   startet mit einem Kaltstart-Schätzwert (4 s,
   `capture_transfer_estimate_seconds`) und lernt danach aus echten
@@ -756,6 +833,18 @@ python3 -m py_compile <geänderte_dateien.py>
   udev-Regel (`/etc/udev/rules.d/99-touch-rotate.rules`,
   `LIBINPUT_CALIBRATION_MATRIX`). Der `labwc-rc.xml`-Ansatz über
   `<calibrationMatrix>` funktioniert **nicht**.
+- **Passwortloses `sudo` bei Umbenennung/Verschiebung von `app.py`
+  manuell nachziehen:** Die Freigabe in `/etc/sudoers.d/fotobox` ist
+  auf den exakten Befehl `python3 /home/photobox/photobooth/app.py`
+  beschränkt (siehe [Autostart](#autostart)) und wird **nicht**
+  automatisch mitgepflegt, wenn die Datei umbenannt oder verschoben
+  wird. Bei einem Mismatch verlangt `sudo` im nicht-interaktiven
+  Autostart-Kontext ein Passwort, bekommt keins und bricht sofort ab
+  (`fotobox.log`: „sudo: Zum Lesen des Passworts ist ein Terminal
+  erforderlich") — die Neustart-Schleife läuft dann endlos, ohne dass
+  die App je hochkommt, nur der Desktop bleibt sichtbar. Nach jeder
+  Umbenennung: `sudo visudo -f /etc/sudoers.d/fotobox` und den Pfad
+  anpassen, danach mit `sudo -n python3 <neuer-pfad>` gegenprüfen.
 - **Modulnamen vor dem Anlegen prüfen:** Ein neues Modul kann
   bestehende Dateien versehentlich überschreiben, wenn der Name schon
   vergeben ist (z. B. wäre ein neues `storage_service.py` mit der

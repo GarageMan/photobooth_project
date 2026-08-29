@@ -1,7 +1,7 @@
 """
 admin_delete_service.py
 ========================
-Loeschung aller Veranstaltungsbilder (Etappe 4.4, Service-Menue-Punkt
+Loeschung aller Veranstaltungsbilder (Service-Menue-Punkt
 "Alle Bilder loeschen").
 
 Geloescht wird an drei Orten:

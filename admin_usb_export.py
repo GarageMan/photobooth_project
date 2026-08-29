@@ -68,7 +68,6 @@ class ExportProgress:
     copied_files: int = 0
     skipped_files: int = 0
     verified_files: int = 0
-    # NEU (6a): Fortschritt der Konfliktaufloesung (Phase 2).
     resolved_files: int = 0
     current_file: str = ""
     # "start", "copy", "verify", "conflicts", "resolve", "done", "error".
@@ -101,25 +100,16 @@ class ExportResult:
     copied: int = 0
     skipped: int = 0
     verified: int = 0
-    # NEU (6a): aufgeloeste Konflikte.
     overwritten: int = 0
     renamed: int = 0
     failed_verify: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     target_dir: Path | None = None
-    # NEU (6a): noch OFFENE Konflikte (Phase 1 gefuellt, nach
-    # apply_conflict_resolutions() wieder leer).
     conflicts: list[ExportConflict] = field(default_factory=list)
-    # NEU (6a): menschenlesbare Protokollzeilen der ausgefuehrten Aktionen
-    # (Kopieren/Ueberschreiben/Umbenennen) - werden von app ins
-    # Export-Logfile geschrieben.
     log_actions: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        # Auch offene Konflikte machen das Ergebnis "nicht ok": das Loeschen
-        # der Originale darf erst nach vollstaendiger Aufloesung UND
-        # bestandener Pruefung angeboten werden.
         return not self.failed_verify and not self.errors and not self.conflicts
 
     def summary_lines(self) -> tuple[str, ...]:
@@ -146,9 +136,6 @@ class ExportResult:
 
 
 # Zeichen, die FAT32/exFAT/NTFS in Datei- und Ordnernamen verbieten.
-# Der Event-Titel ist Freitext aus config.py und kann alles enthalten -
-# ein Doppelpunkt in "Minas 10. Geburtstag: Fotobox" wuerde das Anlegen
-# des Ordners sonst kommentarlos scheitern lassen.
 _FORBIDDEN_NAME_CHARS = '<>:"/\\|?*'
 
 
