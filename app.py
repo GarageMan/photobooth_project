@@ -190,6 +190,12 @@ class PhotoboothApp:
         # GALLERY_FULLSCREEN (siehe _handle_pygame_event).
         self._last_fullscreen_tap_time: float | None = None
         self._last_fullscreen_tap_pos: tuple[int, int] | None = None
+        # NEU (Sprint 12): Doppeltap-Erkennung auf dem Live-Vorschau-Panel in
+        # ADMIN_CAMERA_SETTINGS - gleiches Prinzip wie oben (GALLERY_
+        # FULLSCREEN), eigene Zeit-/Positions-Verfolgung, damit sich beide
+        # Doppeltap-Erkennungen nicht gegenseitig beeinflussen.
+        self._last_camera_preview_tap_time: float | None = None
+        self._last_camera_preview_tap_pos: tuple[int, int] | None = None
         self._qr_surface: pygame.Surface | None = None
         self.running = True
         # NEU (4.3): Startzeitpunkt fuer die Laufzeit-Anzeige im Status-Screen.
@@ -461,6 +467,34 @@ class PhotoboothApp:
                         0, self.renderer.admin_status_scroll_offset - 150
                     )
                     return
+            elif self.model.state == AppState.ADMIN_CAMERA_SETTINGS:
+                # NEU (Sprint 12): Doppeltap auf das kleine Live-Vorschau-
+                # Panel oeffnet die Vollbild-Zoom-Ansicht - gleiches Prinzip
+                # wie der Doppeltap in GALLERY_FULLSCREEN oben (eigene Zeit-/
+                # Positions-Verfolgung, siehe __init__). Nur bei einem
+                # "stillen" Tap relevant (kein Swipe - auf diesem Screen gibt
+                # es zwar kein Wischen, aber die 30px-Toleranz unten in
+                # "Kein Swipe erkannt" gilt erst NACH diesem elif-Zweig, hier
+                # also selbst pruefen) und nur innerhalb des Panel-Rechtecks.
+                if (
+                    abs(dx) < 30 and abs(dy) < 30
+                    and self.layout.admin_camera_preview.collidepoint(start_pos)
+                ):
+                    tap_time = time.monotonic()
+                    is_double_tap = (
+                        self._last_camera_preview_tap_time is not None
+                        and tap_time - self._last_camera_preview_tap_time < 0.4
+                        and self._last_camera_preview_tap_pos is not None
+                        and abs(start_pos[0] - self._last_camera_preview_tap_pos[0]) < 40
+                        and abs(start_pos[1] - self._last_camera_preview_tap_pos[1]) < 40
+                    )
+                    if is_double_tap:
+                        self._last_camera_preview_tap_time = None
+                        self._last_camera_preview_tap_pos = None
+                        self.dispatch(AppEvent(EventType.TAP_ADMIN_CAMERA_ZOOM_ENTER, source="touch"))
+                        return
+                    self._last_camera_preview_tap_time = tap_time
+                    self._last_camera_preview_tap_pos = start_pos
 
             # Kein Swipe erkannt -> als normaler Tap an der Startposition werten.
             # Kleine Toleranz (Zittern beim Antippen soll nicht dazu fuehren,
@@ -648,6 +682,12 @@ class PhotoboothApp:
             "admin_camera_page_prev": AppEvent(EventType.TAP_ADMIN_CAMERA_PAGE_PREV, source="touch"),
             "admin_camera_save": AppEvent(EventType.TAP_ADMIN_CAMERA_SAVE, source="touch"),
             "admin_camera_cancel": AppEvent(EventType.TAP_ADMIN_CAMERA_CANCEL, source="touch"),
+            # NEU (Sprint 12): Vollbild-Zoom-Ansicht - "Beenden" nutzt
+            # bewusst TAP_BACK (siehe state_machine._handle_admin_camera_zoom,
+            # gleiches Prinzip wie "back" bei ADMIN_STATUS).
+            "admin_camera_zoom_exit": AppEvent(EventType.TAP_BACK, source="touch"),
+            "admin_camera_zoom_minus": AppEvent(EventType.TAP_ADMIN_CAMERA_ZOOM_OUT, source="touch"),
+            "admin_camera_zoom_plus": AppEvent(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, source="touch"),
             # NEU (Veranstaltungsdaten): Uebersichts-Zeilen (oeffnen die
             # Tastatur fuer das jeweilige Feld bzw. kippen einen Schalter
             # direkt) sowie die Bestaetigungs-Screens.
@@ -996,6 +1036,10 @@ class PhotoboothApp:
             # admin_menu_idle_seconds automatisch, siehe
             # state_machine._go_admin_camera_settings).
             AppState.ADMIN_CAMERA_SETTINGS,
+            # NEU (Sprint 12): Vollbild-Zoom-Ansicht - gleiches Idle-
+            # Verhalten (gleicher Timeout-Wert, siehe state_machine.
+            # _go_admin_camera_zoom).
+            AppState.ADMIN_CAMERA_ZOOM,
             # NEU (Sprint-11-Nachbesserung): Sicherheitsabfrage vor dem
             # Herunterfahren - gleiche Begruendung wie ADMIN_DELETE_CONFIRM.
             AppState.ADMIN_SHUTDOWN_CONFIRM,
@@ -1247,6 +1291,10 @@ class PhotoboothApp:
                 self._set_admin_camera_setting(drive_mode=self.model.ui.admin_camera_drive)
             elif action == "revert_admin_camera_settings":     # NEU (Kamera-Menue 2.0)
                 self._revert_admin_camera_settings()
+            elif action == "read_admin_camera_zoom":           # NEU (Sprint 12)
+                self._read_admin_camera_zoom()
+            elif action == "set_admin_camera_zoom":            # NEU (Sprint 12)
+                self._set_admin_camera_zoom(self.model.ui.admin_camera_zoom_value)
             elif action == "collect_admin_event_settings":     # NEU (Veranstaltungsdaten)
                 self._collect_admin_event_settings()
             elif action == "save_event_config":                # NEU (Veranstaltungsdaten)
@@ -2055,6 +2103,51 @@ class PhotoboothApp:
         if not used_shared:
             _apply(None, None)
 
+    def _read_admin_camera_zoom(self) -> None:
+        # NEU (Sprint 12): synchron ermittelt, gleiches Prinzip wie
+        # _read_admin_camera_settings (geteilte Kamera-Sitzung mit der
+        # laufenden Live-Vorschau, falls vorhanden - siehe
+        # hw_camera_settings_provider.py-Docstring).
+        used_shared, snapshot = self.preview_service.run_with_camera(
+            lambda camera, context: hw_camera_settings_provider.read_zoom(
+                self._camera_lock, camera=camera, context=context
+            )
+        )
+        if not used_shared:
+            snapshot = hw_camera_settings_provider.read_zoom(self._camera_lock)
+        label = hw_camera_settings_provider.format_zoom_label(snapshot.hardware, snapshot.value, snapshot.choices)
+        self.dispatch(AppEvent(
+            EventType.ADMIN_CAMERA_ZOOM_READY,
+            payload={
+                "hardware": snapshot.hardware, "value": snapshot.value, "choices": snapshot.choices, "label": label,
+            },
+            source="camera_zoom",
+        ))
+
+    def _set_admin_camera_zoom(self, value: str) -> None:
+        # NEU (Sprint 12): der neue Wert steht bereits optimistisch in
+        # model.ui (state_machine._step_admin_camera_field/
+        # _go_admin_camera_settings_from_zoom haben ihn vor dem Dispatch
+        # dieser Aktion gesetzt). Beim Software-Zoom-Fallback (hardware=
+        # False) gibt es nichts an die Kamera zu senden - der Zoom-Effekt
+        # entsteht dort rein im Renderer (Crop des Vorschau-Frames, siehe
+        # renderer._draw_admin_camera_zoom); ein erneutes Lesen ist dann
+        # ebenfalls unnoetig (der Wert steht ja schon fest).
+        if not self.model.ui.admin_camera_zoom_hardware:
+            return
+        used_shared, result = self.preview_service.run_with_camera(
+            lambda camera, context: hw_camera_settings_provider.set_zoom(
+                self._camera_lock, value, camera=camera, context=context
+            )
+        )
+        ok, error = result if used_shared else hw_camera_settings_provider.set_zoom(self._camera_lock, value)
+        if not ok:
+            print(f"[App] Kamera-Zoom konnte nicht gesetzt werden: {error}")
+        # Gleiches Prinzip wie _set_admin_camera_setting: nach JEDER
+        # Aenderung neu lesen, damit die Anzeige garantiert den tatsaechlich
+        # aktiven Kamera-Stand zeigt (nicht nur den zuletzt angeforderten).
+        self._read_admin_camera_zoom()
+
     # -- LED & Button-LED synchronisieren --------------------------------------
 
     # Identischer 10s-Bereitschafts-Blink-Zyklus wie in hw_led_provider.py's
@@ -2170,6 +2263,9 @@ class PhotoboothApp:
         elif state == AppState.ADMIN_CAMERA_SETTINGS:
             # NEU (Sprint 11, Feature 2): gleiche ruhige Welle wie die
             # uebrigen Service-Menue-Unterseiten (ADMIN_STATUS).
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_CAMERA_ZOOM:
+            # NEU (Sprint 12): gleiche ruhige Welle wie ADMIN_CAMERA_SETTINGS.
             effect = LedEffect.INSTRUCTIONS_WAVE
         elif state in {
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
@@ -2302,6 +2398,9 @@ class PhotoboothApp:
             # NEU (Sprint 11, Feature 2): gleiche Begruendung - der Taster
             # loest hier keine ISO-/Blendenaenderung aus.
             AppState.ADMIN_CAMERA_SETTINGS,
+            # NEU (Sprint 12): gleiche Begruendung - im Vollbild-Zoom soll
+            # der Taster ebenfalls nichts ausloesen.
+            AppState.ADMIN_CAMERA_ZOOM,
             # NEU (Sprint 11, Feature 4): waehrend die QR-Karte fuer EIN
             # Foto angezeigt wird, soll ein Tasterdruck (anders als sonst in
             # der Galerie) KEINE neue Aufnahme starten - state_machine.
@@ -2361,6 +2460,11 @@ class PhotoboothApp:
         if self.model.state == AppState.COUNTDOWN and self.model.ui.countdown_value not in (None, 1):
             return self.preview_service.get_frame()
         if self.model.state == AppState.ADMIN_CAMERA_SETTINGS:
+            return self.preview_service.get_frame()
+        # NEU (Sprint 12): Vollbild-Zoom-Ansicht - gleiches Prinzip, die
+        # Vorschau laeuft bereits (siehe state_machine._go_admin_camera_zoom,
+        # KEIN erneutes start_preview beim Wechsel dorthin).
+        if self.model.state == AppState.ADMIN_CAMERA_ZOOM:
             return self.preview_service.get_frame()
         return None
 

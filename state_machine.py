@@ -523,6 +523,13 @@ class StateMachine:
                 )
             ui = replace(model.ui, **changes)
             return TransitionResult(model=model.evolve(ui=ui))
+        # NEU (Sprint 12): Doppeltap auf das kleine Live-Vorschau-Panel
+        # (siehe app._handle_pygame_event) oeffnet die Vollbild-Zoom-Ansicht -
+        # die laufende Vorschau (start_preview kam bereits beim Betreten von
+        # ADMIN_CAMERA_SETTINGS mit, siehe _go_admin_camera_settings) bleibt
+        # dabei unveraendert bestehen, nur der Bildschirm wechselt.
+        if event.type == EventType.TAP_ADMIN_CAMERA_ZOOM_ENTER:
+            return self._go_admin_camera_zoom(model, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_ISO_UP and model.ui.admin_camera_iso_choices:
             return self._step_admin_camera_field(model, "admin_camera_iso", "admin_camera_iso_choices", "set_admin_camera_iso", +1, now)
         if event.type == EventType.TAP_ADMIN_CAMERA_ISO_DOWN and model.ui.admin_camera_iso_choices:
@@ -1254,6 +1261,83 @@ class StateMachine:
             model=model.evolve(state=AppState.ADMIN_CAMERA_SETTINGS, ui=ui, timers=timers),
             actions=("start_preview", "read_admin_camera_settings"),
         )
+
+    # NEU (Sprint 12): Vollbild-Zoom-Ansicht - siehe _handle_admin_camera_zoom
+    # fuer die Ereignisse, Modul-Docstring in states.py (AppState.
+    # ADMIN_CAMERA_ZOOM) fuer den Gesamtueberblick. Aus ADMIN_CAMERA_SETTINGS
+    # per Doppeltap auf das Live-Vorschau-Panel erreichbar (siehe app.
+    # _handle_pygame_event) - admin_camera_page/die Belichtungswerte bleiben
+    # dabei unangetastet, damit "Beenden" spaeter zur selben Seite/denselben
+    # Werten zurueckkehrt (siehe _go_admin_camera_settings_from_zoom unten,
+    # bewusst NICHT _go_admin_camera_settings). Die Vorschau laeuft bereits
+    # (start_preview kam mit dem Betreten von ADMIN_CAMERA_SETTINGS mit) -
+    # hier deshalb KEIN erneutes start_preview, nur "read_admin_camera_zoom"
+    # fragt den Zoom-Status ab.
+    def _go_admin_camera_zoom(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            admin_camera_zoom_hardware=False,
+            admin_camera_zoom_value="",
+            admin_camera_zoom_choices=(),
+            admin_camera_zoom_label="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_CAMERA_ZOOM, ui=ui, timers=timers),
+            actions=("read_admin_camera_zoom",),
+        )
+
+    # NEU (Sprint 12): "Beenden"/Idle-Timeout aus der Zoom-Ansicht - zurueck
+    # nach ADMIN_CAMERA_SETTINGS. Bewusst NICHT ueber _go_admin_camera_settings
+    # (das wuerde admin_camera_page und die gesamte Belichtungs-Momentaufnahme
+    # zuruecksetzen) - hier soll GENAU die Seite/die Werte stehenbleiben, mit
+    # denen der Zoom-Screen betreten wurde. Setzt den Zoom auf choices[0]
+    # ("kein Zoom") zurueck, falls er nicht schon dort steht, damit weder das
+    # kleine Vorschau-Panel noch (bei hardware=True) die Kamera selbst
+    # gezoomt zurueckbleiben.
+    def _go_admin_camera_settings_from_zoom(self, model: AppModel, now: float) -> TransitionResult:
+        ui = model.ui
+        actions: tuple[str, ...] = ()
+        if ui.admin_camera_zoom_choices and ui.admin_camera_zoom_value != ui.admin_camera_zoom_choices[0]:
+            ui = replace(ui, admin_camera_zoom_value=ui.admin_camera_zoom_choices[0])
+            actions = ("set_admin_camera_zoom",)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_camera_settings_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_CAMERA_SETTINGS, ui=ui, timers=timers),
+            actions=actions,
+        )
+
+    # NEU (Sprint 12): +/- wandert wie bei ISO/Blende/etc. in einer
+    # choices-Liste (_step_admin_camera_field ist dafuer bereits
+    # generalisiert, siehe dort) - unabhaengig davon, ob es sich um echte
+    # Kamera-Werte (hardware=True) oder den Software-Zoom-Fallback handelt
+    # (siehe hw_camera_settings_provider.read_zoom).
+    def _handle_admin_camera_zoom(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_CAMERA_ZOOM_READY:
+            payload = event.payload
+            ui = replace(
+                model.ui,
+                admin_camera_zoom_hardware=bool(payload.get("hardware", False)),
+                admin_camera_zoom_value=str(payload.get("value", "")),
+                admin_camera_zoom_choices=tuple(payload.get("choices", ())),
+                admin_camera_zoom_label=str(payload.get("label", "")),
+            )
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_CAMERA_ZOOM_IN and model.ui.admin_camera_zoom_choices:
+            return self._step_admin_camera_field(
+                model, "admin_camera_zoom_value", "admin_camera_zoom_choices", "set_admin_camera_zoom", +1, now,
+            )
+        if event.type == EventType.TAP_ADMIN_CAMERA_ZOOM_OUT and model.ui.admin_camera_zoom_choices:
+            return self._step_admin_camera_field(
+                model, "admin_camera_zoom_value", "admin_camera_zoom_choices", "set_admin_camera_zoom", -1, now,
+            )
+        # NEU (Sprint 12): "Beenden" nutzt bewusst TAP_BACK statt eines
+        # eigenen Events (siehe events.py) - Idle-Timeout verhaelt sich
+        # identisch (kein "Abbrechen"-Sonderfall wie bei den Belichtungs-
+        # werten noetig, der Zoom wird ohnehin immer zurueckgesetzt).
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_camera_settings_from_zoom(model, now)
+        return TransitionResult(model=model)
 
     # NEU (4.3): kurzer Zwischenscreen vor dem eigentlichen App-Neustart.
     # Bewusst NICHT abbrechbar (wie SHUTDOWN_GOODBYE) - "App neu starten"

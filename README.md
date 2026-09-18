@@ -190,6 +190,24 @@ von selbst:**
   vom montierten Objektiv); die Kamera sollte im Modus A (Zeitautomatik —
   Blende wird vorgegeben, die Belichtungszeit berechnet die Kamera selbst)
   oder M stehen
+- **Vollbild-Zoom zum Scharfstellen** (Sprint 12): Ein Doppeltap auf das
+  kleine Live-Vorschau-Panel in "Kamera-Einstellungen" öffnet eine
+  Vollbild-Darstellung des Live-Bilds mit "+"/"-"-Tasten unten rechts
+  (Zoomstufen 100/150/200/300/400 %, kein Umlaufen an den Enden) und einer
+  "Beenden"-Taste, die exakt zur zuvor geöffneten Seite (Belichtung/
+  Sonstiges) zurückspringt und den Zoom dabei automatisch zurücksetzt.
+  Rein rechnerischer Zoom (Crop + Skalierung des bereits übertragenen
+  Vorschau-Frames) — ein Versuch, stattdessen die Zoom-Lupe der Kamera
+  selbst zu nutzen (Nikon Live View Image Zoom Ratio, PTP `0xD1A3`/
+  Konfig-Name `d1a3`), wurde nach einem Live-Test verworfen: das Setzen
+  dauert an der D3300 ca. 10 Sekunden (blockiert währenddessen die
+  komplette Bedienung) und wirkt sich auf den per USB abgegriffenen
+  Live-View-Stream ohnehin nicht sichtbar aus — offenbar wirkt die Lupe
+  nur auf die kamera-eigene Anzeige. Die Bildschärfe des Software-Zooms
+  ist durch die Auflösung des Live-Vorschau-Streams begrenzt (siehe
+  [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings))
+  — hilft beim groben Ausrichten, ersetzt aber keine pixelgenaue
+  Schärfe-Kontrolle
 
 ## Service-Menü
 
@@ -206,7 +224,7 @@ damit deren Eck-Platzierung unverändert bleibt):
 | Bilder auf USB-Stick | Export mit SHA256-Verifikation und Konflikterkennung (`admin_usb_export.py`, `admin_usb_service.py`) |
 | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
 | Herunterfahren | Sicherheitsabfrage ("Fotobox wirklich herunterfahren?", Nein/Ja) vor dem Poweroff — erst nach Bestätigung folgt die (nicht mehr abbrechbare) Abschieds-Animation; Nein/Zurück/Idle-Timeout führen zurück ins Service-Menü (`AppState.ADMIN_SHUTDOWN_CONFIRM`, siehe unten) |
-| Kamera-Einstellungen | Zweiseitiges Kamera-Menü (Belichtung/Sonstiges) direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Details siehe [Funktionsumfang](#funktionsumfang) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen |
+| Kamera-Einstellungen | Zweiseitiges Kamera-Menü (Belichtung/Sonstiges) direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Details siehe [Funktionsumfang](#funktionsumfang) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen. Doppeltap auf das Live-Vorschau-Panel öffnet den Vollbild-Zoom zum Scharfstellen (Sprint 12, siehe [Funktionsumfang](#funktionsumfang)) |
 | Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen", eine "Standardwerte"-Taste füllt den Entwurf mit den Werten aus `event_config_example.json`; Änderungen wirken erst nach einem Neustart der App |
 | Zurück | Zurück ins Hauptmenü |
 | Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
@@ -767,8 +785,22 @@ erweitert (u. a. um `ADMIN_SHUTDOWN_CONFIRM`: Nein/Ja/Idle-Timeout),
 `_filter_drive_choices` ab). Gesamtzahl seit dem letzten vollständigen
 Lauf noch zu aktualisieren.
 
-Gesamter Lauf (alle `test_*.py`) zuletzt: **321 Tests, alle grün**
-(Stand vor Kamera-Menü 2.0 — siehe Update oben).
+**Update (Sprint 12, Vollbild-Zoom):** `test_hw_camera_settings_provider.py`
+um `FormatZoomLabelTestCase` erweitert (reine Anzeige-Logik für
+`format_zoom_label`), `test_state_machine_admin.py` um
+`AdminCameraZoomTestCase` erweitert (Screen-Wechsel per Doppeltap,
+Seiten-Erhalt beim Verlassen über "Beenden", Stepping ohne Umlaufen an
+beiden Enden, automatisches Zurücksetzen des Zooms beim Verlassen,
+Idle-Timeout-Verhalten identisch zu "Beenden"). `read_zoom()`/`set_zoom()`
+selbst sprechen direkt mit gphoto2 und sind wie `read_current()` nicht per
+pytest, sondern über einen manuellen Render-Smoke-Test sowie den
+Live-Test auf dem Pi abgedeckt (siehe
+[Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings)
+für das Ergebnis: Hardware-Zoom-Pfad deaktiviert, `_ZOOM_CONFIG_NAMES`
+bewusst leer).
+
+Gesamter Lauf (alle `test_*.py`) zuletzt: **448 Tests, alle grün**
+(Stand nach Sprint 12).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -781,6 +813,24 @@ python3 -m py_compile <geänderte_dateien.py>
 
 - **Kamera/USB:** siehe [Hardware](#hardware) — LiveView nur per USB/
   gphoto2 möglich, kein HDMI parallel zu USB.
+- **Nikon Live-View-Zoom-Lupe (PTP `0xD1A3`/Konfig-Name `d1a3`) für den
+  Vollbild-Zoom verworfen (Sprint 12, am echten Gerät geprüft):** Die
+  D3300 bietet diese Eigenschaft zwar an und nimmt sie auch per gphoto2
+  entgegen, aber (a) das Setzen dauert am echten Gerät ca. 10 Sekunden
+  und blockiert währenddessen die komplette App-Bedienung, da
+  `hw_camera_settings_provider.set_zoom()` synchron im Haupt-/Event-
+  Thread aufgerufen wird, und (b) der per `capture_preview()`
+  abgegriffene Live-View-Stream ändert sich dabei sichtbar NICHT — die
+  Zoom-Lupe wirkt offenbar nur auf die kamera-eigene Anzeige. Der
+  Vollbild-Zoom läuft deshalb ausschließlich über einen reinen
+  Software-Crop-Zoom des bereits übertragenen Vorschau-Frames
+  (`hw_camera_settings_provider._ZOOM_CONFIG_NAMES` bewusst leer
+  belassen). Einschränkung dieses Software-Zooms: Die Bildschärfe ist
+  durch die niedrige Auflösung der Live-Vorschau (~640×424 px) begrenzt
+  — bei starkem Zoom (400 %) wird ein nur ca. 160×106 px kleiner
+  Ausschnitt hochskaliert, was zwangsläufig unscharf bleibt, unabhängig
+  vom Skalierungsalgorithmus. Hilft beim groben Ausrichten, ersetzt aber
+  keine pixelgenaue Schärfe-Kontrolle.
 - **LED-Uhrzeigen-Kalibrierung (Sprint 11, ungetestet in dieser Sitzung):**
   Die Übertragungs-Animation lässt einen Punkt von 9 über 12 bis 3 Uhr
   über den Ring wandern (`hw_led_provider._render_capture_transfer`).

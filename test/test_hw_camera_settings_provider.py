@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import unittest
 
-from hw_camera_settings_provider import _filter_drive_choices
+from hw_camera_settings_provider import _filter_drive_choices, format_zoom_label, SW_ZOOM_CHOICES
 
 
 class FilterDriveChoicesTestCase(unittest.TestCase):
@@ -41,6 +41,42 @@ class FilterDriveChoicesTestCase(unittest.TestCase):
         # komplett unbedienbar machen.
         choices = ("Continuous Low", "Continuous High", "Self-Timer")
         self.assertEqual(_filter_drive_choices(choices), choices)
+
+
+class FormatZoomLabelTestCase(unittest.TestCase):
+    """NEU (Sprint 12): Anzeige-Beschriftung fuer den Vollbild-Zoom - siehe
+    Modul-Docstring von hw_camera_settings_provider.py (Live-View-Zoom-Lupe,
+    PTP 0xD1A3) fuer den Hintergrund. read_zoom()/set_zoom() selbst sprechen
+    direkt mit gphoto2 und werden wie read_current()/set_iso() stattdessen
+    indirekt ueber test_state_machine_admin.py (gefakte Payloads) abgedeckt."""
+
+    def test_software_fallback_returns_value_unchanged(self) -> None:
+        # Software-Zoom-Werte (z.B. "150%") sind bereits fertig lesbar.
+        self.assertEqual(format_zoom_label(False, "150%", SW_ZOOM_CHOICES), "150%")
+
+    def test_software_fallback_with_empty_value_uses_first_choice(self) -> None:
+        self.assertEqual(format_zoom_label(False, "", ()), SW_ZOOM_CHOICES[0])
+
+    def test_hardware_index_zero_is_kein_zoom(self) -> None:
+        choices = ("0", "1", "2", "3", "4", "5")
+        self.assertEqual(format_zoom_label(True, "0", choices), "Kein Zoom (Originalansicht)")
+
+    def test_hardware_other_index_shows_stage_out_of_max(self) -> None:
+        choices = ("0", "1", "2", "3", "4", "5")
+        self.assertEqual(format_zoom_label(True, "3", choices), "Zoomstufe 3 von 5")
+
+    def test_hardware_max_index(self) -> None:
+        choices = ("0", "1", "2", "3", "4", "5")
+        self.assertEqual(format_zoom_label(True, "5", choices), "Zoomstufe 5 von 5")
+
+    def test_hardware_value_not_in_choices_returns_raw_value(self) -> None:
+        # Verteidigung in der Tiefe - sollte die Kamera einen krummen
+        # Zwischenwert liefern (nicht in choices enthalten), wird er
+        # trotzdem angezeigt statt einen Fehler auszuloesen.
+        self.assertEqual(format_zoom_label(True, "9", ("0", "1", "2")), "9")
+
+    def test_hardware_with_empty_choices_returns_raw_value(self) -> None:
+        self.assertEqual(format_zoom_label(True, "0", ()), "0")
 
 
 if __name__ == "__main__":

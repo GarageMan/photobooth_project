@@ -277,7 +277,12 @@ class Renderer:
         # Live-Bild NICHT vollflaechig gezeichnet (dort wuerde es die
         # Einstell-Zeilen ueberdecken), sondern in einem kleineren Panel
         # innerhalb von _draw_admin_camera_settings() weiter unten.
-        if preview_frame is not None and model.state != AppState.ADMIN_CAMERA_SETTINGS:
+        # GEAENDERT (Sprint 12): ADMIN_CAMERA_ZOOM zeichnet das Live-Bild
+        # ebenfalls selbst (_draw_admin_camera_zoom, mit Letterboxing bzw.
+        # Software-Crop-Zoom statt der hier verzerrenden Vollbild-Streckung).
+        if preview_frame is not None and model.state not in (
+            AppState.ADMIN_CAMERA_SETTINGS, AppState.ADMIN_CAMERA_ZOOM,
+        ):
             self._draw_preview_frame(preview_frame)
 
         if model.state == AppState.COUNTDOWN:
@@ -333,6 +338,9 @@ class Renderer:
 
         if model.state == AppState.ADMIN_CAMERA_SETTINGS:  # NEU (Sprint 11, Feature 2)
             self._draw_admin_camera_settings(model, preview_frame)
+
+        if model.state == AppState.ADMIN_CAMERA_ZOOM:  # NEU (Sprint 12)
+            self._draw_admin_camera_zoom(model, preview_frame)
 
         if model.state == AppState.ADMIN_EVENT_SETTINGS:      # NEU (Veranstaltungsdaten)
             self._draw_admin_event_settings(model)
@@ -429,6 +437,10 @@ class Renderer:
             # Live-Vorschau-Panel und der Seiten-Ueberschrift (per
             # Screenshot-Eigenpruefung gefunden).
             AppState.ADMIN_CAMERA_SETTINGS,
+            # NEU (Sprint 12): Vollbild-Zoom-Ansicht - zeichnet keinen
+            # generischen Titel, das Livebild fuellt den ganzen Bildschirm
+            # (gleiches Prinzip wie GALLERY_PHOTO_QR oben).
+            AppState.ADMIN_CAMERA_ZOOM,
             AppState.ADMIN_SHUTDOWN_CONFIRM,  # NEU (Sprint-11-Nachbesserung)
             AppState.ADMIN_RESTART_CONFIRM,  # NEU (Nutzer-Feedback)
             AppState.ADMIN_DELETE_CONFIRM, AppState.ADMIN_DELETE_RUNNING,                # NEU (4.4)
@@ -2301,6 +2313,15 @@ class Renderer:
                 for minus_rect, plus_rect, minus_label, plus_label in row_pairs:
                     self._draw_button(minus_label, minus_rect, (70, 70, 75), font_size=camera_btn_font_size)
                     self._draw_button(plus_label, plus_rect, (70, 70, 75), font_size=camera_btn_font_size)
+        elif state == AppState.ADMIN_CAMERA_ZOOM:
+            # NEU (Sprint 12): "Beenden" an derselben Stelle wie jedes andere
+            # "Zurueck" (rects.back), "-"/"+" unten rechts ueber dem
+            # Vollbild-Livebild (Nutzer-Vorgabe). Kein Ausgrauen an den
+            # Enden noetig - _step_choice() (state_machine.py) haelt einfach
+            # am jeweils letzten Wert an, gleiches Prinzip wie ISO/Blende.
+            self._draw_button("Beenden", self.layout.back, (100, 100, 100))
+            self._draw_button("-", self.layout.admin_camera_zoom_minus, (70, 70, 75), font_size=100)
+            self._draw_button("+", self.layout.admin_camera_zoom_plus, (70, 70, 75), font_size=100)
         elif state == AppState.ADMIN_EVENT_SETTINGS:
             self._draw_button("Speichern", self.layout.left, (0, 150, 0))
             self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
@@ -2549,6 +2570,71 @@ class Renderer:
         if ui.admin_camera_page == 0:
             hint = "Blende hängt vom montierten Objektiv ab. Kamera sollte im Modus A (Zeitautomatik) stehen."
             self._blit_center(hint, self.font_small, (170, 170, 170), round(height * 0.725))
+
+    def _draw_admin_camera_zoom(self, model: AppModel, preview_frame: pygame.Surface | None) -> None:
+        """NEU (Sprint 12): Vollbild-Darstellung des Live-Bilds mit Zoom, um
+        das manuelle Scharfstellen zu erleichtern (aus ADMIN_CAMERA_SETTINGS
+        per Doppeltap auf das kleine Live-Vorschau-Panel erreichbar). Zwei
+        Faelle, ui.admin_camera_zoom_hardware unterscheidet sie (siehe
+        hw_camera_settings_provider.read_zoom):
+        - hardware=True: die Kamera hat den Zoom bereits selbst ins Live-Bild
+          "eingebrannt" (Live-View-Zoom-Lupe) - hier nur noch Letterboxing
+          wie beim kleinen Panel (_draw_admin_camera_preview_panel), kein
+          eigener Crop.
+        - hardware=False (Software-Zoom-Fallback): der Renderer selbst
+          schneidet einen mittigen Ausschnitt aus dem Vorschau-Frame aus und
+          skaliert ihn hoch - einzige Stelle im Projekt, die
+          ui.admin_camera_zoom_value als Prozentwert INTERPRETIERT statt nur
+          anzuzeigen (siehe SW_ZOOM_CHOICES-Kommentar in
+          hw_camera_settings_provider.py)."""
+        ui = model.ui
+        width = self.config.screen.width
+        height = self.config.screen.height
+
+        if not ui.admin_camera_zoom_choices:
+            # Kurzes Zeitfenster zwischen Betreten des Screens (Werte noch
+            # leer) und dem Eintreffen von ADMIN_CAMERA_ZOOM_READY - gleiches
+            # Prinzip wie "Lese Kamera-Einstellungen ..." auf der vorherigen
+            # Seite.
+            self._blit_center("Lese Zoom-Status ...", self.font_body_admin, (200, 200, 200), round(0.45 * height))
+            return
+
+        screen_rect = pygame.Rect(0, 0, width, height)
+        if preview_frame is None:
+            self._blit_center("Live-Bild wird geladen …", self.font_body_admin, (150, 150, 150), height // 2)
+        else:
+            frame_to_draw = preview_frame
+            if not ui.admin_camera_zoom_hardware:
+                # Software-Zoom-Fallback: mittigen Ausschnitt herausschneiden,
+                # bevor letterboxed skaliert wird (siehe Docstring oben).
+                try:
+                    factor = float(ui.admin_camera_zoom_value.rstrip("%")) / 100.0
+                except ValueError:
+                    factor = 1.0
+                if factor > 1.0:
+                    frame_w, frame_h = preview_frame.get_size()
+                    crop_w = max(1, round(frame_w / factor))
+                    crop_h = max(1, round(frame_h / factor))
+                    crop_x = (frame_w - crop_w) // 2
+                    crop_y = (frame_h - crop_h) // 2
+                    frame_to_draw = preview_frame.subsurface(
+                        pygame.Rect(crop_x, crop_y, crop_w, crop_h)
+                    ).copy()
+            frame_w, frame_h = frame_to_draw.get_size()
+            if frame_w and frame_h:
+                scale = min(screen_rect.width / frame_w, screen_rect.height / frame_h)
+                target_w = max(1, round(frame_w * scale))
+                target_h = max(1, round(frame_h * scale))
+                scaled = pygame.transform.smoothscale(frame_to_draw, (target_w, target_h))
+                dest = scaled.get_rect(center=screen_rect.center)
+                self.screen.blit(scaled, dest)
+
+        # NEU: aktueller Zoom-Stand oben mittig, mit Schlagschatten (wie der
+        # Fotobox-Titel auf PHOTO_PREVIEW/COUNTDOWN) fuer Lesbarkeit
+        # unabhaengig von der Helligkeit des Live-Bilds darunter.
+        self._blit_center(ui.admin_camera_zoom_label, self.font_body_admin, (255, 255, 255), round(0.10 * height), shadow=True)
+        hint = "\"+\" vergrößert zum Scharfstellen, \"-\" verkleinert wieder bis zur Originalansicht."
+        self._blit_center(hint, self.font_small, (220, 220, 220), round(0.17 * height), shadow=True)
 
     def _draw_admin_event_settings(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Uebersichts-/Bearbeitungs-Screen fuer
@@ -3868,6 +3954,11 @@ class Renderer:
             AppState.ADMIN_MENU: (18, 22, 30),         # NEU (4.1) - wie PIN_ENTRY
             AppState.ADMIN_STATUS: (18, 22, 30),       # NEU (4.3) - wie ADMIN_MENU
             AppState.ADMIN_CAMERA_SETTINGS: (18, 22, 30),  # NEU (Sprint 11, Feature 2) - wie ADMIN_STATUS
+            # NEU (Sprint 12): dasselbe Dunkel wie GALLERY_FULLSCREEN - das
+            # Livebild fuellt ohnehin den ganzen Bildschirm, diese Farbe ist
+            # nur der Rahmen fuer den Bruchteil einer Sekunde vor dem ersten
+            # Blit bzw. die Letterboxing-Raender.
+            AppState.ADMIN_CAMERA_ZOOM: (5, 5, 5),
             AppState.ADMIN_RESTART_PENDING: (20, 40, 20),  # NEU (4.3) - wie CAPTURE_PENDING
             # NEU (Sprint-11-Nachbesserung): gleiches Warnrot wie
             # ADMIN_DELETE_CONFIRM - beide sind "gefaehrliche" Sicherheitsabfragen.

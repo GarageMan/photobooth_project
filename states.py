@@ -61,6 +61,18 @@ class AppState(Enum):
     # gphoto2-Config-Calls sind ueblicherweise deutlich unter einer
     # Sekunde), +/- wandert in der von der Kamera gelieferten choices-Liste.
     ADMIN_CAMERA_SETTINGS = auto()
+    # NEU (Sprint 12): Vollbild-Darstellung des Live-Bilds mit Zoom, per
+    # Doppeltap auf das kleine Live-Vorschau-Panel aus ADMIN_CAMERA_SETTINGS
+    # erreichbar - erleichtert das manuelle Scharfstellen (siehe
+    # hw_camera_settings_provider.read_zoom/set_zoom). Nutzt nach
+    # Moeglichkeit die "Lupenfunktion" der Kamera selbst (Nikon Live View
+    # Image Zoom Ratio, PTP 0xD1A3 - bei der D3300 als Konfig-Name "d1a3"
+    # bestaetigt, siehe Modul-Docstring von hw_camera_settings_provider.py),
+    # sonst einen rein rechnerischen Software-Zoom (Crop + Skalierung des
+    # bereits uebertragenen Vorschau-Frames). "Beenden" fuehrt zurueck nach
+    # ADMIN_CAMERA_SETTINGS (gleiche Seite wie vorher), der Zoom wird dabei
+    # auf den Ausgangswert (kein Zoom) zurueckgesetzt.
+    ADMIN_CAMERA_ZOOM = auto()
     # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
     # Titel/Datei-Praefix/QR-/Galerie-Schalter/Gaeste-WLAN-SSID+Passwort
     # direkt am Touchscreen pflegen statt event_config.json von Hand zu

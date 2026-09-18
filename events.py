@@ -103,6 +103,21 @@ class EventType(Enum):
     # Screen betreten wurde (siehe state_machine._handle_admin_camera_settings).
     TAP_ADMIN_CAMERA_SAVE = auto()
     TAP_ADMIN_CAMERA_CANCEL = auto()
+    # NEU (Sprint 12): Vollbild-Livebild mit Zoom zum Scharfstellen - per
+    # Doppeltap auf das kleine Live-Vorschau-Panel aus ADMIN_CAMERA_SETTINGS
+    # heraus ausgeloest (siehe app._handle_pygame_event, gleiches Doppeltap-
+    # Prinzip wie TAP_GALLERY_QR in GALLERY_FULLSCREEN). "Beenden" nutzt
+    # bewusst das bestehende TAP_BACK (siehe state_machine._handle_admin_
+    # camera_zoom) statt eines eigenen Events - kein neuer Button-Typ noetig.
+    TAP_ADMIN_CAMERA_ZOOM_ENTER = auto()
+    # Ob die Kamera selbst eine Live-View-Zoom-Lupe anbietet (bei der D3300
+    # bestaetigt, Konfig-Name "d1a3"/"liveviewimagezoomratio" - siehe
+    # hw_camera_settings_provider.read_zoom) + die gueltige Auswahlliste;
+    # sonst faellt payload["hardware"] auf False und choices/value tragen
+    # bereits den Software-Zoom-Fallback. payload: hardware, value, choices.
+    ADMIN_CAMERA_ZOOM_READY = auto()
+    TAP_ADMIN_CAMERA_ZOOM_IN = auto()
+    TAP_ADMIN_CAMERA_ZOOM_OUT = auto()
     # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
     TAP_ADMIN_EVENT_SETTINGS = auto()          # Menuepunkt in ADMIN_MENU
     # Aktuelle Werte sind synchron ermittelt (siehe

@@ -83,6 +83,14 @@ class LayoutRects:
     admin_camera_cancel: pygame.Rect
     admin_camera_page_prev: pygame.Rect
     admin_camera_page_next: pygame.Rect
+    # NEU (Sprint 12): Vollbild-Zoom-Ansicht (AppState.ADMIN_CAMERA_ZOOM,
+    # per Doppeltap auf admin_camera_preview erreichbar) - "-"/"+" unten
+    # rechts ueber dem Vollbild-Livebild eingeblendet (siehe renderer.
+    # _draw_admin_camera_zoom). "Beenden" nutzt bewusst das bereits
+    # vorhandene "back"-Rect (kein eigenes Feld noetig) - gleiche Position
+    # wie jedes andere "Zurueck" im Service-Menue/der Galerie.
+    admin_camera_zoom_minus: pygame.Rect
+    admin_camera_zoom_plus: pygame.Rect
     # NEU (Veranstaltungsdaten): je eine Zeile pro Feld auf der Uebersicht
     # (ADMIN_EVENT_SETTINGS) - Tap auf eine Textzeile oeffnet die
     # Bildschirmtastatur fuer genau dieses Feld, Tap auf eine Schalter-Zeile
@@ -337,6 +345,28 @@ def build_layout(width: int, height: int) -> LayoutRects:
     )
     admin_camera_page_next = admin_camera_page_prev
 
+    # NEU (Sprint 12): Vollbild-Zoom-Ansicht - "-"/"+" unten rechts UEBER
+    # dem Vollbild-Livebild (Nutzer-Vorgabe). Quadratische Buttons wie
+    # admin_camera_iso_minus/_plus (gleiches Seitenverhaeltnis-Problem bei
+    # nicht-quadratischem Bildschirm - siehe _camera_row oben), aber etwas
+    # groesser (0.13 statt 0.085 der Bildschirmhoehe): hier gibt es keine
+    # Werte-Zeilen daneben, mit denen sie um Platz konkurrieren muessten.
+    # "Beenden" nutzt bewusst rects.back (kein eigenes Rect, siehe
+    # LayoutRects-Kommentar oben).
+    admin_camera_zoom_btn_side = round(0.13 * height)
+    admin_camera_zoom_margin = round(0.035 * height)
+    admin_camera_zoom_gap = round(0.02 * width)
+    admin_camera_zoom_plus = pygame.Rect(
+        width - admin_camera_zoom_margin - admin_camera_zoom_btn_side,
+        height - admin_camera_zoom_margin - admin_camera_zoom_btn_side,
+        admin_camera_zoom_btn_side, admin_camera_zoom_btn_side,
+    )
+    admin_camera_zoom_minus = pygame.Rect(
+        admin_camera_zoom_plus.left - admin_camera_zoom_gap - admin_camera_zoom_btn_side,
+        admin_camera_zoom_plus.top,
+        admin_camera_zoom_btn_side, admin_camera_zoom_btn_side,
+    )
+
     # NEU (Veranstaltungsdaten): Uebersichts-Zeilen. Acht Zeilen (fuenf
     # Textfelder, zwei Schalter, ein Wallpaper-Button) uebereinander -
     # eigene, schmalere Randbreite als margin_x (0.10), damit auf einer
@@ -505,6 +535,8 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_camera_cancel=admin_camera_cancel,
         admin_camera_page_prev=admin_camera_page_prev,
         admin_camera_page_next=admin_camera_page_next,
+        admin_camera_zoom_minus=admin_camera_zoom_minus,
+        admin_camera_zoom_plus=admin_camera_zoom_plus,
         admin_event_title_row=admin_event_title_row,
         admin_event_prefix_row=admin_event_prefix_row,
         admin_event_wifi_ssid_row=admin_event_wifi_ssid_row,
@@ -606,6 +638,14 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_camera_cancel": rects.admin_camera_cancel,
             "admin_camera_page_prev": rects.admin_camera_page_prev,
             "admin_camera_page_next": rects.admin_camera_page_next,
+        }
+    if state == AppState.ADMIN_CAMERA_ZOOM:
+        # NEU (Sprint 12): "Beenden" nutzt bewusst rects.back (gleiche
+        # Position wie jedes andere "Zurueck") statt eines eigenen Rects.
+        return {
+            "admin_camera_zoom_exit": rects.back,
+            "admin_camera_zoom_minus": rects.admin_camera_zoom_minus,
+            "admin_camera_zoom_plus": rects.admin_camera_zoom_plus,
         }
     if state == AppState.ADMIN_EVENT_SETTINGS:
         return {

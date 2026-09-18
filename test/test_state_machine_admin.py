@@ -460,6 +460,160 @@ class AdminCameraSettingsTestCase(unittest.TestCase):
         self.assertEqual(self.model.ui.admin_camera_entry_iso, "400")
 
 
+class AdminCameraZoomTestCase(unittest.TestCase):
+    """Tests fuer die Vollbild-Zoom-Ansicht (Sprint 12): per Doppeltap auf
+    das Live-Vorschau-Panel aus ADMIN_CAMERA_SETTINGS erreichbar (der
+    Doppeltap selbst ist app.py-Ebene, hier wird direkt das resultierende
+    TAP_ADMIN_CAMERA_ZOOM_ENTER-Event injiziert). +/- wandert wie bei ISO/
+    Blende in der von ADMIN_CAMERA_ZOOM_READY gelieferten choices-Liste
+    (kein Umlaufen an den Enden); "Beenden"/Idle-Timeout kehrt zur SELBEN
+    Kamera-Einstellungen-Seite zurueck und setzt den Zoom auf choices[0]
+    zurueck."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_camera_zoom(self, now_offset: float = 5.2, switch_to_page_1: bool = False):
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.transition(EventType.TAP_ADMIN_CAMERA_SETTINGS, now_offset=now_offset + 2.0)
+        if switch_to_page_1:
+            # Seitenwechsel muss VOR dem Betreten der Zoom-Ansicht passieren -
+            # TAP_ADMIN_CAMERA_PAGE_NEXT wird nur in ADMIN_CAMERA_SETTINGS
+            # behandelt, nicht in ADMIN_CAMERA_ZOOM.
+            self.transition(EventType.TAP_ADMIN_CAMERA_PAGE_NEXT, now_offset=now_offset + 2.5)
+            self.assertEqual(self.model.ui.admin_camera_page, 1)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_ENTER, now_offset=now_offset + 3.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_ZOOM)
+        self.assertIn("read_admin_camera_zoom", result.actions)
+        return result
+
+    def _fill_ready(self, now_offset: float = 10.0, hardware: bool = True, **overrides):
+        payload = {
+            "hardware": hardware,
+            "value": "0",
+            "choices": ("0", "1", "2", "3", "4", "5"),
+            "label": "Kein Zoom (Originalansicht)",
+        }
+        payload.update(overrides)
+        return self.transition(EventType.ADMIN_CAMERA_ZOOM_READY, now_offset=now_offset, payload=payload)
+
+    def test_enter_requests_read_and_starts_with_empty_choices(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self.assertEqual(self.model.ui.admin_camera_zoom_choices, ())
+
+    def test_ready_fills_hardware_value_choices_label(self) -> None:
+        self._go_to_admin_camera_zoom()
+        result = self._fill_ready()
+        self.assertTrue(result.model.ui.admin_camera_zoom_hardware)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "0")
+        self.assertEqual(result.model.ui.admin_camera_zoom_choices, ("0", "1", "2", "3", "4", "5"))
+        self.assertEqual(result.model.ui.admin_camera_zoom_label, "Kein Zoom (Originalansicht)")
+
+    def test_ready_with_software_fallback_fills_hardware_false(self) -> None:
+        self._go_to_admin_camera_zoom()
+        result = self._fill_ready(hardware=False, value="100%", choices=("100%", "150%", "200%"), label="100%")
+        self.assertFalse(result.model.ui.admin_camera_zoom_hardware)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "100%")
+
+    def test_zoom_in_steps_to_next_choice_and_triggers_set_action(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "1")
+        self.assertIn("set_admin_camera_zoom", result.actions)
+
+    def test_zoom_out_steps_to_previous_choice(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0, value="2")
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_OUT, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "1")
+
+    def test_zoom_in_stops_at_highest_choice(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        for offset in range(11, 20):
+            self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=float(offset))
+        self.assertEqual(self.model.ui.admin_camera_zoom_value, "5")
+
+    def test_zoom_out_stops_at_lowest_choice_no_wraparound(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0, value="0")
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_OUT, now_offset=11.0)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "0")
+
+    def test_zoom_in_without_choices_is_ignored(self) -> None:
+        self._go_to_admin_camera_zoom()
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_ZOOM)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "")
+
+    def test_back_returns_to_admin_camera_settings(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        result = self.transition(EventType.TAP_BACK, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+
+    def test_back_preserves_the_page_the_zoom_screen_was_entered_from(self) -> None:
+        # NEU: bewusst NICHT ueber _go_admin_camera_settings (das wuerde
+        # admin_camera_page auf 0 zuruecksetzen) - siehe state_machine.
+        # _go_admin_camera_settings_from_zoom.
+        self._go_to_admin_camera_zoom(switch_to_page_1=True)
+        self._fill_ready(now_offset=11.0)
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertEqual(result.model.ui.admin_camera_page, 1)
+
+    def test_back_resets_zoom_to_first_choice_and_triggers_set_action(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=11.0)
+        self.assertEqual(self.model.ui.admin_camera_zoom_value, "1")
+        result = self.transition(EventType.TAP_BACK, now_offset=12.0)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "0")
+        self.assertIn("set_admin_camera_zoom", result.actions)
+
+    def test_back_does_not_trigger_set_action_when_already_at_first_choice(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)  # value bereits "0" (choices[0])
+        result = self.transition(EventType.TAP_BACK, now_offset=11.0)
+        self.assertNotIn("set_admin_camera_zoom", result.actions)
+
+    def test_idle_timeout_behaves_like_back(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=11.0)
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=70.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_CAMERA_SETTINGS)
+        self.assertEqual(result.model.ui.admin_camera_zoom_value, "0")
+
+    def test_entering_uses_camera_settings_idle_seconds(self) -> None:
+        result = self._go_to_admin_camera_zoom(now_offset=5.2)
+        expected = self.now + 5.2 + 3.0 + self.config.timeouts.admin_camera_settings_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected)
+
+    def test_stepping_zoom_refreshes_idle_deadline(self) -> None:
+        self._go_to_admin_camera_zoom()
+        self._fill_ready(now_offset=10.0)
+        result = self.transition(EventType.TAP_ADMIN_CAMERA_ZOOM_IN, now_offset=50.0)
+        expected = self.now + 50.0 + self.config.timeouts.admin_camera_settings_idle_seconds
+        self.assertAlmostEqual(result.model.timers.idle_deadline, expected)
+
+
 class AdminEventSettingsTestCase(unittest.TestCase):
     """Tests fuer 'Veranstaltungsdaten' (letzte Sprint-11-Aufgabe): Betreten
     fordert synchron die aktuellen Werte an, Textfelder werden ueber die

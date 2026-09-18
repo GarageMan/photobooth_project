@@ -331,6 +331,172 @@ def set_drive_mode(camera_lock: threading.Lock, value: str, camera=None, context
 
 
 # ------------------------------------------------------------------------------
+# Vollbild-Zoom zum Scharfstellen (Sprint 12)
+# ------------------------------------------------------------------------------
+# Lutz meinte mit "Zoom aus der Kamera heraus" NICHT den (bei der D3300 ohnehin
+# rein mechanischen, von Hand bedienten) Objektiv-Zoom, sondern die
+# "Lupenfunktion" des Nikon Live View: derselbe Zoom, den man am Kameragehaeuse
+# selbst durch Druecken der Vergroesserungs-Taste waehrend des Live View
+# bekommt - vergroessert einen Bildausschnitt des Live-Bilds direkt auf der
+# Kamera, exakt zum praezisen manuellen Scharfstellen gedacht.
+#
+# Per libgphoto2-Quelle verifiziert (github.com/gphoto/libgphoto2):
+# camlibs/ptp2/ptp.h definiert PTP_DPC_NIKON_LiveViewImageZoomRatio (0xD1A3),
+# camlibs/ptp2/config.c bietet dafuer je nach Kameramodell/-generation einen
+# freundlichen Konfig-Namen "liveviewimagezoomratio" an (Kommentar dort:
+# "varies between nikons" - zwei unterschiedliche Wertelisten, z.B. bis "100%"
+# oder bis "200%"). Fuer Lutz' D3300 KONKRET bestaetigt die im Projekt bereits
+# zitierte Referenzdatei camlibs/ptp2/cameras/nikon-d3300.txt (Sprint-11-
+# Nachbesserung), dass die D3300 diese Eigenschaft zwar besitzt (Zeile 79:
+# "Live View Image Zoom Ratio(0xd1a3):(readwrite)"), libgphoto2 sie bei DIESEM
+# Modell aber nicht auf den freundlichen Namen abbildet, sondern nur unter dem
+# generischen Rohwert-Namen "d1a3" als MENU-Widget mit den Werten "0".."5"
+# (0 = "Entire Display"/kein Zoom, 5 = staerkster Zoom, den die Kamera bietet -
+# exakt "das, was die Kamera maximal kann"). "d1a3" deshalb als ERSTER
+# Kandidat, "liveviewimagezoomratio" als Fallback fuer evtl. andere/zukuenftige
+# Kameras an der Fotobox. Nutzt (wie alle anderen Einstellungen hier) die
+# vorhandene _read_widget/_set_widget-Infrastruktur unveraendert - die D3300
+# liefert das Property als gewoehnliches MENU (Auswahlliste), kein RANGE-
+# Widget, trotz des "Range [0-5, step 1]"-Hinweises im rohen PTP-Formular
+# (das beschreibt nur, wie die Kamera die PTP-Property intern deklariert, hier
+# aber wandelt gphoto2 sie in die uebliche Auswahlliste um).
+#
+# LIVE-TEST-ERGEBNIS (Rueckmeldung Lutz, 2026-09-17): Der Hardware-Zoom
+# ueber "d1a3" wird zwar von der D3300 angenommen (kein Fehler beim
+# set_config), aber (a) das Setzen dauert am echten Geraet ca. 10 Sekunden,
+# waehrend derer die komplette App-Bedienung (auch "Beenden") einfriert -
+# der synchrone gphoto2-Aufruf blockiert den Haupt-/Event-Thread
+# (app._set_admin_camera_zoom laeuft direkt im pygame-Event-Loop, siehe
+# app.py) - und (b) selbst nach dieser Wartezeit aendert sich der von
+# capture_preview() gelieferte Live-View-Bildausschnitt sichtbar NICHT.
+# Damit hat sich der im Modul-Docstring oben offen gelassene Verdacht
+# bestaetigt: Die Nikon-Zoom-Lupe (PTP 0xD1A3) wirkt bei der D3300
+# offenbar nur auf die kamera-eigene Anzeige, nicht auf den per PTP
+# abgegriffenen Live-View-Stream.
+#
+# Konsequenz: _ZOOM_CONFIG_NAMES bleibt deshalb bewusst LEER. _read_widget()
+# findet dann nie einen Kandidaten, read_zoom() liefert dadurch immer
+# hardware=False, und set_zoom() wird von app.py folglich nie mehr
+# aufgerufen (siehe app._set_admin_camera_zoom: fruehzeitiger Return bei
+# hardware=False) - das beseitigt zugleich den 10-Sekunden-Hänger. Das
+# Feature laeuft jetzt ausschliesslich ueber den Software-Zoom-Fallback
+# (SW_ZOOM_CHOICES unten, reiner Crop+Skalierung im Renderer, keine
+# Kamera-Anfrage noetig). Die Konstante bleibt als Tupel (statt komplett
+# entfernt) erhalten, falls ein zukuenftiges Kameramodell an der Fotobox
+# die Eigenschaft doch ueber den Live-View-Stream sichtbar macht - dann
+# hier die Kandidaten wieder eintragen. Rest dieses Abschnitts (technische
+# PTP-Herleitung) bewusst nicht geloescht, dokumentiert die Recherche fuer
+# einen moeglichen spaeteren erneuten Versuch.
+_ZOOM_CONFIG_NAMES: tuple[str, ...] = ()
+
+# Fallback, falls eine (andere/zukuenftige) Kamera an der Fotobox gar keinen
+# Live-View-Zoom anbietet: rein rechnerischer Zoom im Renderer (Crop +
+# Skalierung des bereits uebertragenen Vorschau-Frames, siehe renderer.
+# _draw_admin_camera_zoom) - keine weitere Kamera-Anfrage noetig, funktioniert
+# mit jeder Kamera. "100%" = Originalgroesse des Livebilds (Lutz' Vorgabe:
+# "-" geht maximal bis hierhin zurueck). Obergrenze bewusst bei 400% gekappt -
+# staerker vergroessert wird das ohnehin nur ca. 640x424 grosse Vorschaubild
+# zu unscharf, um beim Scharfstellen noch zu helfen (der eigentliche Zweck
+# dieses Features).
+SW_ZOOM_CHOICES = ("100%", "150%", "200%", "300%", "400%")
+
+
+@dataclass
+class CameraZoomSnapshot:
+    """Ergebnis von read_zoom() - eigenstaendig statt Teil von
+    CameraSettingsSnapshot (Zoom ist kein Belichtungswert, gehoert nicht zur
+    normalen Kamera-Einstellungen-Seite). `hardware=True` nur, wenn die
+    Kamera selbst einen der _ZOOM_CONFIG_NAMES-Kandidaten anbietet - dann
+    tragen `value`/`choices` deren Rohwerte. Sonst bereits mit dem Software-
+    Zoom-Fallback befuellt (SW_ZOOM_CHOICES), damit Aufrufer nicht zwischen
+    beiden Faellen unterscheiden muessen: dieselbe generalisierte
+    _step_admin_camera_field()-Logik wie bei ISO/Blende/etc. steppt in
+    beiden Faellen einfach durch `choices`."""
+
+    available: bool
+    hardware: bool
+    value: str = ""
+    choices: tuple[str, ...] = ()
+    error: str | None = None
+
+
+def _sw_zoom_fallback(error: str | None = None) -> "CameraZoomSnapshot":
+    return CameraZoomSnapshot(
+        available=True, hardware=False, value=SW_ZOOM_CHOICES[0], choices=SW_ZOOM_CHOICES, error=error,
+    )
+
+
+def _read_zoom_impl(camera, context) -> CameraZoomSnapshot:
+    config = camera.get_config(context)
+    value, choices = _read_widget(config, _ZOOM_CONFIG_NAMES)
+    if value is None:
+        # Kamera bietet keinen der bekannten Zoom-Konfig-Namen (bei der
+        # D3300 nicht erwartet, siehe Modul-Docstring oben) - Software-
+        # Zoom-Fallback statt "nicht verfuegbar", damit das Feature trotzdem
+        # nutzbar bleibt.
+        return _sw_zoom_fallback()
+    return CameraZoomSnapshot(available=True, hardware=True, value=value, choices=choices)
+
+
+def read_zoom(camera_lock: threading.Lock, camera=None, context=None) -> CameraZoomSnapshot:
+    """Ermittelt, ob die Kamera selbst eine Live-View-Zoom-Lupe anbietet
+    (siehe _ZOOM_CONFIG_NAMES) - sonst Software-Zoom-Fallback
+    (SW_ZOOM_CHOICES). Wirft nie eine Exception nach aussen, gleiches
+    Prinzip wie read_current(). `camera`/`context`: siehe read_current()."""
+    if not _GP_AVAILABLE:
+        return _sw_zoom_fallback()
+    if camera is not None and context is not None:
+        try:
+            return _read_zoom_impl(camera, context)
+        except Exception as exc:
+            return _sw_zoom_fallback(error=f"Kamera-Zoom nicht lesbar: {exc}")
+    with camera_lock:
+        context = gp.Context()
+        camera = gp.Camera()
+        try:
+            camera.init(context)
+            return _read_zoom_impl(camera, context)
+        except Exception as exc:
+            return _sw_zoom_fallback(error=f"Kamera nicht erreichbar: {exc}")
+        finally:
+            try:
+                camera.exit(context)
+            except Exception:
+                pass
+
+
+def set_zoom(camera_lock: threading.Lock, value: str, camera=None, context=None) -> tuple[bool, str | None]:
+    """Setzt den Kamera-Zoom (Live-View-Zoom-Lupe). Wird von app.py NUR
+    aufgerufen, wenn read_zoom() zuvor hardware=True gemeldet hat - beim
+    Software-Zoom-Fallback (SW_ZOOM_CHOICES) macht diese Funktion nichts,
+    der Zoom-Effekt entsteht dort rein im Renderer (Crop des bereits
+    vorhandenen Vorschau-Frames), siehe app._set_admin_camera_zoom."""
+    return _set_widget(camera_lock, _ZOOM_CONFIG_NAMES, value, camera, context)
+
+
+def format_zoom_label(hardware: bool, value: str, choices: tuple[str, ...]) -> str:
+    """Menschenlesbare Beschriftung fuer den aktuellen Zoom-Wert.
+    Software-Fallback-Werte (z.B. "150%") sind bereits fertig lesbar. Bei
+    echtem Kamera-Zoom sind die Rohwerte kryptische Zahlen ("0".."5", siehe
+    Modul-Docstring) - hier stattdessen "Kein Zoom (Originalansicht)" fuer
+    den ersten (unveraenderten) Wert bzw. "Zoomstufe X von N" fuer die
+    uebrigen, aus der tatsaechlichen Laenge von `choices` abgeleitet statt
+    fest codierter Prozentangaben (die laut libgphoto2-Quelle je nach
+    Kameramodell variieren, siehe Modul-Docstring)."""
+    if not hardware:
+        return value or SW_ZOOM_CHOICES[0]
+    if not choices:
+        return value
+    try:
+        index = choices.index(value)
+    except ValueError:
+        return value
+    if index == 0:
+        return "Kein Zoom (Originalansicht)"
+    return f"Zoomstufe {index} von {len(choices) - 1}"
+
+
+# ------------------------------------------------------------------------------
 # Manueller Schnell-Test (direkt auf dem Pi ausführen)
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -357,3 +523,25 @@ if __name__ == "__main__":
         if answer.strip().lower() == "j":
             ok, error = set_iso(lock, candidate)
             print(f"set_iso({candidate!r}) -> ok={ok} error={error}")
+
+    # NEU (Sprint 12): eigener Schnelltest fuer die Zoom-Lupe - separat vom
+    # obigen ISO-Test, da hier vor allem interessiert, ob die D3300
+    # ueberhaupt als hardware=True erkannt wird (siehe Modul-Docstring,
+    # "d1a3" ist bislang nur per Referenzdump verifiziert, nicht live).
+    print()
+    input("ENTER drücken, um den Zoom-Status zu lesen...")
+    zoom = read_zoom(lock)
+    print(f"hardware={zoom.hardware} error={zoom.error}")
+    print(f"Zoom aktuell: {zoom.value!r}  Auswahl: {zoom.choices}")
+    print(f"Anzeige-Text: {format_zoom_label(zoom.hardware, zoom.value, zoom.choices)!r}")
+    if zoom.hardware and len(zoom.choices) > 1:
+        candidate = zoom.choices[1]
+        answer = input(f"Zoom probeweise auf {candidate!r} setzen (Stufe 1)? (j/N) ")
+        if answer.strip().lower() == "j":
+            ok, error = set_zoom(lock, candidate)
+            print(f"set_zoom({candidate!r}) -> ok={ok} error={error}")
+            print("Bitte am Live-Vorschaubild pruefen, ob der Zoom sichtbar wird "
+                  "(siehe hw_gphoto2_preview_provider.py-Schnelltest).")
+            input("ENTER druecken, um wieder auf 'kein Zoom' zurueckzusetzen...")
+            ok, error = set_zoom(lock, zoom.choices[0])
+            print(f"set_zoom({zoom.choices[0]!r}) -> ok={ok} error={error}")

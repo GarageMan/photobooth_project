@@ -152,6 +152,29 @@ class UiState:
     admin_camera_entry_quality: str = ""
     admin_camera_entry_imagesize: str = ""
     admin_camera_entry_drive: str = ""
+    # --- Kamera-Zoom-Vollbild (Sprint 12) --------------------------------
+    # NEU: Vollbild-Ansicht des Live-Bilds mit Zoom zum Scharfstellen (siehe
+    # hw_camera_settings_provider.read_zoom/set_zoom). hardware=True nur,
+    # wenn die Kamera selbst eine Live-View-Zoom-Lupe anbietet (bei der
+    # D3300 bestaetigt, siehe Modul-Docstring dort) - choices/value tragen
+    # dann deren Rohwerte (z.B. "0".."5"); sonst hardware=False und
+    # choices/value tragen den Software-Zoom-Fallback (z.B. "100%"). Kein
+    # eigenes "verfuegbar"-Flag noetig - choices ist bis zum ersten
+    # ADMIN_CAMERA_ZOOM_READY leer (gleiches "Lese ..."-Zwischenzustand-
+    # Prinzip wie admin_camera_iso_choices). Keine entry_*-Momentaufnahme
+    # noetig wie bei den Belichtungswerten - der Zoom wird beim Verlassen
+    # (Beenden/Idle-Timeout) immer auf choices[0] zurueckgesetzt, siehe
+    # state_machine._handle_admin_camera_zoom.
+    admin_camera_zoom_hardware: bool = False
+    admin_camera_zoom_value: str = ""
+    admin_camera_zoom_choices: tuple[str, ...] = ()
+    # Fertig formatierte Anzeige-Beschriftung fuer admin_camera_zoom_value
+    # (siehe hw_camera_settings_provider.format_zoom_label) - wird bewusst
+    # von app.py mitgeliefert statt hier/im Renderer berechnet, damit weder
+    # state_machine.py noch renderer.py ein hw_*-Modul importieren muessen
+    # (gleiches Schichten-Prinzip wie ueberall sonst: app.py = Hardware,
+    # state_machine.py = reine Logik, renderer.py = reine Anzeige).
+    admin_camera_zoom_label: str = ""
     # --- Veranstaltungsdaten (letzte Sprint-11-Aufgabe) --------------------
     # Entwurfswerte, waehrend der Screen offen ist - erst "Speichern"
     # schreibt sie tatsaechlich in event_config.json (siehe
