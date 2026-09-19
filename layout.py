@@ -108,6 +108,17 @@ class LayoutRects:
     # NEU (Nutzer-Feedback): "Standardwerte"-Taste - teilt sich die vormals
     # volle Zeile mit admin_event_wallpaper_button (siehe unten).
     admin_event_defaults_button: pygame.Rect
+    # NEU (Sprint 13): "Farbstil vorschlagen"-Taste - teilt sich dieselbe
+    # Zeile mit admin_event_wallpaper_button/admin_event_defaults_button
+    # (drei statt zwei gleich breite Buttons, siehe _admin_event_row7
+    # weiter unten).
+    admin_event_color_style_button: pygame.Rect
+    # NEU (Sprint 13): Durchblaettern der Farbstil-Kandidaten auf
+    # ADMIN_EVENT_COLOR_STYLE_PICK - "Übernehmen"/"Abbrechen" nutzen die
+    # vorhandenen rects.left/rects.right (gleiches Prinzip wie
+    # admin_event_wallpaper_pick_save/_cancel).
+    admin_event_color_style_prev: pygame.Rect
+    admin_event_color_style_next: pygame.Rect
     # NEU (Veranstaltungsdaten): Bildschirmtastatur (QWERTZ) fuer
     # ADMIN_EVENT_TEXT_ENTRY - gemeinsam fuer alle vier Textfelder, analog
     # zu pin_keys, aber mit beliebigem Text statt nur Ziffern. Schluessel:
@@ -412,15 +423,41 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # teilt sich stattdessen dieselbe Zeile mit "Wallpaper von USB laden"
     # (je Haelfte, gleiches Zwei-Button-Prinzip wie admin_camera_cancel/
     # admin_camera_save).
+    # GEAENDERT (Sprint 13): dritter Button "Farbstil vorschlagen" dazugekommen
+    # - aus der bisherigen Zwei-Button- wird eine Drei-Button-Reihe (gleiches
+    # Aufteilungsprinzip wie admin_camera_cancel/_save/_page_prev in
+    # _camera_row weiter oben: N gleich breite Buttons mit (N-1) Luecken
+    # dazwischen).
     _admin_event_row7 = _event_row(7)
     _admin_event_row7_gap = round(0.015 * width)
-    _admin_event_row7_half_w = (_admin_event_row7.width - _admin_event_row7_gap) // 2
+    _admin_event_row7_third_w = (_admin_event_row7.width - 2 * _admin_event_row7_gap) // 3
     admin_event_wallpaper_button = pygame.Rect(
-        _admin_event_row7.x, _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
+        _admin_event_row7.x, _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
     )
     admin_event_defaults_button = pygame.Rect(
-        _admin_event_row7.x + _admin_event_row7_half_w + _admin_event_row7_gap,
-        _admin_event_row7.y, _admin_event_row7_half_w, _admin_event_row7.height,
+        _admin_event_row7.x + _admin_event_row7_third_w + _admin_event_row7_gap,
+        _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
+    )
+    admin_event_color_style_button = pygame.Rect(
+        _admin_event_row7.x + 2 * (_admin_event_row7_third_w + _admin_event_row7_gap),
+        _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
+    )
+
+    # NEU (Sprint 13): "<"/">" zum Durchblaettern der bis zu drei Farbstil-
+    # Kandidaten auf ADMIN_EVENT_COLOR_STYLE_PICK - quadratische Buttons wie
+    # admin_camera_zoom_minus/_plus (gleiches Seitenverhaeltnis-Vorgehen bei
+    # nicht-quadratischem Bildschirm), mittig ueber der Übernehmen/Abbrechen-
+    # Zeile platziert (die Mitte bleibt frei fuer eine Beschriftung wie
+    # "Vorschlag 2 / 3", siehe renderer._draw_admin_event_color_style_pick).
+    admin_event_color_style_btn_side = round(0.10 * height)
+    admin_event_color_style_y = round(0.66 * height)
+    admin_event_color_style_prev = pygame.Rect(
+        round(0.30 * width), admin_event_color_style_y,
+        admin_event_color_style_btn_side, admin_event_color_style_btn_side,
+    )
+    admin_event_color_style_next = pygame.Rect(
+        round(0.70 * width) - admin_event_color_style_btn_side, admin_event_color_style_y,
+        admin_event_color_style_btn_side, admin_event_color_style_btn_side,
     )
     # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Umschalter fuer die
     # WLAN-Passwort-Zeile - das Passwort steht jetzt immer als Klartext da,
@@ -546,6 +583,9 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_gallery_toggle=admin_event_gallery_toggle,
         admin_event_wallpaper_button=admin_event_wallpaper_button,
         admin_event_defaults_button=admin_event_defaults_button,
+        admin_event_color_style_button=admin_event_color_style_button,
+        admin_event_color_style_prev=admin_event_color_style_prev,
+        admin_event_color_style_next=admin_event_color_style_next,
         keyboard_keys=keyboard_keys,
     )
 
@@ -660,6 +700,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_wallpaper": rects.admin_event_wallpaper_button,
             # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
             "admin_event_defaults": rects.admin_event_defaults_button,
+            # NEU (Sprint 13): "Farbstil vorschlagen"-Taste.
+            "admin_event_color_style": rects.admin_event_color_style_button,
             "admin_event_save": rects.left,
             "back": rects.right,
         }
@@ -687,6 +729,20 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         }
     if state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:
         return {"back": rects.back}
+    if state == AppState.ADMIN_EVENT_COLOR_STYLE_LOADING:
+        # Laeuft, nicht abbrechbar - bewusst kein Button (analog
+        # ADMIN_EVENT_WALLPAPER_PICK_LOADING).
+        return {}
+    if state == AppState.ADMIN_EVENT_COLOR_STYLE_PICK:
+        # NEU (Sprint 13): "Übernehmen"/"Abbrechen" nutzen bewusst die
+        # vorhandenen rects.left/rects.right (gleiches Prinzip wie
+        # admin_event_wallpaper_pick_save/_cancel).
+        return {
+            "admin_event_color_style_prev": rects.admin_event_color_style_prev,
+            "admin_event_color_style_next": rects.admin_event_color_style_next,
+            "admin_event_color_style_apply": rects.left,
+            "admin_event_color_style_cancel": rects.right,
+        }
     if state == AppState.ADMIN_EVENT_SAVED:
         return {"admin_event_restart_now": rects.left, "back": rects.right}
     if state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)

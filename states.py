@@ -104,6 +104,25 @@ class AppState(Enum):
     # Auswahlliste (ADMIN_EVENT_WALLPAPER_PICK) direkt zurueck auf
     # ADMIN_EVENT_SETTINGS statt hierher.
     ADMIN_EVENT_WALLPAPER_RESULT = auto()
+    # NEU (Sprint 13): Hintergrund-Thread berechnet aus dem aktuellen
+    # Hauptmenue-Wallpaper (bzw. einem gerade erst ausgewaehlten, noch nicht
+    # uebernommenen Wallpaper - siehe admin_event_wallpaper_pending) per
+    # Pillow bis zu drei Farbpaletten-Vorschlaege (siehe
+    # wallpaper_theme_service.compute_theme_candidates). Bewusst als
+    # Hintergrund-Thread, nicht synchron - siehe Lehre aus Sprint 12
+    # (Modul-Docstring von wallpaper_theme_service.py). Nicht abbrechbar,
+    # analog ADMIN_EVENT_WALLPAPER_PICK_LOADING.
+    ADMIN_EVENT_COLOR_STYLE_LOADING = auto()
+    # Vorschau-Screen: zeigt EINEN der berechneten Kandidaten als Mockup
+    # (Beispiel-Button/-Hintergrund/-Text), durchblaetterbar per "<"/">".
+    # "Übernehmen" traegt den gerade sichtbaren Kandidaten in den Entwurf
+    # ein (admin_event_theme_button/_background/_text in models.UiState) -
+    # wird wie jedes andere Feld auf diesem Screen erst durch das AEUSSERE
+    # "Speichern" auf ADMIN_EVENT_SETTINGS tatsaechlich in event_config.json
+    # geschrieben. "Abbrechen" verwirft nur die Kandidatenliste, laesst den
+    # bisherigen Entwurfsstand unangetastet (gleiches Rueckkehr-Prinzip wie
+    # ADMIN_EVENT_WALLPAPER_RESULT -> _return_to_admin_event_settings).
+    ADMIN_EVENT_COLOR_STYLE_PICK = auto()
     # Nach erfolgreichem Speichern: bietet "Jetzt neu starten" (fuehrt in
     # ADMIN_RESTART_PENDING, exakt derselbe Ablauf wie der bestehende
     # Menuepunkt "App neu starten") oder "Spaeter" (zurueck ins

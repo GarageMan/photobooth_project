@@ -116,18 +116,34 @@ class RendererStateCoverageTestCase(unittest.TestCase):
     auseinander (siehe README, Abschnitt "Enum-getriebene Pipelines
     konsequent pflegen").
 
-    Bewusst kein pygame.display noetig - _background_color ist eine
-    reine @staticmethod ohne Bildschirmzugriff.
+    Bewusst kein pygame.display noetig - _background_color greift nur auf
+    self.config.theme_background_color zu (kein Bildschirmzugriff), daher
+    reicht ein winziges Fake-Objekt mit genau diesem einen Attribut statt
+    eines echten Renderer/pygame.display (siehe GEAENDERT-Kommentar unten).
+
+    GEAENDERT (Sprint 13): _background_color ist keine @staticmethod mehr -
+    braucht jetzt self.config.theme_background_color fuer die Farbstil-
+    Ueberschreibung (siehe renderer._THEME_ELIGIBLE_BACKGROUND_STATES). Der
+    Test ruft die Methode deshalb unbound mit einem minimalen Fake-"self"
+    auf (theme_background_color=None -> unveraendertes Verhalten wie vor
+    Sprint 13), statt einen echten Renderer (mit pygame.display) aufzubauen.
     """
 
     def test_background_color_covers_every_app_state(self) -> None:
         from renderer import Renderer
         from states import AppState
 
+        class _FakeConfig:
+            theme_background_color = None
+
+        class _FakeRenderer:
+            config = _FakeConfig()
+
+        fake_self = _FakeRenderer()
         missing = []
         for state in AppState:
             try:
-                Renderer._background_color(state)
+                Renderer._background_color(fake_self, state)
             except KeyError:
                 missing.append(state.name)
         self.assertEqual(
@@ -1031,6 +1047,169 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         result = self.transition(EventType.IDLE_TIMEOUT, now_offset=90.0)
         self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
         self.assertIn("wallpaper_pick_discard", result.actions)
+
+    # -- Farbstil vorschlagen (Sprint 13) ----------------------------------------
+
+    _SAMPLE_CANDIDATES_PAYLOAD = (
+        {"button": [42, 52, 121], "background": [18, 21, 38], "text": [255, 255, 255]},
+        {"button": [121, 47, 42], "background": [38, 19, 18], "text": [255, 255, 255]},
+        {"button": [43, 121, 70], "background": [18, 38, 25], "text": [0, 0, 0]},
+    )
+
+    def _go_to_color_style_pick(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, now_offset=11.0)
+        self.transition(
+            EventType.ADMIN_EVENT_COLOR_STYLE_READY, now_offset=12.0,
+            payload={"ok": True, "candidates": self._SAMPLE_CANDIDATES_PAYLOAD},
+        )
+
+    def test_color_style_enter_starts_compute_action_and_is_not_idle_abortable(self) -> None:
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, now_offset=11.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_COLOR_STYLE_LOADING)
+        self.assertIn("color_style_compute", result.actions)
+        self.assertIsNone(result.model.timers.idle_deadline)
+
+    def test_color_style_ready_with_candidates_shows_pick_screen(self) -> None:
+        # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): "Original" (None)
+        # wird als erster Eintrag vor die 3 Wallpaper-Vorschlaege gestellt -
+        # also 4 Eintraege insgesamt, Index 0 = None, Index 1 der erste
+        # tatsaechlich berechnete Vorschlag.
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, now_offset=11.0)
+        result = self.transition(
+            EventType.ADMIN_EVENT_COLOR_STYLE_READY, now_offset=12.0,
+            payload={"ok": True, "candidates": self._SAMPLE_CANDIDATES_PAYLOAD},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_COLOR_STYLE_PICK)
+        self.assertEqual(len(result.model.ui.admin_event_color_style_candidates), 4)
+        self.assertEqual(result.model.ui.admin_event_color_style_index, 0)
+        self.assertIsNone(result.model.ui.admin_event_color_style_candidates[0])
+        self.assertEqual(
+            result.model.ui.admin_event_color_style_candidates[1],
+            ((42, 52, 121), (18, 21, 38), (255, 255, 255)),
+        )
+
+    def test_color_style_ready_without_candidates_shows_error_result(self) -> None:
+        # Wiederverwendet denselben Ergebnis-Screen wie ein fehlgeschlagener
+        # Wallpaper-Import (siehe state_machine._go_admin_event_color_style_
+        # loading) - kein eigener Fehler-Screen noetig.
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, now_offset=11.0)
+        result = self.transition(
+            EventType.ADMIN_EVENT_COLOR_STYLE_READY, now_offset=12.0,
+            payload={"ok": False, "lines": ("Kein Wallpaper vorhanden.",)},
+        )
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_WALLPAPER_RESULT)
+        self.assertFalse(result.model.ui.admin_event_wallpaper_ok)
+        self.assertEqual(result.model.ui.admin_event_wallpaper_lines, ("Kein Wallpaper vorhanden.",))
+
+    def test_color_style_next_and_prev_clamp_at_bounds(self) -> None:
+        # 4 Eintraege insgesamt (Original + 3 Wallpaper-Vorschlaege), also
+        # Index 0..3.
+        self._go_to_color_style_pick()
+        self.assertEqual(self.model.ui.admin_event_color_style_index, 0)
+        # Am Anfang bleibt "<" wirkungslos (kein Umlauf).
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_PREV, now_offset=13.0)
+        self.assertEqual(result.model.ui.admin_event_color_style_index, 0)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.1)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.2)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.3)
+        self.assertEqual(result.model.ui.admin_event_color_style_index, 3)
+        # Am Ende bleibt ">" wirkungslos.
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.4)
+        self.assertEqual(result.model.ui.admin_event_color_style_index, 3)
+
+    def test_color_style_apply_writes_draft_and_returns_to_settings(self) -> None:
+        self._go_to_color_style_pick()
+        # Index 0 = "Original", Index 1 = erster Wallpaper-Vorschlag, Index 2
+        # = der hier gewuenschte zweite Vorschlag (121, 47, 42) - also zweimal
+        # "weiter".
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.0)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=13.1)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=14.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_theme_button, (121, 47, 42))
+        self.assertEqual(result.model.ui.admin_event_theme_background, (38, 19, 18))
+        self.assertEqual(result.model.ui.admin_event_theme_text, (255, 255, 255))
+
+    def test_color_style_apply_is_not_persisted_until_outer_save(self) -> None:
+        # Wie beim Wallpaper: "Übernehmen" fuellt nur den Entwurf, noch
+        # nicht event_config.json - das schreibt weiterhin ausschliesslich
+        # "Speichern" auf ADMIN_EVENT_SETTINGS (app._save_admin_event_settings).
+        self._go_to_color_style_pick()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=12.5)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=13.0)
+        self.assertNotIn("save_event_config", result.actions)
+
+    def test_color_style_cancel_discards_candidates_and_keeps_previous_theme(self) -> None:
+        self._go_to_color_style_pick()
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_CANCEL, now_offset=13.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertIsNone(result.model.ui.admin_event_theme_button)
+
+    def test_color_style_idle_timeout_behaves_like_cancel(self) -> None:
+        self._go_to_color_style_pick()
+        result = self.transition(EventType.IDLE_TIMEOUT, now_offset=90.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+
+    # -- Farbstil "Original" (Sprint 13, Nutzer-Feedback nach Live-Test) --------
+
+    def test_color_style_original_is_first_entry_and_selectable(self) -> None:
+        # "Als Auswahl sollten auch die Originalfarbwerte auch moeglich
+        # sein." - Index 0 ist immer der None-Platzhalter, unabhaengig davon,
+        # wie viele Wallpaper-Vorschlaege berechnet wurden.
+        self._go_to_color_style_pick()
+        self.assertIsNone(self.model.ui.admin_event_color_style_candidates[0])
+        self.assertEqual(self.model.ui.admin_event_color_style_index, 0)
+
+    def test_color_style_apply_original_clears_theme_fields(self) -> None:
+        # Erst einen echten Vorschlag uebernehmen, damit der Test auch
+        # tatsaechlich beweist, dass "Original" die Felder wieder auf None
+        # zuruecksetzt statt sie einfach unveraendert zu lassen.
+        self._go_to_color_style_pick()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=12.5)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=13.0)
+        self.assertIsNotNone(self.model.ui.admin_event_theme_button)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, now_offset=14.0)
+        self.transition(
+            EventType.ADMIN_EVENT_COLOR_STYLE_READY, now_offset=15.0,
+            payload={"ok": True, "candidates": self._SAMPLE_CANDIDATES_PAYLOAD},
+        )
+        self.assertEqual(self.model.ui.admin_event_color_style_index, 0)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=16.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertIsNone(result.model.ui.admin_event_theme_button)
+        self.assertIsNone(result.model.ui.admin_event_theme_background)
+        self.assertIsNone(result.model.ui.admin_event_theme_text)
+
+    def test_admin_event_defaults_also_clears_theme(self) -> None:
+        self._go_to_color_style_pick()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=12.5)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=13.0)
+        self.assertIsNotNone(self.model.ui.admin_event_theme_button)
+        result = self.transition(EventType.TAP_ADMIN_EVENT_DEFAULTS, now_offset=14.0)
+        self.assertIsNone(result.model.ui.admin_event_theme_button)
+        self.assertIsNone(result.model.ui.admin_event_theme_background)
+        self.assertIsNone(result.model.ui.admin_event_theme_text)
+
+    def test_back_from_settings_reverts_applied_theme_to_entry_snapshot(self) -> None:
+        # Regressionsschutz analog test_back_reverts_all_fields_to_entry_snapshot
+        # (falls vorhanden) - "Abbrechen" macht ein zwischenzeitlich per
+        # "Übernehmen" gesetztes Theme wieder rueckgaengig, genau wie jedes
+        # andere Feld auf diesem Screen.
+        self._go_to_color_style_pick()
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, now_offset=12.5)
+        self.transition(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, now_offset=13.0)
+        self.assertIsNotNone(self.model.ui.admin_event_theme_button)
+        result = self.transition(EventType.TAP_BACK, now_offset=14.0)
+        self.assertEqual(result.model.state, AppState.ADMIN_MENU)
+        self.assertIsNone(result.model.ui.admin_event_theme_button)
 
     # -- Gespeichert-Bestaetigung -----------------------------------------------
 

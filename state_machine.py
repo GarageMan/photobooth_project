@@ -661,6 +661,12 @@ class StateMachine:
                 admin_event_welcome_text=str(payload.get("welcome_text", "")),
                 admin_event_qr_enabled=bool(payload.get("qr_enabled", True)),
                 admin_event_gallery_enabled=bool(payload.get("gallery_enabled", True)),
+                # NEU (Sprint 13): aktuell wirksamer Farbstil (None = keiner) -
+                # kommt aus der laufenden AppConfig, siehe app._collect_
+                # admin_event_settings/config.theme_button_color.
+                admin_event_theme_button=payload.get("theme_button"),
+                admin_event_theme_background=payload.get("theme_background"),
+                admin_event_theme_text=payload.get("theme_text"),
             )
             changes.update(
                 admin_event_entry_title=changes["admin_event_title"],
@@ -670,6 +676,9 @@ class StateMachine:
                 admin_event_entry_welcome_text=changes["admin_event_welcome_text"],
                 admin_event_entry_qr_enabled=changes["admin_event_qr_enabled"],
                 admin_event_entry_gallery_enabled=changes["admin_event_gallery_enabled"],
+                admin_event_entry_theme_button=changes["admin_event_theme_button"],
+                admin_event_entry_theme_background=changes["admin_event_theme_background"],
+                admin_event_entry_theme_text=changes["admin_event_theme_text"],
             )
             ui = replace(model.ui, **changes)
             return TransitionResult(model=model.evolve(ui=ui))
@@ -703,11 +712,20 @@ class StateMachine:
                 admin_event_welcome_text=DEFAULT_EVENT_VALUES["welcome_text"],
                 admin_event_qr_enabled=DEFAULT_EVENT_VALUES["qr_enabled"],
                 admin_event_gallery_enabled=DEFAULT_EVENT_VALUES["gallery_enabled"],
+                # NEU (Sprint 13): "Standardwerte" setzt auch den Farbstil
+                # zurueck (kein individueller Farbstil) - gleiches Prinzip
+                # wie bei jedem anderen Feld hier: nur der Entwurf, nicht der
+                # Entry-Snapshot, wirkt erst nach "Speichern".
+                admin_event_theme_button=None,
+                admin_event_theme_background=None,
+                admin_event_theme_text=None,
             )
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
             return TransitionResult(model=model.evolve(ui=ui, timers=timers))
         if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT:
             return self._go_admin_event_wallpaper_pick_loading(model, now)
+        if event.type == EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER:      # NEU (Sprint 13)
+            return self._go_admin_event_color_style_loading(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_SAVE:
             # Schreibt noch nicht selbst - das Ergebnis kommt synchron als
             # ADMIN_EVENT_SAVE_RESULT zurueck (siehe
@@ -736,6 +754,11 @@ class StateMachine:
                 admin_event_welcome_text=model.ui.admin_event_entry_welcome_text,
                 admin_event_qr_enabled=model.ui.admin_event_entry_qr_enabled,
                 admin_event_gallery_enabled=model.ui.admin_event_entry_gallery_enabled,
+                # NEU (Sprint 13): gleiches Rueckgaengig-Prinzip fuer den
+                # Farbstil.
+                admin_event_theme_button=model.ui.admin_event_entry_theme_button,
+                admin_event_theme_background=model.ui.admin_event_entry_theme_background,
+                admin_event_theme_text=model.ui.admin_event_entry_theme_text,
             )
             menu_result = self._go_admin_menu(model.evolve(ui=ui), now)
             # NEU (Nutzer-Feedback, Bugfix): ein evtl. in dieser Sitzung
@@ -779,6 +802,13 @@ class StateMachine:
             admin_event_wallpaper_candidates=(),
             admin_event_wallpaper_selected="",
             admin_event_wallpaper_pending=False,
+            # NEU (Sprint 13): frischer Einstieg - Farbstil-Felder werden
+            # gleich darauf per "collect_admin_event_settings"-Action /
+            # ADMIN_EVENT_SETTINGS_READY aus der aktuellen AppConfig befuellt
+            # (siehe oben), hier nur der Browsing-Zustand des Vorschau-
+            # Screens zurueckgesetzt.
+            admin_event_color_style_candidates=(),
+            admin_event_color_style_index=0,
         )
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
         return TransitionResult(
@@ -949,6 +979,104 @@ class StateMachine:
         # Service-Menue - sonst wuerden bereits getippte, noch nicht
         # gespeicherte Aenderungen an anderen Feldern verworfen.
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._return_to_admin_event_settings(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (Sprint 13): "Farbstil vorschlagen" - Hintergrund-Thread berechnet
+    # aus dem aktuellen Wallpaper bis zu drei Farbpaletten-Kandidaten (siehe
+    # app._color_style_start_compute/wallpaper_theme_service.
+    # compute_theme_candidates). Bewusst als eigener Hintergrund-Thread,
+    # NICHT synchron - siehe Lehre aus Sprint 12 (Modul-Docstring von
+    # wallpaper_theme_service.py). Bei Erfolg geht es weiter zum Vorschau-
+    # Screen (_go_admin_event_color_style_pick), bei Fehlschlag (kein
+    # Wallpaper, keine geeignete Farbe gefunden) auf denselben Ergebnis-
+    # Screen wie ein fehlgeschlagener Wallpaper-Import (bewusst
+    # wiederverwendet statt eines eigenen, fast identischen Screens -
+    # _draw_admin_event_wallpaper_result ist bereits generisch genug: nur
+    # eingefaerbte Zeilen + "Zurueck").
+    def _go_admin_event_color_style_loading(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(model.ui, status_text="Farbstil wird berechnet ...", error_text=None)
+        timers = replace(model.timers, idle_deadline=None)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_EVENT_COLOR_STYLE_LOADING, ui=ui, timers=timers),
+            actions=("color_style_compute",),
+        )
+
+    def _handle_admin_event_color_style_loading(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_EVENT_COLOR_STYLE_READY:
+            ok = bool(event.payload.get("ok", False))
+            candidates = tuple(
+                (tuple(c["button"]), tuple(c["background"]), tuple(c["text"]))
+                for c in event.payload.get("candidates", ())
+            )
+            if ok and candidates:
+                # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): die
+                # Originalfarben (kein individueller Farbstil, None) werden
+                # als erster Eintrag VOR die Wallpaper-Vorschlaege gestellt -
+                # so ist "zurueck zu den urspruenglichen Farben" beim
+                # Durchblaettern immer als erste Option erreichbar, ohne
+                # dass man dafuer extra "Standardwerte" auf dem aeusseren
+                # Screen anklicken muesste.
+                candidates = (None,) + candidates
+                return self._go_admin_event_color_style_pick(model, now, candidates)
+            lines = tuple(event.payload.get("lines", ())) or ("Farbstil konnte nicht berechnet werden.",)
+            return self._go_admin_event_wallpaper_result(model, now, False, lines)
+        return TransitionResult(model=model)
+
+    # NEU (Sprint 13): Vorschau-Screen - "<"/">" blaettert (bleibt an den
+    # Enden stehen, kein Umlauf, gleiches Prinzip wie ISO/Blende),
+    # "Übernehmen" traegt den gerade sichtbaren Kandidaten in den Entwurf
+    # (admin_event_theme_*) ein - WICHTIG: macht ihn NOCH NICHT zum echten,
+    # gespeicherten Farbstil, das passiert wie bei jedem anderen Feld erst
+    # durch das AEUSSERE "Speichern" auf ADMIN_EVENT_SETTINGS. "Abbrechen"
+    # verwirft nur die Kandidatenliste, der bisherige Entwurfsstand bleibt
+    # unangetastet.
+    def _go_admin_event_color_style_pick(
+        self, model: AppModel, now: float,
+        candidates: tuple[
+            tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None, ...
+        ],
+    ) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Farbstil auswählen",
+            error_text=None,
+            admin_event_color_style_candidates=candidates,
+            admin_event_color_style_index=0,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_COLOR_STYLE_PICK, ui=ui, timers=timers))
+
+    def _handle_admin_event_color_style_pick(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        candidates = model.ui.admin_event_color_style_candidates
+        if event.type in {EventType.TAP_ADMIN_EVENT_COLOR_STYLE_PREV, EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT} and candidates:
+            step = -1 if event.type == EventType.TAP_ADMIN_EVENT_COLOR_STYLE_PREV else +1
+            new_index = max(0, min(len(candidates) - 1, model.ui.admin_event_color_style_index + step))
+            ui = replace(model.ui, admin_event_color_style_index=new_index)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY:
+            if not candidates:
+                return TransitionResult(model=model)
+            index = max(0, min(len(candidates) - 1, model.ui.admin_event_color_style_index))
+            selected = candidates[index]
+            if selected is None:
+                # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): "Original"
+                # gewaehlt - genau wie "Standardwerte" auf dem aeusseren
+                # Screen (siehe TAP_ADMIN_EVENT_DEFAULTS) werden alle drei
+                # Entwurfsfelder auf None gesetzt, die App faellt dann wieder
+                # auf die fest im Code stehenden Farben zurueck.
+                button = background = text = None
+            else:
+                button, background, text = selected
+            ui = replace(
+                model.ui,
+                admin_event_theme_button=button,
+                admin_event_theme_background=background,
+                admin_event_theme_text=text,
+            )
+            return self._return_to_admin_event_settings(model.evolve(ui=ui), now)
+        if event.type in {EventType.TAP_ADMIN_EVENT_COLOR_STYLE_CANCEL, EventType.IDLE_TIMEOUT}:
             return self._return_to_admin_event_settings(model, now)
         return TransitionResult(model=model)
 

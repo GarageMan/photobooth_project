@@ -221,6 +221,38 @@ class UiState:
     admin_event_wallpaper_candidates: tuple[str, ...] = ()
     admin_event_wallpaper_selected: str = ""
     admin_event_wallpaper_pending: bool = False
+    # NEU (Sprint 13): Farbstil aus dem Wallpaper. None = kein individueller
+    # Farbstil gewaehlt (App nutzt die bisherigen, fest im Code stehenden
+    # Farben, siehe renderer._draw_buttons/_background_color). Ein Tripel
+    # bedeutet: es WURDE bereits einmal ein Kandidat uebernommen (per
+    # "Übernehmen" auf ADMIN_EVENT_COLOR_STYLE_PICK) - wird wie jedes
+    # andere Feld auf diesem Screen erst durch das AEUSSERE "Speichern"
+    # tatsaechlich in event_config.json geschrieben (siehe
+    # app._save_admin_event_settings).
+    admin_event_theme_button: tuple[int, int, int] | None = None
+    admin_event_theme_background: tuple[int, int, int] | None = None
+    admin_event_theme_text: tuple[int, int, int] | None = None
+    # Momentaufnahme beim Betreten - fuer "Abbrechen"/Idle-Timeout, gleiches
+    # Prinzip wie admin_event_entry_title usw. oben.
+    admin_event_entry_theme_button: tuple[int, int, int] | None = None
+    admin_event_entry_theme_background: tuple[int, int, int] | None = None
+    admin_event_entry_theme_text: tuple[int, int, int] | None = None
+    # Vorschau-Screen ADMIN_EVENT_COLOR_STYLE_PICK: die vom Hintergrund-
+    # Thread berechneten Kandidaten (je Eintrag ein (button, background,
+    # text)-Tripel, siehe wallpaper_theme_service.ThemeCandidate) sowie der
+    # Index des gerade angezeigten Kandidaten. Rein fluechtiger Browsing-
+    # Zustand - wird beim Verlassen des Screens (Übernehmen ODER Abbrechen)
+    # nicht weiter gebraucht, deshalb kein eigenes "_entry_"-Gegenstueck.
+    # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): ein Eintrag kann auch
+    # None sein - das ist der an Index 0 vorangestellte "Original"-Platz-
+    # halter (kein individueller Farbstil, siehe state_machine.
+    # _handle_admin_event_color_style_loading und renderer.
+    # _draw_admin_event_color_style_pick). Deshalb erlaubt die Typannotation
+    # jetzt "Tripel ODER None" je Eintrag, nicht mehr nur Tripel.
+    admin_event_color_style_candidates: tuple[
+        tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None, ...
+    ] = ()
+    admin_event_color_style_index: int = 0
 
 
 @dataclass(slots=True, frozen=True)

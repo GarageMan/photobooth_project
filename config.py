@@ -4,6 +4,13 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# NEU (Sprint 13): Gegenstueck zu wallpaper_theme_service.color_to_hex()
+# beim Speichern (siehe event_config_service/app._save_admin_event_settings)
+# - reine Farb-/Hex-Konvertierung, keine pygame-/Hardware-Abhaengigkeit
+# (siehe Modul-Docstring von wallpaper_theme_service.py), daher hier
+# gefahrlos importierbar.
+import wallpaper_theme_service
+
 # Echte Zugangsdaten liegen NICHT im Code, sondern in local_secrets.py
 # (nicht versioniert, siehe .gitignore und local_secrets_example.py).
 # Jeder Wert wird EINZELN mit getattr geladen und faellt fuer sich auf
@@ -193,6 +200,28 @@ GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 MAIN_MENU_WELCOME_TEXT = str(
     _event_config.get("welcome_text") or "Lass dich zur Erinnerung an die Veranstaltung fotografieren!"
 )
+
+# NEU (Sprint 13): individueller Farbstil, aus dem Hauptmenue-Wallpaper
+# berechnet (Admin-Screen "Farbstil vorschlagen", siehe
+# wallpaper_theme_service.py). None (fehlender oder ungueltiger Schluessel
+# in event_config.json - der Normalfall bei jeder bestehenden Installation,
+# die diesen Screen noch nie genutzt hat) laesst die bisherigen, fest im
+# Code stehenden Farben unveraendert (siehe renderer._draw_buttons/
+# _background_color) - reiner Opt-in, kein Verhaltenswechsel ohne
+# ausdrueckliche Auswahl durch den Admin. Rot/Gruen/Grau (Bestaetigen/
+# Gefahr/Zurueck) sowie alle Service-Menue-Screens bleiben davon in JEDEM
+# Fall unberuehrt (siehe renderer.py) - hier werden nur die drei
+# theme_*-Werte selbst geladen, welche Stellen sie tatsaechlich verwenden,
+# entscheidet ausschliesslich renderer.py.
+def _parse_theme_color(raw: object) -> tuple[int, int, int] | None:
+    if not isinstance(raw, str):
+        return None
+    return wallpaper_theme_service.hex_to_color(raw)
+
+
+THEME_BUTTON_COLOR = _parse_theme_color(_event_config.get("theme_button_color"))
+THEME_BACKGROUND_COLOR = _parse_theme_color(_event_config.get("theme_background_color"))
+THEME_TEXT_COLOR = _parse_theme_color(_event_config.get("theme_text_color"))
 
 # erkennt, ob die Event-Konfiguration noch auf den
 # generischen Platzhaltern steht - entweder weil data/event_config.json
@@ -508,6 +537,12 @@ class AppConfig:
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
+    # NEU (Sprint 13): kommt aus data/event_config.json (Fallback None -
+    # kein individueller Farbstil), siehe THEME_BUTTON_COLOR/
+    # THEME_BACKGROUND_COLOR/THEME_TEXT_COLOR oben.
+    theme_button_color: tuple[int, int, int] | None = THEME_BUTTON_COLOR
+    theme_background_color: tuple[int, int, int] | None = THEME_BACKGROUND_COLOR
+    theme_text_color: tuple[int, int, int] | None = THEME_TEXT_COLOR
 
     def ensure_directories(self) -> None:
         for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):

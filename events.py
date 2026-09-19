@@ -160,6 +160,26 @@ class EventType(Enum):
     # Ergebnis des synchronen Kopierens in die Zwischenablage; payload:
     # ok, message.
     ADMIN_EVENT_WALLPAPER_STAGE_RESULT = auto()
+    # NEU (Sprint 13): "Farbstil vorschlagen"-Taste auf ADMIN_EVENT_SETTINGS
+    # - startet die Hintergrund-Berechnung (siehe ADMIN_EVENT_COLOR_STYLE_
+    # LOADING in states.py).
+    TAP_ADMIN_EVENT_COLOR_STYLE_ENTER = auto()
+    # Hintergrund-Thread ist fertig; payload: ok, candidates (Tupel aus
+    # je einem (button_rgb, background_rgb, text_rgb)-Tripel als Listen),
+    # message (nur im Fehlerfall).
+    ADMIN_EVENT_COLOR_STYLE_READY = auto()
+    # Durch die Kandidatenliste blaettern (bleibt am jeweils letzten
+    # Kandidaten stehen, kein Umlauf - gleiches Prinzip wie ISO/Blende).
+    TAP_ADMIN_EVENT_COLOR_STYLE_PREV = auto()
+    TAP_ADMIN_EVENT_COLOR_STYLE_NEXT = auto()
+    # "Übernehmen" - der aktuell sichtbare Kandidat wird in den Entwurf
+    # (admin_event_theme_*) uebernommen, noch nicht gespeichert.
+    TAP_ADMIN_EVENT_COLOR_STYLE_APPLY = auto()
+    # "Abbrechen" im Vorschau-Screen - verwirft nur die Kandidatenliste.
+    # Eigenes Event statt TAP_BACK, damit es sich nicht mit dem allgemeinen
+    # TAP_BACK-Handling (z.B. Idle-Timeout-Reaktionen anderer Screens)
+    # vermischt - gleiches Vorgehen wie bei den Wallpaper-Events oben.
+    TAP_ADMIN_EVENT_COLOR_STYLE_CANCEL = auto()
     TAP_ADMIN_EVENT_SAVE = auto()
     # Ergebnis des synchronen JSON-Schreibens; payload: ok, message.
     ADMIN_EVENT_SAVE_RESULT = auto()

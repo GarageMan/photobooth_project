@@ -357,6 +357,15 @@ class Renderer:
         if model.state == AppState.ADMIN_EVENT_WALLPAPER_RESULT:  # NEU (Veranstaltungsdaten)
             self._draw_admin_event_wallpaper_result(model)
 
+        # NEU (Sprint 13): "Farbstil vorschlagen" - Ladebildschirm nutzt
+        # bewusst dieselbe generische Methode wie die Wallpaper-Suche
+        # (liest nur model.ui.status_text, siehe dort).
+        if model.state == AppState.ADMIN_EVENT_COLOR_STYLE_LOADING:
+            self._draw_admin_event_wallpaper_pick_loading(model)
+
+        if model.state == AppState.ADMIN_EVENT_COLOR_STYLE_PICK:
+            self._draw_admin_event_color_style_pick(model)
+
         if model.state == AppState.ADMIN_EVENT_SAVED:         # NEU (Veranstaltungsdaten)
             self._draw_admin_event_saved(model)
 
@@ -456,6 +465,19 @@ class Renderer:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): weder der
+            # generische Fotobox-/Event-Titel noch eine status_text-
+            # Ueberschrift ("Farbstil wird berechnet ..."/"Farbstil
+            # auswählen") werden hier gezeichnet - beide ueberlappten auf
+            # dem echten Geraet sichtbar mit dem Vorschau-Mockup
+            # (_draw_admin_event_color_style_pick zeichnet seinen eigenen
+            # Farb-Streifen an fester Position, die generische Kopfzeile
+            # war dafuer nicht vorgesehen). Laut Lutz ist ein eigener Titel
+            # fuer diesen Unter-Screen des Service-Menues ohnehin nicht
+            # relevant - gleiches Prinzip wie ADMIN_RESTART_PENDING/
+            # ADMIN_USB_RESOLVE (siehe Kommentar unten: bewusst gar kein Titel).
+            AppState.ADMIN_EVENT_COLOR_STYLE_LOADING,
+            AppState.ADMIN_EVENT_COLOR_STYLE_PICK,
         }
 
         if model.state not in text_screens and not hide_all_text:
@@ -2197,8 +2219,25 @@ class Renderer:
         # zum Wischen.
         self._draw_scroll_indicators(viewport, self.terms_scroll_offset, max_scroll, "terms_scroll_offset")
 
+    # NEU (Sprint 13): liefert die Button- bzw. Textfarbe fuer die wenigen
+    # NICHT-semantischen Buttons (siehe unten, wo sie verwendet werden) -
+    # config.theme_button_color/theme_text_color sind None, solange kein
+    # Farbstil gewaehlt wurde (Admin-Screen "Farbstil vorschlagen"), dann
+    # bleibt exakt die bisherige, fest im Code stehende Farbe unveraendert.
+    # Rot/Gruen/Grau (Bestaetigen/Gefahr/Zurueck) sowie alle Service-Menue-
+    # Screens rufen diese Methoden bewusst NICHT auf - siehe Kommentare an
+    # den jeweiligen _draw_button-Aufrufen.
+    def _themed_button_color(self, default: tuple[int, int, int]) -> tuple[int, int, int]:
+        return self.config.theme_button_color or default
+
+    def _themed_text_color(self) -> tuple[int, int, int]:
+        return self.config.theme_text_color or (255, 255, 255)
+
     def _draw_buttons(self, state: AppState) -> None:
         if state == AppState.MAIN_MENU:
+            # Gruen bleibt IMMER fest (semantisch "los geht's/bestaetigen"),
+            # siehe Nutzer-Entscheidung zum Farbstil (Sprint 13): nur echte
+            # Akzentfarben ohne Bedeutung werden eingefaerbt.
             self._draw_button("Fotografieren", self.layout.main_photo, (0, 150, 0))
             # NEU (Sprint 11): kein "Galerie"-Button ohne Galerie-Funktion
             # fuer diese Veranstaltung (config.gallery_enabled, siehe
@@ -2206,17 +2245,37 @@ class Renderer:
             # bewusst ihre bisherigen Positionen (keine Neuanordnung),
             # gleiches Vorgehen wie beim optionalen QR-Icon in
             # GALLERY_FULLSCREEN.
+            # GEAENDERT (Sprint 13): "Galerie"/"Anleitung"/"Bedingungen"
+            # haben keine feste Bedeutung (anders als Gruen/Rot/Grau) - sie
+            # folgen daher dem gewaehlten Wallpaper-Farbstil, sobald einer
+            # gewaehlt wurde (siehe _themed_button_color/_themed_text_color
+            # oben), sonst bleiben die bisherigen Farben unveraendert.
             if self.config.gallery_enabled:
-                self._draw_button("Galerie", self.layout.main_gallery, (0, 100, 150))
-            self._draw_button("Anleitung", self.layout.main_instructions, (120, 90, 0))
-            self._draw_button("Bedingungen", self.layout.main_terms, (120, 30, 90))
+                self._draw_button(
+                    "Galerie", self.layout.main_gallery, self._themed_button_color((0, 100, 150)),
+                    text_color=self._themed_text_color(),
+                )
+            self._draw_button(
+                "Anleitung", self.layout.main_instructions, self._themed_button_color((120, 90, 0)),
+                text_color=self._themed_text_color(),
+            )
+            self._draw_button(
+                "Bedingungen", self.layout.main_terms, self._themed_button_color((120, 30, 90)),
+                text_color=self._themed_text_color(),
+            )
         elif state == AppState.ATTRACT_GALLERY:
             pass  # bewusst kein Button - Tippen/Taster fuehrt zurueck
         elif state == AppState.INSTRUCTIONS:
             self._draw_button("Zurück" if self._current_text_language == "de" else "Back", self.layout.text_view_back, (100, 100, 100))
             self._draw_language_toggle_button()
         elif state == AppState.TERMS:
-            self._draw_button("Verstanden" if self._current_text_language == "de" else "Understood", self.layout.text_view_back, (0, 130, 110))
+            # GEAENDERT (Sprint 13): "Verstanden"/"Understood" ist keine
+            # Gefahren-/Abbrechen-Farbe - folgt dem Farbstil wie "Galerie" etc.
+            self._draw_button(
+                "Verstanden" if self._current_text_language == "de" else "Understood",
+                self.layout.text_view_back, self._themed_button_color((0, 130, 110)),
+                text_color=self._themed_text_color(),
+            )
             self._draw_language_toggle_button()
         elif state == AppState.PHOTO_INTRO:
             self._draw_button("Countdown starten", self.layout.left, (0, 150, 0))
@@ -2241,7 +2300,13 @@ class Renderer:
             # app._map_click_to_event (Treffer-Rechteck entfaellt
             # dort ebenfalls).
             if self.config.qr_codes_enabled:
-                self._draw_button("QR-Code anfordern", self.layout.gallery_qr_icon, (0, 100, 150))
+                # GEAENDERT (Sprint 13): folgt dem Farbstil wie "Galerie" im
+                # Hauptmenue (gleiche urspruengliche Farbe, keine feste
+                # Bedeutung).
+                self._draw_button(
+                    "QR-Code anfordern", self.layout.gallery_qr_icon, self._themed_button_color((0, 100, 150)),
+                    text_color=self._themed_text_color(),
+                )
         elif state == AppState.GALLERY_PHOTO_QR:
             # NEU (Sprint 11, Feature 4): gleiche Position/Optik wie bei
             # GALLERY_FULLSCREEN - schliesst die QR-Karte wieder vorzeitig,
@@ -2338,8 +2403,28 @@ class Renderer:
             self._draw_button(
                 "Standardwerte", self.layout.admin_event_defaults_button, (90, 70, 0), font_size=30,
             )
+            # NEU (Sprint 13): "Farbstil vorschlagen" - dritter Button in
+            # derselben Zeile (siehe layout.py, Drei-Button-Aufteilung).
+            # Bewusst NICHT eingefaerbt (dieser Button gehoert selbst zum
+            # Service-Menue) - fest wie "Standardwerte" daneben.
+            self._draw_button(
+                "Farbstil vorschlagen", self.layout.admin_event_color_style_button, (30, 90, 90), font_size=30,
+            )
             # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Button - das
             # WLAN-Passwort steht jetzt immer als Klartext da.
+        elif state == AppState.ADMIN_EVENT_COLOR_STYLE_PICK:
+            # NEU (Sprint 13): "Übernehmen" traegt den gerade sichtbaren
+            # Kandidaten in den Entwurf ein, "Abbrechen" verwirft nur die
+            # Kandidatenliste (siehe state_machine._handle_admin_event_
+            # color_style_pick). "<"/">" bleiben am jeweils letzten
+            # Kandidaten stehen (kein Ausgrauen an den Enden, gleiches
+            # Prinzip wie ISO/Blende im Kamera-Menue).
+            self._draw_button("Übernehmen", self.layout.left, (0, 150, 0))
+            self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
+            self._draw_button("<", self.layout.admin_event_color_style_prev, (70, 70, 75), font_size=80)
+            self._draw_button(">", self.layout.admin_event_color_style_next, (70, 70, 75), font_size=80)
+        # ADMIN_EVENT_COLOR_STYLE_LOADING: bewusst kein Button - laeuft,
+        # nicht abbrechbar (analog ADMIN_EVENT_WALLPAPER_PICK_LOADING).
         elif state == AppState.ADMIN_EVENT_WALLPAPER_PICK:
             # NEU (Nutzer-Feedback): Auswahlliste - "Speichern" kopiert die
             # markierte Zeile NUR in eine Zwischenablage (siehe
@@ -2846,6 +2931,61 @@ class Renderer:
         for line in ui.admin_event_wallpaper_lines:
             self._blit_center(line, self.font_body_admin, color, y)
             y += line_height
+
+    def _draw_admin_event_color_style_pick(self, model: AppModel) -> None:
+        """NEU (Sprint 13): Vorschau des gerade sichtbaren Farbstil-
+        Kandidaten - ein Mockup (Beispiel-Button in der Kandidatenfarbe samt
+        der dazu berechneten, WCAG-kontrastsicheren Textfarbe) auf einem
+        Streifen in der vorgeschlagenen Hintergrundfarbe, damit der Admin die
+        Wirkung direkt beurteilen kann, ohne erst zu speichern und die App
+        neu zu starten (Farbstil wirkt wie alle Veranstaltungsdaten erst nach
+        einem Neustart, siehe _draw_admin_event_saved)."""
+        ui = model.ui
+        candidates = ui.admin_event_color_style_candidates
+        width, height = self.config.screen.width, self.config.screen.height
+        if not candidates:
+            return
+        index = max(0, min(len(candidates) - 1, ui.admin_event_color_style_index))
+        selected = candidates[index]
+        # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): Eintrag None =
+        # "Original" (siehe state_machine._handle_admin_event_color_style_
+        # loading, das dies als ersten Kandidaten voranstellt). Dafuer gibt
+        # es keine berechneten Wallpaper-Farben - stattdessen werden hier
+        # genau die Referenzwerte gezeigt, die die App tatsaechlich
+        # verwendet, wenn kein Farbstil gesetzt ist (siehe
+        # renderer._themed_button_color-Aufrufe mit Default (0, 100, 150)
+        # sowie _background_color()[AppState.MAIN_MENU] = (20, 20, 30)).
+        is_original = selected is None
+        if is_original:
+            button_color, background_color, text_color = (0, 100, 150), (20, 20, 30), (255, 255, 255)
+        else:
+            button_color, background_color, text_color = selected
+
+        preview_rect = pygame.Rect(
+            round(0.10 * width), round(0.18 * height), round(0.80 * width), round(0.40 * height),
+        )
+        pygame.draw.rect(self.screen, background_color, preview_rect, border_radius=18)
+        pygame.draw.rect(self.screen, (255, 255, 255), preview_rect, width=2, border_radius=18)
+
+        # Beispiel-Button mittig im Streifen - "Galerie" stellvertretend fuer
+        # alle eingefaerbten Buttons (siehe renderer._draw_buttons oben).
+        sample_rect = pygame.Rect(0, 0, round(0.36 * width), round(0.12 * height))
+        sample_rect.center = preview_rect.center
+        self._draw_button("Galerie", sample_rect, button_color, text_color=text_color)
+
+        # NEU (Sprint 13, Nutzer-Feedback): eigene Beschriftung fuer den
+        # "Original"-Platzhalter statt "Vorschlag N / M" - die Zaehlung der
+        # echten Wallpaper-Vorschlaege (ohne "Original") bleibt dabei
+        # unveraendert bei "1 / Anzahl", nicht verschoben durch den
+        # vorangestellten Eintrag.
+        if is_original:
+            caption = "Original (kein Farbstil)"
+        else:
+            caption = f"Vorschlag {index} / {len(candidates) - 1}"
+        self._blit_center(
+            caption, self.font_body_admin, (230, 230, 230),
+            round(0.63 * height),
+        )
 
     def _draw_admin_event_saved(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): Bestaetigung nach "Speichern" - Erfolg/
@@ -3609,8 +3749,14 @@ class Renderer:
             round(0.45 * self.config.screen.height),
         )
 
+    # NEU (Sprint 13): optionaler text_color-Parameter (Fallback Weiss, wie
+    # bisher immer) - noetig fuer die per Wallpaper-Farbstil eingefaerbten
+    # Buttons (siehe _themed_button_color/_themed_text_color unten), deren
+    # WCAG-kontrastsichere Textfarbe je nach Wallpaper auch Schwarz sein
+    # kann (siehe wallpaper_theme_service.best_text_color).
     def _draw_button(
         self, label: str, rect: pygame.Rect, color: tuple[int, int, int], font_size: int | None = None,
+        text_color: tuple[int, int, int] = (255, 255, 255),
     ) -> None:
         # Leichter Schatten nach rechts unten fuer einen dezenten 3D-Effekt.
         # Braucht eine separate SRCALPHA-Zwischenflaeche, weil self.screen
@@ -3644,11 +3790,11 @@ class Renderer:
         max_w = rect.width - 24
         size = font_size if font_size is not None else 50
         font = self.font_button if font_size is None else pygame.font.Font(None, size)
-        text_surface = font.render(label, True, (255, 255, 255))
+        text_surface = font.render(label, True, text_color)
         while text_surface.get_width() > max_w and size > 24:
             size -= 4
             font = pygame.font.Font(None, size)
-            text_surface = font.render(label, True, (255, 255, 255))
+            text_surface = font.render(label, True, text_color)
         # BUGFIX (Nutzer-Feedback nach Live-Test, Screenshot-Vergleich): bei
         # diesem Font sitzt das sichtbare Zeichen von "+"/"<"/">" spuerbar
         # UNTERHALB der Flaechenmitte ihrer Render-Oberflaeche (anders als
@@ -3792,6 +3938,25 @@ class Renderer:
     _SHADOW_COLOR = (60, 63, 68)
     _SHADOW_ALPHA = 140
 
+    # NEU (Sprint 13): Gaeste-Screens, deren Hintergrundfarbe KEINE
+    # dokumentierte Bedeutung traegt (anders als z.B. COUNTDOWN/REVIEW/
+    # DELETE_CONFIRM/ERROR_SCREEN/GALLERY_EMPTY, siehe deren Kommentare in
+    # _background_color) - nur diese folgen dem gewaehlten Wallpaper-
+    # Farbstil. GALLERY_FULLSCREEN/GALLERY_PHOTO_QR sind bewusst NICHT
+    # dabei: das Foto fuellt dort ohnehin den ganzen Bildschirm, die
+    # Hintergrundfarbe ist nur ein kaum sichtbarer Rahmen fuer den
+    # Bruchteil einer Sekunde vor dem ersten Blit - Theming haette dort
+    # praktisch keinen sichtbaren Effekt.
+    _THEME_ELIGIBLE_BACKGROUND_STATES = frozenset({
+        AppState.MAIN_MENU,
+        AppState.PHOTO_INTRO,
+        AppState.PHOTO_PREVIEW,
+        AppState.GALLERY_GRID,
+        AppState.ATTRACT_GALLERY,
+        AppState.INSTRUCTIONS,
+        AppState.TERMS,
+    })
+
     def _draw_shadowed_text(
         self, text: str, font: pygame.font.Font, color: tuple[int, int, int], pos: tuple[int, int],
     ) -> None:
@@ -3920,9 +4085,11 @@ class Renderer:
             self._draw_text(line, self.font_small, (220, 220, 220), (60, y))
             y += 30
 
-    @staticmethod
-    def _background_color(state: AppState) -> tuple[int, int, int]:
-        return {
+    # NEU (Sprint 13): kein @staticmethod mehr - braucht jetzt self.config
+    # fuer die Farbstil-Ueberschreibung unten (siehe _THEME_ELIGIBLE_
+    # BACKGROUND_STATES).
+    def _background_color(self, state: AppState) -> tuple[int, int, int]:
+        colors = {
             AppState.BOOT: (10, 25, 47),
             AppState.MAIN_MENU: (20, 20, 30),
             AppState.PHOTO_INTRO: (30, 30, 40),
@@ -4006,4 +4173,24 @@ class Renderer:
             # NEU (Veranstaltungsdaten): gleiches Gruen wie ADMIN_USB_READY -
             # Ergebnis-Screen (jetzt nur noch Fehlerfall).
             AppState.ADMIN_EVENT_WALLPAPER_RESULT: (10, 32, 26),
+            # NEU (Sprint 13): gleiches Blaugruen wie die Wallpaper-Suche -
+            # laeuft, nicht abbrechbar.
+            AppState.ADMIN_EVENT_COLOR_STYLE_LOADING: (12, 28, 28),
+            # NEU (Sprint 13): ruhiges Blaugrau wie die uebrigen interaktiven
+            # Veranstaltungsdaten-Screens (der eigentliche Vorschau-Streifen
+            # wird ohnehin von _draw_admin_event_color_style_pick darueber
+            # gezeichnet).
+            AppState.ADMIN_EVENT_COLOR_STYLE_PICK: (18, 22, 30),
         }[state]
+
+        # NEU (Sprint 13): fuer eine kleine, bewusst ausgewaehlte Gruppe rein
+        # neutraler Gaeste-Screens (keine dokumentierte Bedeutung wie
+        # COUNTDOWN/REVIEW/DELETE_CONFIRM/ERROR_SCREEN/GALLERY_EMPTY - siehe
+        # deren Kommentare oben) ersetzt der gewaehlte Wallpaper-Farbstil die
+        # feste Farbe, sobald einer gewaehlt wurde (config.theme_background_
+        # color ist sonst None). ALLE Service-Menue-Screens (ADMIN_*) sind
+        # hier bewusst NICHT gelistet - Nutzer-Entscheidung (Sprint 13): der
+        # Farbstil gilt ausdruecklich nicht innerhalb des Service-Menues.
+        if self.config.theme_background_color is not None and state in self._THEME_ELIGIBLE_BACKGROUND_STATES:
+            return self.config.theme_background_color
+        return colors

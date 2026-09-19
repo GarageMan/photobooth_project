@@ -46,6 +46,7 @@ import capture_timing  # NEU (Sprint 11, Feature 1)
 from hw_capture_provider import CaptureProgress  # NEU (Sprint 11, Feature 1)
 import hw_camera_settings_provider  # NEU (Sprint 11, Feature 2)
 import event_config_service  # NEU (Veranstaltungsdaten)
+import wallpaper_theme_service  # NEU (Sprint 13)
 from config import DEFAULT_CONFIG, AppConfig, EVENT_CONFIG_PATH
 from events import AppEvent, EventType
 from gallery_service import GalleryService
@@ -262,6 +263,14 @@ class PhotoboothApp:
         # erste gefundene) - gleiches Prinzip wie self._usb_stick beim
         # USB-Export, nur fuer diesen eigenen Ablauf.
         self._wallpaper_pick_stick = None
+
+        # NEU (Sprint 13): "Farbstil vorschlagen" - gleiches Einzelwert-Poll-
+        # Muster wie die Wallpaper-Suche oben. Bewusst als Hintergrund-Thread,
+        # obwohl die Pillow-Berechnung selbst normalerweise deutlich unter
+        # einer Sekunde dauert - siehe Lehre aus Sprint 12 (Modul-Docstring
+        # von wallpaper_theme_service.py).
+        self._color_style_thread: threading.Thread | None = None
+        self._color_style_job_result = None
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -725,6 +734,16 @@ class PhotoboothApp:
             "admin_event_wallpaper_pick_cancel": AppEvent(
                 EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL, source="touch",
             ),
+            # NEU (Sprint 13): "Farbstil vorschlagen"-Taste sowie die
+            # statischen Buttons des Vorschau-Screens (Übernehmen/Abbrechen
+            # nutzen "admin_event_color_style_apply/_cancel", nicht die
+            # generischen "save"/"cancel"-Namen - eigene Events statt
+            # TAP_SAVE/TAP_CANCEL, siehe events.py).
+            "admin_event_color_style": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER, source="touch"),
+            "admin_event_color_style_prev": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_PREV, source="touch"),
+            "admin_event_color_style_next": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, source="touch"),
+            "admin_event_color_style_apply": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, source="touch"),
+            "admin_event_color_style_cancel": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_CANCEL, source="touch"),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -956,6 +975,19 @@ class PhotoboothApp:
                 self._wallpaper_thread = None
                 self.dispatch(
                     AppEvent(EventType.ADMIN_EVENT_WALLPAPER_LIST_FINISHED, payload=job, source="wallpaper"),
+                    now,
+                )
+            return
+
+        # NEU (Sprint 13): "Farbstil vorschlagen" - gleiches Einzelwert-Poll-
+        # Muster wie die Wallpaper-Suche oben, nicht abbrechbar.
+        if state == AppState.ADMIN_EVENT_COLOR_STYLE_LOADING:
+            job = self._color_style_job_result
+            if job is not None:
+                self._color_style_job_result = None
+                self._color_style_thread = None
+                self.dispatch(
+                    AppEvent(EventType.ADMIN_EVENT_COLOR_STYLE_READY, payload=job, source="color_style"),
                     now,
                 )
             return
@@ -1309,6 +1341,8 @@ class PhotoboothApp:
                 event_config_service.discard_pending_wallpaper(
                     self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
                 )
+            elif action == "color_style_compute":              # NEU (Sprint 13)
+                self._color_style_start_compute()
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -1857,6 +1891,10 @@ class PhotoboothApp:
                     "welcome_text": self.config.main_menu_welcome_text,
                     "qr_enabled": self.config.qr_codes_enabled,
                     "gallery_enabled": self.config.gallery_enabled,
+                    # NEU (Sprint 13): aktuell wirksamer Farbstil (None = keiner).
+                    "theme_button": self.config.theme_button_color,
+                    "theme_background": self.config.theme_background_color,
+                    "theme_text": self.config.theme_text_color,
                 },
                 source="event_settings",
             )
@@ -1877,6 +1915,16 @@ class PhotoboothApp:
             "qr_codes_enabled": ui.admin_event_qr_enabled,
             "gallery_enabled": ui.admin_event_gallery_enabled,
         }
+        # NEU (Sprint 13): Farbstil - nur geschrieben, wenn tatsaechlich einer
+        # gewaehlt wurde (None -> Schluessel bleibt weg, load_event_config/
+        # config._parse_theme_color liest einen fehlenden Schluessel ohnehin
+        # als None, ein explizites null waere gleichbedeutend, aber unnoetig).
+        if ui.admin_event_theme_button is not None:
+            data["theme_button_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_button)
+        if ui.admin_event_theme_background is not None:
+            data["theme_background_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_background)
+        if ui.admin_event_theme_text is not None:
+            data["theme_text_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_text)
         ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
         if ok:
             # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
@@ -1983,6 +2031,51 @@ class PhotoboothApp:
             if stick.mounted_by_us:
                 admin_usb_service.unmount(stick.mountpoint)
             self._wallpaper_pick_stick = None
+
+    def _color_style_start_compute(self) -> None:
+        # NEU (Sprint 13): "Farbstil vorschlagen" - liest bewusst ein bereits
+        # per Auswahlliste zwischengelagertes, aber noch nicht uebernommenes
+        # neues Wallpaper (admin_event_wallpaper_pending), falls in dieser
+        # Bearbeitungssitzung eines gewaehlt wurde - sonst muesste der Admin
+        # erst "Speichern" + die App neu starten, nur um den Farbstil des
+        # gerade erst ausgewaehlten neuen Wallpapers vorgeschlagen zu
+        # bekommen. Ohne zwischengelagertes Wallpaper wird das aktuell
+        # aktive Hauptmenue-Wallpaper analysiert. Die eigentliche Pillow-
+        # Berechnung laeuft in einem Hintergrund-Thread (siehe Modul-
+        # Docstring von wallpaper_theme_service.py) - setzt NIE
+        # self.dispatch() aus dem Thread heraus auf (siehe _emit_due_timers,
+        # das den Job pollt), sondern nur self._color_style_job_result.
+        if self.model.ui.admin_event_wallpaper_pending:
+            image_path = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
+        else:
+            image_path = self.config.assets_dir / "hauptmenu_wallpaper.png"
+
+        def worker() -> None:
+            try:
+                result = wallpaper_theme_service.compute_theme_candidates(image_path)
+                if not result.ok:
+                    self._color_style_job_result = {"ok": False, "lines": (result.message,)}
+                    return
+                self._color_style_job_result = {
+                    "ok": True,
+                    "candidates": tuple(
+                        {
+                            "button": list(c.button_color),
+                            "background": list(c.background_color),
+                            "text": list(c.text_color),
+                        }
+                        for c in result.candidates
+                    ),
+                }
+            except Exception as exc:
+                print(f"[App] FEHLER bei der Farbstil-Berechnung: {exc}")
+                self._color_style_job_result = {
+                    "ok": False,
+                    "lines": ("Unerwarteter Fehler bei der Farbstil-Berechnung.", str(exc)[:70]),
+                }
+
+        self._color_style_thread = threading.Thread(target=worker, name="color-style-compute", daemon=True)
+        self._color_style_thread.start()
 
     def _read_admin_camera_settings(self) -> None:
         # NEU (Sprint 11, Feature 2): synchron ermittelt (ein gphoto2-
