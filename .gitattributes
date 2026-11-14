@@ -1,3 +1,16 @@
+# Zeilenenden vereinheitlichen (NEU, v1.1.0): Im Repository liegen alle
+# Textdateien mit LF (Linux-Format) - unabhaengig davon, ob sie unter Windows
+# (GitHub Desktop) oder direkt auf dem Pi bearbeitet wurden. Vorher war der
+# Bestand gemischt (CRLF/LF), wodurch jeder Commit unnoetig grosse Diffs
+# zeigte. Binaerdateien werden ausdruecklich nie umgewandelt.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.docx binary
+*.pdf binary
+*.pdn binary
+
 # Diese Datei sorgt dafuer, dass die genannten Dateien in Git normal
 # getrackt und in der Historie sichtbar bleiben, aber NICHT in den von
 # GitHub automatisch erzeugten Release-Archiven (ZIP/tar.gz) landen -
