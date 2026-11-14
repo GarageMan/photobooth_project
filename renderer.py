@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pygame
 from PIL import Image as PILImage
 
+from attract_slideshow import compute_attract_slot, fly_in_offset  # NEU (Sprint 14)
 from config import AppConfig
 from layout import KEYBOARD_SHIFT_MAP, LayoutRects, build_layout
 from models import AppModel
@@ -416,6 +417,15 @@ class Renderer:
             # siehe _draw_admin_usb_result_badge().
             self._draw_admin_usb_result_badge(model)
 
+        if model.state == AppState.ADMIN_HDMI_MENU:          # NEU (Sprint 14)
+            self._draw_admin_hdmi_menu(model)
+
+        if model.state == AppState.ADMIN_GALLERY_CLEANUP:    # NEU (Sprint 14)
+            self._draw_admin_gallery_cleanup(model)
+
+        if model.state == AppState.ADMIN_GALLERY_CLEANUP_CONFIRM:  # NEU (Sprint 14)
+            self._draw_admin_gallery_cleanup_confirm(model)
+
         # Bei Ziffer 1 (Liveview aus, "bitte laecheln") soll GAR KEIN Text
         # mehr zu sehen sein - weder Titel noch Statuszeile.
         hide_all_text = model.state == AppState.COUNTDOWN and model.ui.countdown_value == 1
@@ -478,9 +488,17 @@ class Renderer:
             # ADMIN_USB_RESOLVE (siehe Kommentar unten: bewusst gar kein Titel).
             AppState.ADMIN_EVENT_COLOR_STYLE_LOADING,
             AppState.ADMIN_EVENT_COLOR_STYLE_PICK,
+            # NEU (Sprint 14): status_text traegt die jeweilige Ueberschrift
+            # ("HDMI", "Galerie aufräumen", "Wirklich N Bilder löschen?") -
+            # gleiches Prinzip wie die USB-/Veranstaltungsdaten-Screens oben,
+            # siehe state_machine._go_admin_hdmi_menu/_go_admin_gallery_
+            # cleanup/_go_admin_gallery_cleanup_confirm.
+            AppState.ADMIN_HDMI_MENU,
+            AppState.ADMIN_GALLERY_CLEANUP,
+            AppState.ADMIN_GALLERY_CLEANUP_CONFIRM,
         }
 
-        if model.state not in text_screens and not hide_all_text:
+        if model.state not in text_screens and not hide_all_text and self.config.screen.title_visible:
             self._draw_shadowed_text(self.config.screen.title, self.font_title, (255, 255, 255), (60, 60))
         elif model.state == AppState.ADMIN_MENU:
             # NEU (4.2): statt des Fotobox-Titels an gleicher Position/
@@ -509,6 +527,14 @@ class Renderer:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 14): gleiches Prinzip fuer die beiden normalen
+            # HDMI-/Aufraeumen-Unterseiten. ADMIN_GALLERY_CLEANUP_CONFIRM
+            # ist bewusst NICHT hier gelistet - die Sicherheitsabfrage zeigt
+            # ihren Text stattdessen gross und zentriert (gleiches Prinzip
+            # wie ADMIN_DELETE_CONFIRM/ADMIN_SHUTDOWN_CONFIRM, siehe
+            # _draw_admin_gallery_cleanup_confirm), kein kleiner Titel.
+            AppState.ADMIN_HDMI_MENU,
+            AppState.ADMIN_GALLERY_CLEANUP,
         }:
             # NEU (4.6): der jeweilige Schrittname steht in ui.status_text -
             # eine Ueberschrift fuer alle Screens, kein Sonderfall je Zustand.
@@ -946,6 +972,10 @@ class Renderer:
             return
         self.screen.blit(image, (0, 0))
 
+        if not self.config.screen.title_visible:
+            # Ohne Titel kein dunkler Verlauf noetig - das Wallpaper (z.B.
+            # mit Logo/Schriftzug im Kopfbereich) bleibt unverfaelscht.
+            return
         width = self.config.screen.width
         fade_height = round(self.config.screen.height * 0.30)
         overlay = pygame.Surface((width, fade_height), pygame.SRCALPHA)
@@ -1069,6 +1099,14 @@ class Renderer:
             self.screen.blit(image, (0, 0))
 
     def _draw_attract_gallery(self, model: AppModel) -> None:
+        # GEAENDERT (Sprint 14): die eigentliche Zufalls-/Timing-Logik
+        # (welcher Slot, Werbung ja/nein, Flugrichtung, Einflug-Fortschritt)
+        # steckt seit Sprint 14 in attract_slideshow.compute_attract_slot() -
+        # hdmi_slideshow.py (Wiedergabe auf dem per HDMI angeschlossenen
+        # Beamer, siehe hdmi_output_service.py) nutzt exakt dieselbe
+        # Funktion, damit beide Wiedergaben nachweisbar demselben Muster
+        # folgen ("genau so zufaellig", Nutzer-Vorgabe). Hier im Renderer
+        # bleibt nur das Laden/Skalieren/Blitten der Bilder.
         photos = model.session.photos
         width, height = self.config.screen.width, self.config.screen.height
         if not photos:
@@ -1091,24 +1129,9 @@ class Renderer:
                 return
             photos = example_paths
 
-        slot_seconds = 5.0
-        fly_seconds = 0.6
-        # Wahrscheinlichkeit pro Slot, dass statt eines Kundenfotos das
-        # Systemstart-Wallpaper als "Werbung" eingeflogen wird - sorgt fuer
-        # ein gelegentliches, aber nicht zu haeufiges Einstreuen.
-        ad_probability = 0.2
         now = time.monotonic()
-        slot = int(now // slot_seconds)
-        t = now % slot_seconds
-
-        # Ein auf den Slot geseedeter RNG: sowohl die Werbung-ja/nein-
-        # Entscheidung als auch die Flugrichtung bleiben so fuer den
-        # gesamten Slot stabil (kein Neu-Wuerfeln/Flackern bei jedem
-        # Frame), aendern sich aber deterministisch mit jedem neuen Slot -
-        # exakt wie bisher schon bei der Flugrichtung gehandhabt.
-        slot_rng = random.Random(slot)
-        show_ad = slot_rng.random() < ad_probability
-        direction = slot_rng.choice(("left", "right", "top", "bottom"))
+        attract_slot = compute_attract_slot(now, len(photos))
+        show_ad = attract_slot.show_ad
 
         image = None
         if show_ad:
@@ -1116,27 +1139,11 @@ class Renderer:
             if image is None:
                 show_ad = False  # Fallback: kein Wallpaper vorhanden - normales Foto zeigen
         if not show_ad:
-            index = slot % len(photos)
-            image = self._get_thumbnail_surface(photos[index], (width, height))
+            image = self._get_thumbnail_surface(photos[attract_slot.photo_index], (width, height))
         if image is None:
             return
 
-        if t < fly_seconds:
-            progress = t / fly_seconds
-            eased = 1 - (1 - progress) ** 3  # ease-out: schnell rein, sanft einrasten
-        else:
-            eased = 1.0
-
-        x, y = 0, 0
-        if direction == "left":
-            x = round(-width * (1 - eased))
-        elif direction == "right":
-            x = round(width * (1 - eased))
-        elif direction == "top":
-            y = round(-height * (1 - eased))
-        else:
-            y = round(height * (1 - eased))
-
+        x, y = fly_in_offset(attract_slot.direction, attract_slot.eased, width, height)
         self.screen.blit(image, (x, y))
 
     def _draw_capture_transfer_animation(self, progress: float) -> None:
@@ -2461,6 +2468,24 @@ class Renderer:
             self._draw_button("Ja, alles löschen", self.layout.right, (160, 0, 0))
         elif state == AppState.ADMIN_DELETE_DONE:
             self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_HDMI_MENU:
+            # NEU (Sprint 14): Schiebeschalter/Testknopf zeichnet
+            # _draw_admin_hdmi_menu selbst - hier nur "Zurueck".
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
+        elif state == AppState.ADMIN_GALLERY_CLEANUP:
+            # NEU (Sprint 14): "Loeschen" links (rot, solange mindestens ein
+            # Foto ausgewaehlt ist - sonst ausgegraut, wie "Weiter" in
+            # ADMIN_USB_WAIT), "Zurueck" rechts neutral. Die Positionen
+            # entsprechen layout.button_rects_for_state().
+            has_selection = self._cleanup_selection_count > 0
+            label = f"Löschen ({self._cleanup_selection_count})" if has_selection else "Löschen"
+            self._draw_button(label, self.layout.left, (160, 0, 0) if has_selection else (55, 55, 60))
+            self._draw_button("Zurück", self.layout.right, (100, 100, 100))
+        elif state == AppState.ADMIN_GALLERY_CLEANUP_CONFIRM:
+            # NEU (Sprint 14): gleiches Muster wie ADMIN_DELETE_CONFIRM -
+            # "Nein" links neutral, "Ja" rechts deutlich rot.
+            self._draw_button("Nein, abbrechen", self.layout.left, (70, 70, 75))
+            self._draw_button("Ja, löschen", self.layout.right, (160, 0, 0))
         elif state == AppState.ADMIN_USB_WAIT:
             # NEU (4.6): "Weiter" bleibt ausgegraut, solange kein Stick
             # erkannt wurde - dieselbe Bedingung, die auch die State
@@ -2503,6 +2528,181 @@ class Renderer:
         for item in ADMIN_MENU_ITEMS:
             color = item.color if item.enabled else (55, 55, 60)
             self._draw_button(item.label, rects[item.key], color)
+
+    # NEU (Sprint 14): HDMI-Untermenue. Zwei Schiebeschalter (gleiche Optik
+    # wie ui.admin_event_qr_enabled/_gallery_enabled auf ADMIN_EVENT_
+    # SETTINGS, siehe _draw_admin_event_settings) plus ein Test-Button,
+    # darunter eine dauerhaft ausgegraute Zeile fuer die (noch) nicht
+    # umgesetzte Musik-Uebertragung (Nutzer-Entscheidung, siehe Doku-Notiz),
+    # zuunterst der aktuelle Verbindungsstatus als reiner Anzeige-Text.
+    def _draw_admin_hdmi_menu(self, model: AppModel) -> None:
+        ui = model.ui
+        height = self.config.screen.height
+
+        output_on = bool(ui.admin_hdmi_powered_on)
+        output_rect = self.layout.admin_hdmi_output_toggle
+        output_color = (20, 90, 30) if output_on else (75, 30, 30)
+        pygame.draw.rect(self.screen, output_color, output_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (255, 255, 255), output_rect, width=2, border_radius=10)
+        output_label = f"HDMI-Ausgang: {'an' if output_on else 'aus'}"
+        self._draw_text(
+            output_label, self.font_body_admin, (230, 230, 230),
+            (output_rect.x + 16, output_rect.centery - self.font_body_admin.get_linesize() // 2),
+        )
+
+        slideshow_on = ui.admin_hdmi_slideshow_running
+        slideshow_rect = self.layout.admin_hdmi_slideshow_toggle
+        slideshow_color = (20, 90, 30) if slideshow_on else (75, 30, 30)
+        pygame.draw.rect(self.screen, slideshow_color, slideshow_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (255, 255, 255), slideshow_rect, width=2, border_radius=10)
+        slideshow_label = f"Galerie-Wiedergabe: {'läuft' if slideshow_on else 'gestoppt'}"
+        self._draw_text(
+            slideshow_label, self.font_body_admin, (230, 230, 230),
+            (slideshow_rect.x + 16, slideshow_rect.centery - self.font_body_admin.get_linesize() // 2),
+        )
+
+        test_rect = self.layout.admin_hdmi_test_button
+        self._draw_button("HDMI-Test durchführen", test_rect, (0, 90, 130), font_size=34)
+
+        # NEU (Sprint 14): Musik-Uebertragung auf Nutzerwunsch nicht
+        # umgesetzt - dauerhaft ausgegraute Zeile, gleiches Prinzip wie
+        # enabled=False in admin_menu.ADMIN_MENU_ITEMS, hier nur als
+        # Schalter-Optik statt als Menue-Kachel.
+        music_rect = self.layout.admin_hdmi_music_toggle
+        pygame.draw.rect(self.screen, (55, 55, 60), music_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (150, 150, 150), music_rect, width=2, border_radius=10)
+        self._draw_text(
+            "Musik-Wiedergabe: in Vorbereitung", self.font_body_admin, (170, 170, 170),
+            (music_rect.x + 16, music_rect.centery - self.font_body_admin.get_linesize() // 2),
+        )
+
+        # Statuszeile(n) unterhalb der vier Zeilen, oberhalb von "Zurück"
+        # (rects.back beginnt bei 0.80*height).
+        status_y = round(0.68 * height)
+        if not ui.admin_hdmi_available:
+            message = ui.admin_hdmi_error or "HDMI-Status konnte nicht ermittelt werden."
+            color = (255, 150, 150)
+        elif not ui.admin_hdmi_connected:
+            message = "Kein Ausgabegerät (Beamer) erkannt."
+            color = (230, 200, 120)
+        else:
+            resolution = ui.admin_hdmi_resolution or "Auflösung unbekannt"
+            message = f"Beamer erkannt: {resolution}"
+            color = (150, 230, 170)
+        self._blit_center(message, self.font_body, color, status_y)
+
+        if ui.admin_hdmi_test_result:
+            self._blit_center(
+                ui.admin_hdmi_test_result, self.font_small, (220, 220, 150),
+                status_y + self.font_body.get_linesize() + 6,
+            )
+
+    # NEU (Sprint 14): "Galerie aufraeumen" - gleiches Kachelraster-Layout
+    # wie GALLERY_GRID (_draw_gallery_grid), aber mit Auswahl-Overlay
+    # (Haekchen + gruener Rahmen) statt Vollbild-Sprung. Eigene Hitbox-Liste
+    # (gallery_cleanup_thumbnail_hitboxes) statt der von GALLERY_GRID
+    # wiederzuverwenden - beide Screens koennen (theoretisch) denselben
+    # Frame nacheinander zeichnen, eine gemeinsame Liste wuerde sich sonst
+    # gegenseitig ueberschreiben.
+    def _draw_admin_gallery_cleanup(self, model: AppModel) -> None:
+        photos = model.session.photos
+        width = self.config.screen.width
+        height = self.config.screen.height
+        selected = set(model.ui.admin_gallery_cleanup_selected)
+        self._cleanup_selection_count = len(selected)
+        self.gallery_cleanup_thumbnail_hitboxes: list[tuple[pygame.Rect, str]] = []
+
+        if not photos:
+            self._draw_text(
+                "Keine Fotos vorhanden.", self.font_body, (200, 200, 200), (60, round(0.30 * height)),
+            )
+            return
+
+        columns = max(1, self.config.gallery.grid_columns)
+        margin = round(0.06 * width)
+        gap = round(0.03 * width)
+        top = round(0.24 * height)
+        bottom = round(0.77 * height)
+
+        available_w = width - 2 * margin - (columns - 1) * gap
+        cell_w = max(20, available_w // columns)
+        thumb_w, thumb_h = self.config.gallery.thumbnail_size
+        cell_h = max(20, round(cell_w * (thumb_h / thumb_w)))
+
+        total_rows = max(1, (len(photos) + columns - 1) // columns)
+        scroll_row = min(model.ui.admin_gallery_cleanup_scroll_offset, max(0, total_rows - 1))
+        start_index = scroll_row * columns
+        visible_photos = photos[start_index:]
+
+        badge_radius = max(12, round(cell_w * 0.09))
+        x, y, col = margin, top, 0
+        for path in visible_photos:
+            if y + cell_h > bottom:
+                break
+            cell_rect = pygame.Rect(x, y, cell_w, cell_h)
+            surface = self._get_thumbnail_surface(path, (cell_w, cell_h))
+            if surface is not None:
+                self.screen.blit(surface, (x, y))
+            else:
+                pygame.draw.rect(self.screen, (60, 60, 60), cell_rect)
+                pygame.draw.rect(self.screen, (150, 60, 60), cell_rect, width=2)
+
+            is_selected = path in selected
+            if is_selected:
+                pygame.draw.rect(self.screen, (0, 200, 90), cell_rect, width=5, border_radius=6)
+                badge_center = (cell_rect.right - badge_radius - 6, cell_rect.top + badge_radius + 6)
+                pygame.draw.circle(self.screen, (0, 200, 90), badge_center, badge_radius)
+                pygame.draw.circle(self.screen, (255, 255, 255), badge_center, badge_radius, width=2)
+                # NEU (Sprint 14): Haekchen selbst gezeichnet statt als
+                # Unicode-Zeichen ("✓") - Unicode-Symbole werden in der
+                # Pi-Schriftart als Kaestchen dargestellt (gleiches Problem
+                # wie die urspruenglichen Unicode-Pfeile im Kamera-Menue,
+                # siehe _draw_buttons/ADMIN_CAMERA_SETTINGS-Kommentar).
+                cx, cy = badge_center
+                r = badge_radius
+                pygame.draw.lines(
+                    self.screen, (255, 255, 255), False,
+                    [(cx - r * 0.5, cy), (cx - r * 0.1, cy + r * 0.4), (cx + r * 0.55, cy - r * 0.4)],
+                    width=3,
+                )
+
+            self.gallery_cleanup_thumbnail_hitboxes.append((cell_rect, path))
+            col += 1
+            x += cell_w + gap
+            if col >= columns:
+                col = 0
+                x = margin
+                y += cell_h + gap
+
+        count = len(selected)
+        left_rect = self.layout.left
+        right_rect = self.layout.right
+        if count:
+            # Zweizeilig ("N Bilder" / "ausgewählt") mittig ZWISCHEN den
+            # beiden Tasten, vertikal auf Hoehe der Tastenmitte.
+            noun = "Bild" if count == 1 else "Bilder"
+            gap_cx = (left_rect.right + right_rect.left) // 2
+            line_h = self.font_body.get_linesize()
+            cy = left_rect.centery
+            for i, line in enumerate((f"{count} {noun}", "ausgewählt")):
+                surf = self.font_body.render(line, True, (220, 220, 150))
+                self.screen.blit(surf, surf.get_rect(center=(gap_cx, cy + round((i - 0.5) * line_h))))
+        elif model.ui.admin_gallery_cleanup_result:
+            self._blit_center(model.ui.admin_gallery_cleanup_result, self.font_body, (150, 230, 170), left_rect.top - 30)
+
+    # NEU (Sprint 14): Sicherheitsabfrage vor dem Loeschen der markierten
+    # Bilder - gleiche Gestaltung wie _draw_admin_delete_confirm (grosser,
+    # zentrierter Warntext aus status_text, siehe state_machine._go_admin_
+    # gallery_cleanup_confirm), "Nein"/"Ja" zeichnet bereits _draw_buttons().
+    def _draw_admin_gallery_cleanup_confirm(self, model: AppModel) -> None:
+        height = self.config.screen.height
+        self._blit_center(
+            model.ui.status_text or "Wirklich löschen?", self.font_status_admin, (255, 210, 210), round(0.30 * height),
+        )
+        hint = "Die ausgewählten Bilder werden unwiderruflich von der Fotobox gelöscht."
+        self._blit_center(
+            hint, self.font_body_admin, (230, 170, 170), round(0.30 * height) + self.font_status_admin.get_linesize() + 16,
+        )
 
     def _draw_admin_status(self, model: AppModel) -> None:
         # GEAENDERT (Nutzer-Feedback, Bugfix): urspruenglich als "fuenf kurze
@@ -2767,6 +2967,28 @@ class Renderer:
                 (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
             )
 
+        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Hinweis, welche per
+        # USB gewaehlten Bilder beim "Speichern" uebernommen werden - im
+        # freien Feld zwischen "Speichern" und "Abbrechen" (die Zeilen
+        # darueber belegen den Bildschirm bereits vollstaendig).
+        pending_labels = []
+        if ui.admin_event_wallpaper_pending:
+            pending_labels.append("Hauptmenü-Bild")
+        if ui.admin_event_hdmi_wallpaper_pending:
+            pending_labels.append("HDMI-Bild")
+        if pending_labels:
+            gap_rect = pygame.Rect(
+                self.layout.left.right, self.layout.left.y,
+                self.layout.right.x - self.layout.left.right, self.layout.left.height,
+            )
+            line_h = self.font_small.get_linesize()
+            # Kurze Zeilen - das Feld ist nur ca. 300 px breit.
+            lines = ["Neu mit Speichern:", *pending_labels]
+            y0 = gap_rect.centery - (len(lines) * line_h) // 2 + line_h // 2
+            for index, line in enumerate(lines):
+                text = self._truncate_text(line, self.font_small, gap_rect.width - 16)
+                self._blit_center(text, self.font_small, (150, 230, 170), y0 + index * line_h)
+
         # ENTFERNT (Nutzer-Feedback): der Hinweis "Titel/Praefix/WLAN/
         # Schalter wirken erst nach einem Neustart der App." stand hier
         # redundant zur Speichern-Bestaetigungsseite (_draw_admin_event_saved)
@@ -2883,12 +3105,34 @@ class Renderer:
         selected = model.ui.admin_event_wallpaper_selected
         self.wallpaper_pick_row_hitboxes = []
 
-        top = round(0.22 * height)
+        # GEAENDERT (Sprint 14, Nutzer-Feedback 2026-11-14): Liste beginnt
+        # tiefer (vorher 0.22) - darueber sitzt jetzt der Ziel-Umschalter
+        # "Hauptmenue" | "HDMI-Monitor" (layout.admin_event_wallpaper_target_*)
+        # samt einer Hinweiszeile zum gewaehlten Ziel.
+        top = round(0.33 * height)
         bottom = round(0.77 * height)
         row_h = round(0.075 * height)
         gap = round(0.012 * height)
         row_w = round((1 - 2 * 0.06) * width)
         row_x = round(0.06 * width)
+
+        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel-Umschalter -
+        # aktives Ziel gruen (gleiche Farbe wie die markierte Listenzeile),
+        # das andere neutral grau. Hier statt in _draw_buttons(), da die
+        # Optik vom Modell abhaengt (gleiches Prinzip wie _draw_admin_hdmi_menu).
+        target = model.ui.admin_event_wallpaper_target
+        for key, label, rect in (
+            ("main", "Hauptmenü", self.layout.admin_event_wallpaper_target_main),
+            ("hdmi", "HDMI-Monitor", self.layout.admin_event_wallpaper_target_hdmi),
+        ):
+            color = (20, 110, 40) if target == key else (60, 63, 68)
+            self._draw_button(label, rect, color, font_size=30)
+
+        if target == "hdmi":
+            hint = "Standbild für HDMI-Monitor/Beamer - wird auf max. 1920x1080 verkleinert."
+        else:
+            hint = "Hintergrund des Hauptmenüs auf dem Touch-Display."
+        self._blit_center(hint, self.font_small, (170, 170, 170), round(0.30 * height))
 
         viewport = pygame.Rect(0, top, width, bottom - top)
         total_height = len(candidates) * (row_h + gap)
@@ -3072,6 +3316,10 @@ class Renderer:
 
     # NEU (4.7): merkt sich, ob "Stick leeren" angeboten werden darf.
     _usb_not_enough_free: bool = False
+
+    # NEU (Sprint 14): Anzahl ausgewaehlter Fotos im Galerie-Aufraeumen-
+    # Screen, fuer die Beschriftung/Farbe von "Loeschen" in _draw_buttons.
+    _cleanup_selection_count: int = 0
 
     # NEU (Sprint 11, Feature 2): merkt sich, ob die +/- Buttons fuer ISO/
     # Blende gezeichnet werden duerfen (Kamera erreichbar).
@@ -4181,6 +4429,15 @@ class Renderer:
             # wird ohnehin von _draw_admin_event_color_style_pick darueber
             # gezeichnet).
             AppState.ADMIN_EVENT_COLOR_STYLE_PICK: (18, 22, 30),
+            # NEU (Sprint 14): ruhiges Blaugrau wie die uebrigen normalen
+            # Service-Menue-Unterseiten (ADMIN_STATUS/ADMIN_EVENT_SETTINGS) -
+            # weder "gefaehrlich" (kein Rot) noch "es laeuft etwas"
+            # (kein Blaugruen).
+            AppState.ADMIN_HDMI_MENU: (18, 22, 30),
+            AppState.ADMIN_GALLERY_CLEANUP: (18, 22, 30),
+            # NEU (Sprint 14): gleiches Warnrot wie ADMIN_DELETE_CONFIRM -
+            # eine (wenn auch kleinere) unwiderrufliche Loeschung.
+            AppState.ADMIN_GALLERY_CLEANUP_CONFIRM: (55, 8, 8),
         }[state]
 
         # NEU (Sprint 13): fuer eine kleine, bewusst ausgewaehlte Gruppe rein

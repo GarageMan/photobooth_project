@@ -32,6 +32,7 @@ Für Raspberry Pi (Schritt-für-Schritt):
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -71,6 +72,8 @@ from layout import KEYBOARD_SHIFT_MAP, build_layout, button_rects_for_state
 from renderer import Renderer
 from admin_service import PinLockout, SecretGestureDetector  # NEU (3.4), umbenannt (Sprint 11, vormals shutdown_service.py)
 import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
+import event_wallpaper_reset  # NEU (Sprint 14): Wallpaper-Reset bei "Standardwerte"
+from hdmi_output_service import HdmiOutputService, TouchMappingGuard, ensure_hdmi_off, ensure_touch_primary, pick_display_index, read_status as hdmi_read_status, set_power as hdmi_set_power  # NEU (Sprint 14, Fix 6: TouchMappingGuard)
 
 # ------------------------------------------------------------------------------
 # Provider-Auswahl per Feature-Flag
@@ -150,10 +153,39 @@ class PhotoboothApp:
         self.led_service = LedService()
 
         # Pygame
+        # NEU (Sprint 14): SDL minimiert ein Vollbildfenster standardmaessig,
+        # sobald es den Fokus verliert - genau das passiert, wenn das
+        # Beamer-Fenster (hdmi_slideshow.py) oder der HDMI-Test geoeffnet
+        # wird (Fotobox verschwindet, Desktop wird sichtbar). Muss VOR
+        # pygame.init()/set_mode() gesetzt sein.
+        os.environ.setdefault("SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0")
+        # NEU (Sprint 14): bei bereits eingeschaltetem HDMI-Ausgang soll die
+        # Fotobox trotzdem auf dem Touch-Display starten (nicht auf dem
+        # Beamer): Touch-Display primaer setzen + Display per Groesse waehlen.
+        #
+        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): HDMI-Ausgang beim
+        # App-Start grundsaetzlich ABSCHALTEN - er wird nur ueber das
+        # Service-Menue eingeschaltet. VOR pygame.init(), damit SDL nur das
+        # Touch-Display als Bildschirm sieht.
+        _hdmi_off, _hdmi_msg = ensure_hdmi_off(
+            config.hdmi.connector_name, touch_output=config.hdmi.touch_output,
+        )
+        if _hdmi_off:
+            print("[App] HDMI-Ausgang beim Start abgeschaltet.")
+        elif _hdmi_msg:
+            print(f"[App] HDMI-Ausgang: {_hdmi_msg}")
+        ensure_touch_primary(config.hdmi.touch_output)
         pygame.init()
         flags = pygame.FULLSCREEN if config.screen.fullscreen else 0
+        try:
+            display_index = pick_display_index(
+                list(pygame.display.get_desktop_sizes()),
+                (config.screen.width, config.screen.height),
+            )
+        except (AttributeError, pygame.error):
+            display_index = 0
         self.screen = pygame.display.set_mode(
-            (config.screen.width, config.screen.height), flags
+            (config.screen.width, config.screen.height), flags, display=display_index
         )
         pygame.display.set_caption(config.screen.title)
         pygame.mouse.set_visible(not config.screen.hide_mouse)
@@ -282,6 +314,35 @@ class PhotoboothApp:
         )
         # Verhindert wiederholtes Ausloesen des Poweroffs in SHUTDOWN_GOODBYE.
         self._power_off_requested = False
+
+        # NEU (Sprint 14): HDMI-Ausgang (Beamer) - haelt den optionalen
+        # Wiedergabe-Subprozess ueber mehrere Frames hinweg (siehe
+        # hdmi_output_service.HdmiOutputService).
+        self._hdmi_output_service = HdmiOutputService(
+            connector_name=config.hdmi.connector_name,
+            touch_output=config.hdmi.touch_output,
+            photo_dir=config.photo_dir,
+            # GEAENDERT (Sprint 14, Nutzer-Feedback): eigenes, veranstaltungs-
+            # spezifisches Standbild fuer den HDMI-Monitor; Rueckfall auf das
+            # Start-Bild, solange es noch nicht existiert (siehe
+            # event_wallpaper_reset.hdmi_wallpaper_path).
+            wallpaper_path=event_wallpaper_reset.hdmi_wallpaper_path(config.assets_dir),
+        )
+        # GEAENDERT (Sprint 14, Nutzer-Feedback 2026-11-14): kein Standbild
+        # mehr beim Start - der HDMI-Ausgang ist nach dem Start immer aus
+        # (siehe ensure_hdmi_off oben) und wird nur im Service-Menue
+        # eingeschaltet; dort erscheint das Standbild wie bisher.
+        # NEU (Sprint 14, Nutzer-Feedback): "Standardwerte" auf dem Screen
+        # Veranstaltungsdaten setzt auch die Wallpaper zurueck - aber wie alle
+        # Felder dort erst beim "Speichern" (Abbrechen verwirft es). Merker
+        # bewusst in der App statt im UI-Modell (reine Datei-Aktion).
+        self._event_wallpaper_reset_requested = False
+        # NEU (Sprint-14-Fix 6): ordnet den Touch automatisch neu dem Touch-
+        # Display zu, sobald sich die Bildschirmaufteilung aendert (Monitor
+        # im laufenden Betrieb ein-/ausgesteckt) - eigener Daemon-Thread,
+        # siehe hdmi_output_service.TouchMappingGuard.
+        self._touch_mapping_guard = TouchMappingGuard(config.hdmi.touch_output)
+        self._touch_mapping_guard.start()
 
         print("[App] Initialisierung abgeschlossen.")
 
@@ -556,6 +617,19 @@ class PhotoboothApp:
                 if rect.collidepoint(pos):
                     return AppEvent(EventType.TAP_FULLSCREEN_PHOTO, payload={"index": index}, source="touch")
 
+        # NEU (Sprint 14): Galerie-Aufraeumen - Antippen einer Kachel waehlt
+        # sie aus/ab, statt (wie in GALLERY_GRID) das Foto im Vollbild zu
+        # zeigen. Gleiches Prinzip wie gallery_thumbnail_hitboxes oben
+        # (Position haengt vom Scroll-Offset ab, daher dynamische Hitboxen).
+        if state == AppState.ADMIN_GALLERY_CLEANUP:
+            for rect, path in self.renderer.gallery_cleanup_thumbnail_hitboxes:
+                if rect.collidepoint(pos):
+                    return AppEvent(
+                        EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT,
+                        payload={"path": path},
+                        source="touch",
+                    )
+
         # NEU (6c): Einzelentscheidung je Konfliktzeile - eigene Trefferpruefung,
         # da die Zeilenposition vom Scroll-Offset abhaengt und daher nicht ueber
         # das statische layout.py-Rect-System abgebildet werden kann (gleiches
@@ -731,6 +805,13 @@ class PhotoboothApp:
             # Auswahl-Screens (die Listenzeilen selbst sind dynamisch, siehe
             # das eigene Hitbox-Handling weiter oben in dieser Methode).
             "admin_event_wallpaper_pick_save": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE, source="touch"),
+            # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel-Umschalter.
+            "admin_event_wallpaper_target_main": AppEvent(
+                EventType.TAP_ADMIN_EVENT_WALLPAPER_TARGET, payload={"target": "main"}, source="touch",
+            ),
+            "admin_event_wallpaper_target_hdmi": AppEvent(
+                EventType.TAP_ADMIN_EVENT_WALLPAPER_TARGET, payload={"target": "hdmi"}, source="touch",
+            ),
             "admin_event_wallpaper_pick_cancel": AppEvent(
                 EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_CANCEL, source="touch",
             ),
@@ -744,6 +825,18 @@ class PhotoboothApp:
             "admin_event_color_style_next": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_NEXT, source="touch"),
             "admin_event_color_style_apply": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_APPLY, source="touch"),
             "admin_event_color_style_cancel": AppEvent(EventType.TAP_ADMIN_EVENT_COLOR_STYLE_CANCEL, source="touch"),
+            # NEU (Sprint 14): HDMI-Untermenue (Schiebeschalter fuer Ausgang/
+            # Wiedergabe, Testknopf - "back" nutzt die bereits vorhandene
+            # Zuordnung oben).
+            "admin_hdmi_output_toggle": AppEvent(EventType.TAP_ADMIN_HDMI_OUTPUT_TOGGLE, source="touch"),
+            "admin_hdmi_slideshow_toggle": AppEvent(EventType.TAP_ADMIN_HDMI_SLIDESHOW_TOGGLE, source="touch"),
+            "admin_hdmi_test": AppEvent(EventType.TAP_ADMIN_HDMI_TEST, source="touch"),
+            # NEU (Sprint 14): Galerie-Aufraeumen - "Loeschen"-Taste sowie
+            # die Bestaetigungsabfrage (die Kachel-Hitboxen selbst werden
+            # oben in dieser Methode dynamisch behandelt).
+            "admin_gallery_cleanup_delete": AppEvent(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, source="touch"),
+            "admin_gallery_cleanup_confirm": AppEvent(EventType.TAP_ADMIN_GALLERY_CLEANUP_CONFIRM, source="touch"),
+            "admin_gallery_cleanup_abort": AppEvent(EventType.TAP_ADMIN_GALLERY_CLEANUP_ABORT, source="touch"),
         }
         for name, rect in rects.items():
             if rect.collidepoint(pos) and name in mapping:
@@ -1108,6 +1201,15 @@ class PhotoboothApp:
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
             AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 14): HDMI-Untermenue und Galerie-Aufraeumen -
+            # gleiches Idle-Verhalten wie andere Service-Menue-Unterseiten
+            # (schliesst sich nach admin_menu_idle_seconds automatisch,
+            # siehe state_machine._go_admin_hdmi_menu/_go_admin_gallery_
+            # cleanup). ADMIN_GALLERY_CLEANUP_CONFIRM bewusst mit dabei -
+            # bleibt sie unbeantwortet stehen, ist "nicht loeschen" die
+            # richtige Annahme (gleiche Begruendung wie ADMIN_DELETE_CONFIRM).
+            AppState.ADMIN_HDMI_MENU, AppState.ADMIN_GALLERY_CLEANUP,
+            AppState.ADMIN_GALLERY_CLEANUP_CONFIRM,
         }
 
         if state == AppState.BOOT and self._due(timers.boot_deadline, now):
@@ -1119,7 +1221,21 @@ class PhotoboothApp:
             # ein manueller Tap/Tasterdruck in PHOTO_PREVIEW).
             self.dispatch(AppEvent(EventType.TAP_PHOTO, source="timer"), now)
         elif state in idle_states and self._due(timers.idle_deadline, now):
-            self.dispatch(AppEvent(EventType.IDLE_TIMEOUT, source="timer"), now)
+            # NEU (Sprint 14, Nutzer-Feedback): aktueller Status der Beamer-
+            # Wiedergabe als Payload - die State Machine startet im
+            # Hauptmenue dann KEINE automatische Galerie auf dem Touch-Display
+            # (siehe state_machine._handle_main_menu). is_slideshow_running()
+            # ist nur ein Popen.poll(), also ohne spuerbare Kosten.
+            hdmi_service = getattr(self, "_hdmi_output_service", None)
+            hdmi_running = bool(hdmi_service is not None and hdmi_service.is_slideshow_running())
+            self.dispatch(
+                AppEvent(
+                    EventType.IDLE_TIMEOUT,
+                    payload={"hdmi_slideshow_running": hdmi_running},
+                    source="timer",
+                ),
+                now,
+            )
         elif state == AppState.COUNTDOWN and self._due(timers.countdown_deadline, now):
             self._advance_countdown(now)
         elif state == AppState.CAPTURE_PENDING and self._due(timers.capture_trigger_deadline, now):
@@ -1328,7 +1444,12 @@ class PhotoboothApp:
             elif action == "set_admin_camera_zoom":            # NEU (Sprint 12)
                 self._set_admin_camera_zoom(self.model.ui.admin_camera_zoom_value)
             elif action == "collect_admin_event_settings":     # NEU (Veranstaltungsdaten)
+                # Frisch betreten: ein evtl. alter Reset-Merker gilt nicht mehr.
+                self._event_wallpaper_reset_requested = False
                 self._collect_admin_event_settings()
+            elif action == "mark_event_wallpaper_reset":       # NEU (Sprint 14)
+                # "Standardwerte" getippt - Wallpaper-Reset erst beim Speichern.
+                self._event_wallpaper_reset_requested = True
             elif action == "save_event_config":                # NEU (Veranstaltungsdaten)
                 self._save_admin_event_settings()
             elif action == "wallpaper_pick_list":              # NEU (Nutzer-Feedback), war "wallpaper_import"
@@ -1338,11 +1459,27 @@ class PhotoboothApp:
             elif action == "wallpaper_pick_discard":           # NEU (Nutzer-Feedback)
                 self._wallpaper_pick_discard()
             elif action == "discard_pending_wallpaper":        # NEU (Nutzer-Feedback, Bugfix)
+                # NEU (Sprint 14): Abbrechen verwirft auch den Wallpaper-Reset.
+                self._event_wallpaper_reset_requested = False
                 event_config_service.discard_pending_wallpaper(
                     self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
                 )
+                # NEU (Sprint 14): auch ein wartendes HDMI-Bild verwerfen.
+                event_config_service.discard_pending_wallpaper(
+                    self.config.assets_dir / event_config_service.HDMI_WALLPAPER_PENDING_FILENAME
+                )
             elif action == "color_style_compute":              # NEU (Sprint 13)
                 self._color_style_start_compute()
+            elif action == "read_admin_hdmi_status":            # NEU (Sprint 14)
+                self._read_admin_hdmi_status()
+            elif action == "toggle_admin_hdmi_output":          # NEU (Sprint 14)
+                self._toggle_admin_hdmi_output()
+            elif action == "toggle_admin_hdmi_slideshow":       # NEU (Sprint 14)
+                self._toggle_admin_hdmi_slideshow()
+            elif action == "run_admin_hdmi_test":               # NEU (Sprint 14)
+                self._run_admin_hdmi_test()
+            elif action == "delete_selected_gallery_photos":    # NEU (Sprint 14)
+                self._delete_selected_gallery_photos(previous_model)
 
     def _export_photo(self) -> None:
         path = self.model.session.current_photo_path
@@ -1411,6 +1548,99 @@ class PhotoboothApp:
         else:
             print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
 
+    def _delete_selected_gallery_photos(self, previous_model: AppModel) -> None:
+        """NEU (Sprint 14): "Galerie aufraeumen" - loescht alle in
+        previous_model.ui.admin_gallery_cleanup_selected markierten
+        Dateien. Bewusst previous_model (Stand VOR der Transition, die die
+        Auswahl bereits leert) statt self.model - gleiches Prinzip wie
+        _delete_photo() oben. session.photos wurde von der State Machine
+        bereits optimistisch bereinigt (siehe state_machine.
+        _handle_admin_gallery_cleanup_confirm) - hier folgt nur noch das
+        tatsaechliche Loeschen auf der Platte."""
+        selected = previous_model.ui.admin_gallery_cleanup_selected
+        if not selected:
+            return
+        deleted_count = 0
+        for path in selected:
+            if self.gallery_service.delete_photo(path):
+                deleted_count += 1
+            else:
+                print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
+        print(f"[App] Galerie aufgeraeumt: {deleted_count}/{len(selected)} Foto(s) geloescht.")
+
+    # NEU (Sprint 14): HDMI-Ausgang (Beamer) - siehe hdmi_output_service.py.
+    def _read_admin_hdmi_status(self, error_override: str = "") -> None:
+        status = hdmi_read_status(
+            self.config.hdmi.connector_name,
+            slideshow_running=self._hdmi_output_service.is_slideshow_running(),
+        )
+        self.dispatch(
+            AppEvent(
+                EventType.ADMIN_HDMI_STATUS_READY,
+                payload={
+                    "available": status.available,
+                    "connected": status.connected,
+                    "powered_on": status.powered_on,
+                    "resolution": status.resolution,
+                    "error": error_override or status.error,
+                    "slideshow_running": status.slideshow_running,
+                },
+                source="hdmi",
+            )
+        )
+
+    def _toggle_admin_hdmi_output(self) -> None:
+        """NEU (Sprint 14): Schiebeschalter "HDMI-Ausgang" - bewusst NICHT
+        optimistisch (siehe state_machine._handle_admin_hdmi_menu-Kommentar):
+        der neue Zustand wird erst nach dem eigentlichen xrandr-Aufruf per
+        _read_admin_hdmi_status frisch ausgelesen, statt einfach das
+        Gegenteil des zuletzt bekannten Werts anzunehmen. Beim Ausschalten
+        wird eine laufende Beamer-Wiedergabe zuerst beendet (sie haette
+        sonst kein Ziel mehr)."""
+        currently_on = bool(self.model.ui.admin_hdmi_powered_on)
+        if currently_on:
+            # Immer stoppen - auch unbekannte Waisen-Prozesse einer frueheren
+            # App-Instanz (stop_slideshow raeumt beides auf).
+            self._hdmi_output_service.stop_slideshow()
+        ok, message = hdmi_set_power(
+            self.config.hdmi.connector_name, not currently_on,
+            touch_output=self.config.hdmi.touch_output,
+        )
+        if message:
+            print(f"[App] HDMI-Ausgang: {message}")
+        # NEU (Sprint-14-Fix 6): set_power hat den Touch bereits neu
+        # zugeordnet - Waechter auf die neue Aufteilung setzen, damit er
+        # nicht ein zweites Mal zuordnet.
+        guard = getattr(self, "_touch_mapping_guard", None)
+        if guard is not None:
+            guard.note_layout_changed()
+        if ok and not currently_on:
+            # Ausgang gerade eingeschaltet -> Standbild statt Desktop zeigen.
+            self._hdmi_output_service.show_wallpaper()
+        self._read_admin_hdmi_status(error_override="" if ok else message)
+
+    def _toggle_admin_hdmi_slideshow(self) -> None:
+        """NEU (Sprint 14): Schiebeschalter "Galerie-Wiedergabe" - startet
+        bzw. stoppt den separaten Beamer-Subprozess (siehe
+        hdmi_output_service.HdmiOutputService). Ebenfalls nicht
+        optimistisch, siehe _toggle_admin_hdmi_output; scheitert der Start
+        (z.B. Ausgang aus), erscheint der Grund im Status-Text."""
+        error = ""
+        if self._hdmi_output_service.is_slideshow_running():
+            self._hdmi_output_service.stop_slideshow()
+            # Galerie gestoppt -> wieder das Standbild zeigen.
+            self._hdmi_output_service.show_wallpaper()
+        else:
+            ok, message = self._hdmi_output_service.start_slideshow()
+            if not ok:
+                error = message
+                print(f"[App] HDMI-Wiedergabe nicht gestartet: {message}")
+        self._read_admin_hdmi_status(error_override=error)
+
+    def _run_admin_hdmi_test(self) -> None:
+        message = self._hdmi_output_service.run_test(self.config.hdmi.test_duration_seconds)
+        self.dispatch(AppEvent(EventType.ADMIN_HDMI_TEST_DONE, payload={"message": message}, source="hdmi"))
+
     def _power_off(self) -> None:
         # Scharfes Herunterfahren (Schritt 3.4b). Die App laeuft als root,
         # daher genuegt der direkte Aufruf - die sudoers-Regel muss dafuer
@@ -1418,6 +1648,10 @@ class PhotoboothApp:
         # bereits aus, die Kamera ist freigegeben (stop_preview beim Wechsel in
         # den Abschieds-Screen). Der Abschieds-Screen bleibt bewusst stehen
         # (kein self.running = False), bis das System die App beendet.
+        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): HDMI-Ausgang VOR dem
+        # Herunterfahren abschalten - _shutdown() laeuft hier nicht, die App
+        # wird vom System beendet.
+        self._switch_hdmi_off("Herunterfahren")
         print("[App] Fahre Pi herunter (shutdown -h now).")
         try:
             subprocess.Popen(["shutdown", "-h", "now"])
@@ -1426,6 +1660,25 @@ class PhotoboothApp:
             # gestartet), nicht ewig im Abschieds-Screen haengen bleiben.
             print(f"[App] FEHLER beim Herunterfahren: {exc}")
             self.running = False
+
+    def _switch_hdmi_off(self, reason: str) -> None:
+        """NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Beamer-Wiedergabe/
+        Standbild beenden und HDMI-Ausgang abschalten. Best-Effort - darf
+        Neustart oder Herunterfahren nie verhindern."""
+        service = getattr(self, "_hdmi_output_service", None)
+        try:
+            if service is not None:
+                service.stop_slideshow()
+            switched_off, message = ensure_hdmi_off(
+                self.config.hdmi.connector_name, touch_output=self.config.hdmi.touch_output,
+            )
+        except Exception as exc:  # Abschalten darf nie blockieren
+            print(f"[App] HDMI-Abschaltung ({reason}) fehlgeschlagen: {exc}")
+            return
+        if switched_off:
+            print(f"[App] HDMI-Ausgang abgeschaltet ({reason}).")
+        elif message:
+            print(f"[App] HDMI-Ausgang ({reason}): {message}")
 
     def _restart_app(self) -> None:
         # NEU (4.3): "sanfter" Neustart - im Unterschied zu _power_off()
@@ -1884,7 +2137,7 @@ class PhotoboothApp:
             AppEvent(
                 EventType.ADMIN_EVENT_SETTINGS_READY,
                 payload={
-                    "title": self.config.screen.title,
+                    "title": self.config.screen.title if self.config.screen.title_visible else "",
                     "prefix": self.config.photo_prefix,
                     "wifi_ssid": self.config.network.guest_wifi_ssid,
                     "wifi_password": self.config.network.guest_wifi_password,
@@ -1940,12 +2193,44 @@ class PhotoboothApp:
         # Hauptmenue-Wallpaper befoerdert. Bei save-Fehlschlag bewusst NICHT
         # befoerdert (bleibt in der Zwischenablage liegen, bis der naechste
         # Speichern-/Abbrechen-Versuch es befoerdert bzw. verwirft).
+        # NEU (Sprint 14, Nutzer-Feedback): "Standardwerte" wurde getippt ->
+        # HDMI- und Hauptmenue-Wallpaper auf den Grundzustand zuruecksetzen
+        # (siehe event_wallpaper_reset). VOR dem Befoerdern eines evtl. danach
+        # neu gewaehlten Wallpapers, damit eine bewusste Auswahl gewinnt.
+        if ok and getattr(self, "_event_wallpaper_reset_requested", False):
+            self._event_wallpaper_reset_requested = False
+            reset = event_wallpaper_reset.reset_event_wallpapers(self.config.assets_dir)
+            for line in reset.messages:
+                print(f"[App] Wallpaper-Reset: {line}")
+            if reset.main_menu_reset:
+                self.renderer.invalidate_main_menu_background()
+            if reset.hdmi_reset:
+                self._hdmi_output_service.wallpaper_path = event_wallpaper_reset.hdmi_wallpaper_path(
+                    self.config.assets_dir,
+                )
+            if not reset.ok:
+                message = f"{message} Hinweis: " + " ".join(reset.messages)
         if ok and ui.admin_event_wallpaper_pending:
             pending = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
             target = self.config.assets_dir / "hauptmenu_wallpaper.png"
             promoted, _promote_message = event_config_service.promote_pending_wallpaper(pending, target)
             if promoted:
                 self.renderer.invalidate_main_menu_background()
+        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): ein per Auswahlliste
+        # gewaehltes HDMI-Standbild wird ebenfalls erst JETZT wirksam - die
+        # Beamer-Wiedergabe liest die Datei alle 2 s neu ein, ein bereits
+        # laufendes Standbild wechselt also ohne Neustart.
+        if ok and ui.admin_event_hdmi_wallpaper_pending:
+            pending = self.config.assets_dir / event_config_service.HDMI_WALLPAPER_PENDING_FILENAME
+            target = self.config.assets_dir / event_wallpaper_reset.HDMI_WALLPAPER
+            promoted, promote_message = event_config_service.promote_pending_wallpaper(pending, target)
+            if promoted:
+                self._hdmi_output_service.wallpaper_path = event_wallpaper_reset.hdmi_wallpaper_path(
+                    self.config.assets_dir,
+                )
+            else:
+                print(f"[App] HDMI-Wallpaper: {promote_message}")
+                message = f"{message} Hinweis: {promote_message}"
         self.dispatch(
             AppEvent(EventType.ADMIN_EVENT_SAVE_RESULT, payload={"ok": ok, "message": message}, source="event_settings")
         )
@@ -2012,8 +2297,15 @@ class PhotoboothApp:
         message = "Kein USB-Stick mehr eingebunden."
         if stick is not None and selected:
             source = stick.mountpoint / selected
-            target = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
-            ok, message = event_config_service.import_wallpaper(source, target)
+            if self.model.ui.admin_event_wallpaper_target == "hdmi":
+                # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Standbild fuer
+                # den HDMI-Monitor - wird dabei auf max. 1920x1080 verkleinert,
+                # EXIF-gedreht und als echtes PNG abgelegt.
+                target = self.config.assets_dir / event_config_service.HDMI_WALLPAPER_PENDING_FILENAME
+                ok, message = event_config_service.import_hdmi_wallpaper(source, target)
+            else:
+                target = self.config.assets_dir / event_config_service.WALLPAPER_PENDING_FILENAME
+                ok, message = event_config_service.import_wallpaper(source, target)
         if stick is not None:
             if stick.mounted_by_us:
                 admin_usb_service.unmount(stick.mountpoint)
@@ -2435,6 +2727,15 @@ class PhotoboothApp:
                 effect = LedEffect.OFF
         elif state == AppState.SHUTDOWN_GOODBYE:
             effect = LedEffect.SHUTDOWN_SEQUENCE  # NEU (3.5): Sonnenuntergang
+        elif state in {AppState.ADMIN_HDMI_MENU, AppState.ADMIN_GALLERY_CLEANUP}:
+            # NEU (Sprint 14): gleiche ruhige Welle wie die uebrigen
+            # Service-Menue-Unterseiten (ADMIN_STATUS).
+            effect = LedEffect.INSTRUCTIONS_WAVE
+        elif state == AppState.ADMIN_GALLERY_CLEANUP_CONFIRM:
+            # NEU (Sprint 14): gleiches kraeftige rote Warnblinken wie
+            # ADMIN_DELETE_CONFIRM - auch hier steht eine unwiderrufliche
+            # Loeschung bevor.
+            effect = LedEffect.ADMIN_DELETE_WARN
         else:
             effect = LedEffect.OFF
 
@@ -2523,6 +2824,11 @@ class PhotoboothApp:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 14): HDMI-Untermenue und Galerie-Aufraeumen - auch
+            # hier darf der Taster nichts ausloesen (Service-Menue-
+            # Unterseiten wie ADMIN_STATUS).
+            AppState.ADMIN_HDMI_MENU, AppState.ADMIN_GALLERY_CLEANUP,
+            AppState.ADMIN_GALLERY_CLEANUP_CONFIRM,
         }:
             self._button_provider.set_led(False)
             return
@@ -2565,6 +2871,15 @@ class PhotoboothApp:
 
     def _shutdown(self) -> None:
         print("[App] Shutdown...")
+        # NEU (Sprint-14-Fix 6): Touch-Waechter-Thread beenden (getattr:
+        # Test-Instanzen ohne vollstaendiges __init__ haben ihn nicht).
+        guard = getattr(self, "_touch_mapping_guard", None)
+        if guard is not None:
+            guard.stop()
+        # NEU (Sprint 14): Beamer-Wiedergabe mit beenden (sonst Waise).
+        # GEAENDERT (Nutzer-Feedback 2026-11-14): ausserdem HDMI-Ausgang
+        # abschalten (App-Ende/Neustart) - siehe _switch_hdmi_off.
+        self._switch_hdmi_off("App-Ende")
         self.preview_service.stop()
         if self._led_provider is not None:
             self._led_provider.stop()

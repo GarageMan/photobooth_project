@@ -13,10 +13,11 @@ Aufteilung (Rechtecke in layout.py, Beschriftungen im Renderer,
 Event-Zuordnung in app.py) muessten drei Dateien synchron
 gehalten werden.
 
-Raster: 2 Spalten x 4 Zeilen (GEAENDERT, Sprint 11 Feature 2: vorher
-2x3 - "Kamera-Einstellungen" kam als neue Zeile OBERHALB von "Zurueck"/
-"Alle Bilder loeschen" hinzu, damit deren bewusste Eck-Platzierung ganz
-unten erhalten bleibt, siehe naechster Absatz). Der destruktivste Punkt
+Raster: 2 Spalten x 5 Zeilen (GEAENDERT, Sprint 14: vorher 2x4 - "HDMI" und
+"Galerie aufräumen" kamen als neue Zeile OBERHALB von "Zurueck"/"Alle
+Bilder loeschen" hinzu, exakt nach demselben Muster wie schon bei
+"Kamera-Einstellungen" in Sprint 11 Feature 2 - siehe dortigen Kommentar,
+der hier bewusst nicht wiederholt wird). Der destruktivste Punkt
 ("Alle Bilder loeschen") liegt bewusst unten rechts, in der Ecke und rot
 eingefaerbt, raeumlich weit weg von "Zurueck" unten links.
 
@@ -101,13 +102,39 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         row=2,
         enabled=True,
     ),
+    # NEU (Sprint 14): HDMI-Ausgang (Beamer) ein-/ausschalten, Galerie-
+    # Wiedergabe darauf starten/stoppen, Verbindungstest - siehe
+    # states.ADMIN_HDMI_MENU/hdmi_output_service.py.
+    AdminMenuItem(
+        key="hdmi",
+        label="HDMI",
+        event_type=EventType.TAP_ADMIN_HDMI,
+        color=(0, 110, 90),
+        column=0,
+        row=3,
+        enabled=True,
+    ),
+    # NEU (Sprint 14): einzelne/mehrere Fotos aus der Galerie entfernen
+    # (Aufraeumen unbrauchbarer/unerwuenschter Aufnahmen) - siehe
+    # states.ADMIN_GALLERY_CLEANUP. Bewusst NICHT rot wie "Alle Bilder
+    # loeschen" - eine gezielte Auswahl ist ein deutlich alltaeglicherer,
+    # weniger "gefaehrlicher" Vorgang als der komplette Bestand.
+    AdminMenuItem(
+        key="gallery_cleanup",
+        label="Galerie aufräumen",
+        event_type=EventType.TAP_ADMIN_GALLERY_CLEANUP,
+        color=(120, 90, 20),
+        column=1,
+        row=3,
+        enabled=True,
+    ),
     AdminMenuItem(
         key="back",
         label="Zurück",
         event_type=EventType.TAP_BACK,
         color=(100, 100, 100),
         column=0,
-        row=3,
+        row=4,
         enabled=True,
     ),
     AdminMenuItem(
@@ -116,7 +143,7 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
         event_type=EventType.TAP_ADMIN_DELETE_ALL,
         color=(150, 0, 0),
         column=1,
-        row=3,
+        row=4,
         enabled=True,
     ),
 )
@@ -129,17 +156,20 @@ ADMIN_MENU_ITEMS: tuple[AdminMenuItem, ...] = (
 # (y=60) und den status_text (y=240, Unterkante ca. 272px bei 720px
 # Hoehe) - 0.40*720 = 288px laesst dazu etwas Luft.
 #
-# GEAENDERT (Sprint 11, Feature 2): _ROW_H/_GAP_Y verkleinert (vorher
-# 0.155/0.025), damit die neue vierte Zeile noch bis ca. y=0.96 passt -
-# gleiches Verhaeltnis Zeilenhoehe:Abstand wie zuvor, nur proportional
-# kleiner. Sichtpruefung auf echter Hardware empfohlen (siehe Abschluss-
-# bericht) - hier im Sandkasten nur pygame-Rechteck-Geometrie pruefbar,
-# kein echtes Display.
+# GEAENDERT (Sprint 14): _ROW_H/_GAP_Y nochmal verkleinert (vorher
+# 0.125/0.02, aus Sprint 11 Feature 2), damit die neue fuenfte Zeile noch
+# bis knapp unter y=0.96 passt - gleiches Verhaeltnis Zeilenhoehe:Abstand
+# wie zuvor (~6.25:1), nur proportional kleiner. Sichtpruefung auf echter
+# Hardware empfohlen (wie schon bei der vorherigen Zeilen-Erweiterung) -
+# hier im Sandkasten nur pygame-Rechteck-Geometrie pruefbar, kein echtes
+# Display. Sollten die Buttons auf dem Pi zu klein zum treffsicheren
+# Antippen wirken, ist das Umstellen auf ein 2. Service-Menue ("weitere
+# Funktionen") die naheliegende Alternative - siehe Doku-Notiz.
 _MARGIN_X = 0.06
 _COLUMN_W = 0.42
 _TOP = 0.40
-_ROW_H = 0.125
-_GAP_Y = 0.02
+_ROW_H = 0.099
+_GAP_Y = 0.016
 
 
 def build_admin_rects(width: int, height: int) -> dict[str, pygame.Rect]:

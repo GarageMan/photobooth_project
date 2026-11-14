@@ -9,7 +9,9 @@ Die App läuft im Vollbild auf einem angeschlossenen Touch-Display, führt
 Gäste per Countdown durch die Aufnahme, zeigt das Ergebnis zur
 Bestätigung/Löschung an, exportiert gespeicherte Fotos für den QR-Code-
 Download und zeigt zwischendurch eine "Fliegende Galerie" bereits
-aufgenommener Fotos als Blickfang.
+aufgenommener Fotos als Blickfang. Optional zeigt ein zweiter Bildschirm
+(Beamer/Monitor am HDMI-Ausgang des Pi) die Galerie bzw. ein
+veranstaltungsspezifisches Standbild (seit v1.1.0).
 
 > Aktuell im Einsatz für private Veranstaltungen.
 > Alle UI-Texte und Code-Kommentare sind auf Deutsch.
@@ -83,6 +85,19 @@ von selbst:**
    — dort steht auch der Fix.
 3. Boot selbst ungewöhnlich langsam? `systemd-analyze blame` zeigt, welcher
    Dienst bremst (normal: < 10 s bis `graphical.target`).
+
+**Touch-Tasten treffen nicht mehr (Tipp landet daneben), seit ein
+Beamer/Monitor am HDMI hängt:**
+Die App ordnet den Touch bei jeder HDMI-Änderung automatisch neu zu
+(siehe [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings)).
+Falls doch einmal nicht, per SSH sofort beheben:
+```bash
+export DISPLAY=:0
+export XAUTHORITY=/home/photobox/.Xauthority
+xinput map-to-output "pointer:Goodix Capacitive TouchScreen" DSI-2
+```
+Alternativ App neu starten (`sudo pkill -f app.py`) — beim Start wird
+HDMI abgeschaltet und der Touch neu zugeordnet.
 
 **Nichts davon hilft:** Als letzter Ausweg Pi einmal neu starten
 (`sudo reboot`) — dauert ~1–2 Minuten, App startet danach automatisch.
@@ -208,15 +223,46 @@ von selbst:**
   [Bekannte Einschränkungen & Learnings](#bekannte-einschränkungen--learnings))
   — hilft beim groben Ausrichten, ersetzt aber keine pixelgenaue
   Schärfe-Kontrolle
+- **Individueller Farbstil aus dem Wallpaper** (Sprint 13): "Farbstil
+  vorschlagen" in "Veranstaltungsdaten" berechnet aus dem
+  Hauptmenü-Wallpaper bis zu drei Farbpaletten (Pillow, Farbcluster nach
+  Farbton entdoppelt, Textfarbe per WCAG-Kontrastformel), erster Eintrag
+  ist immer "Original (kein Farbstil)". Eingefärbt werden nur Gäste-Buttons
+  ohne feste Bedeutung (Galerie, Anleitung, Bedingungen, Verstanden,
+  QR-Code anfordern) und einige neutrale Hintergründe — Rot/Grün/Grau
+  (Gefahr/Bestätigen/Zurück) sowie das gesamte Service-Menü bleiben
+  unverändert (`wallpaper_theme_service.py`)
+- **HDMI-Ausgang für Beamer/Monitor** (Sprint 14, Service-Menü "HDMI"):
+  HDMI ein/aus, Galerie-Wiedergabe im selben Zufallsmuster wie die
+  Standby-Galerie (eigener Prozess `hdmi_slideshow.py`, neue Fotos
+  erscheinen ohne Neustart), Standbild `assets/hdmi_monitor_wallpaper.png`
+  solange die Wiedergabe gestoppt ist, Verbindungstest. HDMI ist nach
+  jedem App-Start, Neustart und Herunterfahren **aus** und wird nur über
+  das Service-Menü eingeschaltet. Während die Beamer-Galerie läuft,
+  startet am Touch-Display kein automatischer Attract-Modus. Der Touch
+  bleibt dabei immer dem Touch-Display zugeordnet (auch bei
+  Monitor-Hotplug)
+- **Galerie aufräumen** (Sprint 14, Service-Menü): einzelne oder mehrere
+  Fotos im Galerie-Raster antippen (grüner Rahmen + Häkchen), "Löschen" →
+  "Wirklich N Bild(er) löschen?" — "Nein"/Zurück/Idle-Timeout führt direkt
+  ins Service-Menü zurück, ohne etwas zu löschen
+- **Wallpaper-Verwaltung pro Veranstaltung** (Sprint 14): "Wallpaper von
+  USB laden" kennt zwei Ziele (Umschalter **Hauptmenü | HDMI-Monitor**).
+  Das HDMI-Bild wird beim Übernehmen EXIF-gedreht, auf höchstens
+  1920×1080 verkleinert und als PNG gespeichert. "Standardwerte" setzt
+  beim Speichern auch beide Wallpaper auf den Grundzustand zurück (siehe
+  [Wallpaper-Dateien](#wallpaper-dateien-ordner-assets))
+- **Titel im Hauptmenü ausblendbar** (Sprint 14): ein bewusst leerer
+  Event-Titel (`"event_title": ""`) blendet Titel und dunklen Verlauf oben
+  aus — für Wallpaper, die Logo/Schriftzug selbst tragen
 
 ## Service-Menü
 
 Über eine versteckte Tipp-Geste im Hauptmenü plus PIN erreichbar (siehe
-[Sicherheit / Härtung](#sicherheit--härtung)). Acht Punkte im
-2×4-Raster (`admin_menu.py`, seit Sprint 11 — vorher 2×3, siehe
-"Kamera-Einstellungen"/"Veranstaltungsdaten" unten; die neue Zeile
-wurde bewusst OBERHALB von "Zurück"/"Alle Bilder löschen" eingefügt,
-damit deren Eck-Platzierung unverändert bleibt):
+[Sicherheit / Härtung](#sicherheit--härtung)). Zehn Punkte im
+2×5-Raster (`admin_menu.py`, seit Sprint 14 — vorher 2×4, davor 2×3;
+neue Zeilen wurden jeweils bewusst OBERHALB von "Zurück"/"Alle Bilder
+löschen" eingefügt, damit deren Eck-Platzierung unverändert bleibt):
 
 | Punkt | Zweck |
 |---|---|
@@ -225,7 +271,9 @@ damit deren Eck-Platzierung unverändert bleibt):
 | App neu starten | Kurzer Zwischenscreen, danach beendet sich die App — `start_fotobox.sh` startet automatisch neu |
 | Herunterfahren | Sicherheitsabfrage ("Fotobox wirklich herunterfahren?", Nein/Ja) vor dem Poweroff — erst nach Bestätigung folgt die (nicht mehr abbrechbare) Abschieds-Animation; Nein/Zurück/Idle-Timeout führen zurück ins Service-Menü (`AppState.ADMIN_SHUTDOWN_CONFIRM`, siehe unten) |
 | Kamera-Einstellungen | Zweiseitiges Kamera-Menü (Belichtung/Sonstiges) direkt über USB anpassen, ohne die Kamera aus dem Gehäuse zu nehmen (`hw_camera_settings_provider.py`) — Details siehe [Funktionsumfang](#funktionsumfang) — Kamera sollte im Modus A (Zeitautomatik) oder M stehen. Doppeltap auf das Live-Vorschau-Panel öffnet den Vollbild-Zoom zum Scharfstellen (Sprint 12, siehe [Funktionsumfang](#funktionsumfang)) |
-| Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen", eine "Standardwerte"-Taste füllt den Entwurf mit den Werten aus `event_config_example.json`; Änderungen wirken erst nach einem Neustart der App |
+| Veranstaltungsdaten | Titel, Foto-Präfix, Gäste-WLAN-SSID/-Passwort, Hauptmenü-Willkommenstext sowie die QR-Code-/Galerie-Schalter bearbeiten (`AppState.ADMIN_EVENT_SETTINGS`) — Entwurf mit "Speichern"/"Abbrechen". **"Wallpaper von USB laden"**: Bild vom Stick wählen, oben Ziel **Hauptmenü** oder **HDMI-Monitor** umschalten (Sprint 14). **"Standardwerte"**: füllt den Entwurf mit den Werten aus `event_config_example.json`, setzt den Farbstil zurück und beim Speichern auch beide Wallpaper. **"Farbstil vorschlagen"** (Sprint 13): Farbpaletten aus dem Wallpaper durchblättern und übernehmen. Wartende Bilder zeigt ein grüner Hinweis zwischen "Speichern" und "Abbrechen"; alles wird erst mit "Speichern" wirksam, Titel/Texte/Schalter/Farbstil erst nach einem Neustart der App |
+| HDMI | Schiebeschalter "HDMI-Ausgang" und "Galerie-Wiedergabe", Verbindungstest, (ausgegraut) Musik-Wiedergabe — nicht-optimistische Anzeige: der Zustand wird nach jedem Umschalten frisch per `xrandr` gelesen (`hdmi_output_service.py`, `hdmi_slideshow.py`, Sprint 14) |
+| Galerie aufräumen | Fotos auswählen und nach Sicherheitsabfrage löschen; "Ja" kehrt zum Auswahl-Raster zurück, "Nein"/Zurück direkt ins Service-Menü (Sprint 14) |
 | Zurück | Zurück ins Hauptmenü |
 | Alle Bilder löschen | Löscht Fotos (Pi + Kamera-Speicherkarte) mit Protokoll (`admin_delete_service.py`) — geschützte Dateien bleiben erhalten; Fortschrittsbalken plus Shredder-Animation (Bilddatei-Symbole fallen in einen Shredder und kommen als Schnipsel heraus, siehe `renderer._draw_admin_delete_shredder_animation`) |
 
@@ -254,6 +302,7 @@ namentlich.
 | Display | Kapazitives Touch-Display (Goodix), DSI-2, physisch 90° gedreht |
 | Auslöse-Taster | Beleuchtet, Ansteuerung über Transistor |
 | Kamera-Auslösung | Optokoppler (PC817) an Nikon MC-DC2-Buchse |
+| Zweiter Bildschirm (optional, seit v1.1.0) | Beamer/Monitor am Micro-HDMI-Ausgang des Pi 5 (Micro-HDMI→HDMI-Kabel bzw. Einbaubuchse im Gehäuse); die Desktop-Sitzung läuft unter **X11** (lightdm/Xorg/openbox, Voraussetzung für RealVNC), Ausgänge laut `xrandr`: `DSI-2` (Touch-Display), `HDMI-1-1`, `HDMI-1-2` |
 
 <p align="center">
   <img src="docs/images/fotobox_vorne.jpg" alt="Fotobox von vorne, aufgebaut und einsatzbereit" width="45%">
@@ -367,8 +416,10 @@ on-demand aus `GALLERY_FULLSCREEN`) sowie die Service-Menü-Zustände
 (`ADMIN_MENU`, `ADMIN_STATUS`, `ADMIN_CAMERA_SETTINGS` (NEU, Sprint 11),
 `ADMIN_SHUTDOWN_CONFIRM` (NEU, Sprint-11-Nachbesserung — Sicherheitsabfrage
 vor `SHUTDOWN_GOODBYE`, siehe [Service-Menü](#service-menü)),
-`ADMIN_USB_*`, `ADMIN_DELETE_*`, `ADMIN_RESTART_PENDING` — vollständige,
-autoritative Liste in `states.py`).
+`ADMIN_USB_*`, `ADMIN_DELETE_*`, `ADMIN_RESTART_PENDING`,
+`ADMIN_EVENT_*` inkl. Wallpaper-Auswahl und Farbstil (Sprint 13),
+`ADMIN_HDMI_MENU`, `ADMIN_GALLERY_CLEANUP`/`_CONFIRM` (Sprint 14) —
+vollständige, autoritative Liste in `states.py`).
 
 ## Projektstruktur
 
@@ -401,8 +452,14 @@ autoritative Liste in `states.py`).
 | `admin_diagnostics.py` | Diagnosefunktionen für „Status / Diagnose" |
 | `admin_usb_export.py` / `admin_usb_service.py` | USB-Export-Logik + Stick-Erkennung/-Mount |
 | `admin_delete_service.py` | „Alle Bilder löschen" (Pi + Kamera) mit Protokoll |
+| `event_config_service.py` | Lesen/Schreiben von `event_config.json`, Wallpaper-Suche auf dem USB-Stick, Zwischenablage/Übernahme der gewählten Wallpaper, Aufbereitung des HDMI-Standbilds (Pillow) |
+| `event_wallpaper_reset.py` | NEU (Sprint 14): setzt bei "Standardwerte" HDMI- und Hauptmenü-Wallpaper atomar auf den Grundzustand zurück; Rückfall des HDMI-Standbilds auf das Start-Bild |
+| `wallpaper_theme_service.py` | NEU (Sprint 13): Farbpaletten-Vorschläge aus dem Wallpaper, WCAG-Kontrast, Hex-Umrechnung |
+| `attract_slideshow.py` | NEU (Sprint 14): gemeinsame Zufalls-/Timing-Logik der Standby-Galerie — von `renderer.py` und `hdmi_slideshow.py` genutzt, damit beide identisch laufen |
+| `hdmi_output_service.py` | NEU (Sprint 14): HDMI-Status/ein/aus per `xrandr`, Touch-Zuordnung per `xinput` (`TouchMappingGuard` für Hotplug), Verwaltung des Beamer-Prozesses |
+| `hdmi_slideshow.py` | NEU (Sprint 14): eigenständiger pygame-Prozess für den HDMI-Bildschirm (Galerie-Wiedergabe oder Standbild) |
 | `start_fotobox.sh` | Autostart-Skript mit Neustart-Schleife |
-| `test_*.py` | Unit-Tests (pytest) |
+| `test/test_*.py` | Unit-Tests (pytest) |
 
 ## Installation auf dem Raspberry Pi
 
@@ -504,6 +561,11 @@ Wichtige Felder:
   10 %/5 %), Fallback-Fotogröße für die Rest-Kapazitäts-Schätzung
 - `protected_filenames` — vor Löschen/USB-Export geschützte Dateien
   (siehe [Geschützte Dateien](#geschützte-dateien))
+- `hdmi.*` (Sprint 14) — `connector_name` (`"auto"` = erster
+  angeschlossener HDMI-Port, oder fest z. B. `"HDMI-1-2"`),
+  `touch_output` (`"DSI-2"`, Ausgang des Touch-Displays für Touch-Zuordnung
+  und "primärer Bildschirm"), `test_duration_seconds`, `music_dir`
+  (Platzhalter, Musik-Wiedergabe nicht umgesetzt)
 
 ### Event-Parameter (`event_config.json`)
 
@@ -524,9 +586,22 @@ nano event_config.json
   "photo_prefix": "mina_",
   "guest_wifi_password": "...",
   "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
-  "qr_codes_enabled": true
+  "qr_codes_enabled": true,
+  "gallery_enabled": true
 }
 ```
+
+**`event_title`** (erweitert, Sprint 14): ein bewusst **leerer** Titel
+(`""`) blendet Titel und dunklen Verlauf im Hauptmenü aus; Fenstertitel
+und USB-Ordnername nutzen dann intern weiter "Fotobox". Der Hinweisstreifen
+"Standardkonfiguration aktiv" erscheint nur, wenn der Titel fehlt oder
+noch auf dem Beispielwert "Fotobox" steht, bzw. wenn bei aktiven
+QR-Codes das Gäste-WLAN-Passwort noch ein Platzhalter ist
+(`config.needs_event_setup`).
+
+**`theme_button_color` / `theme_background_color` / `theme_text_color`**
+(optional, Sprint 13): Hex-Farben wie `"#2a3479"`, werden über "Farbstil
+vorschlagen" gesetzt. Fehlen sie, gelten die Originalfarben.
 
 Fehlt die Datei oder enthält sie noch die Platzhalterwerte, erscheint
 ein Hinweisstreifen im Hauptmenü sowie eine Zeile im Diagnose-Screen —
@@ -560,6 +635,23 @@ grundsätzlich keinen digitalen Download anbieten möchte:
   Vorteil, kein Foto landet dort, wo es theoretisch abrufbar wäre.
 - Anleitung und Nutzungsbedingungen erwähnen QR-Codes an keiner Stelle
   mehr (siehe `renderer.py`, `_draw_instructions`/`_draw_terms`).
+
+### Wallpaper-Dateien (Ordner `assets/`)
+
+| Datei | Rolle | Im Repository |
+|---|---|---|
+| `systemstart_wallpaper.png` | Start-Bild (Boot-Screen des Touch-Displays), wird nie verändert | ja |
+| `hauptmenu_wallpaper_original.png` | Original-Hintergrund des Hauptmenüs, Quelle für den Reset, wird nie verändert | ja |
+| `hauptmenu_wallpaper.png` | aktueller Hauptmenü-Hintergrund, veranstaltungsspezifisch | ja (Original-Stand) |
+| `hdmi_monitor_wallpaper.png` | Standbild für HDMI-Monitor/Beamer, veranstaltungsspezifisch; fehlt es, wird `systemstart_wallpaper.png` verwendet | nein (`.gitignore`) |
+
+Neue Wallpaper kommen über Service-Menü → Veranstaltungsdaten →
+"Wallpaper von USB laden" (Ziel Hauptmenü oder HDMI-Monitor) und werden
+erst mit "Speichern" übernommen. "Standardwerte" + "Speichern" kopiert
+`hauptmenu_wallpaper_original.png` → `hauptmenu_wallpaper.png` und
+`systemstart_wallpaper.png` → `hdmi_monitor_wallpaper.png` (jeweils über
+eine Temp-Datei, die alte Datei bleibt bei einem Fehler erhalten).
+Zwischenablage-Dateien `*.pending.png` sind ebenfalls nicht versioniert.
 
 ## Autostart
 
@@ -713,10 +805,8 @@ größere System-Updates) empfehlenswert vorher einmal auszuführen.
 ## Tests
 
 ```bash
-python3 -m pytest test_state_machine.py test_state_machine_admin.py \
-    test_state_machine_shutdown.py test_hw_camera_settings_provider.py \
-    test_gallery_service.py test_storage_service.py test_storage_alarm.py \
-    test_button_service.py test_admin_usb_export.py test_config.py
+cd ~/photobooth
+python3 -m pytest test/ -q
 ```
 
 Stand Sprint 11: `test_state_machine.py` und `test_state_machine_admin.py`
@@ -799,8 +889,23 @@ Live-Test auf dem Pi abgedeckt (siehe
 für das Ergebnis: Hardware-Zoom-Pfad deaktiviert, `_ZOOM_CONFIG_NAMES`
 bewusst leer).
 
-Gesamter Lauf (alle `test_*.py`) zuletzt: **448 Tests, alle grün**
-(Stand nach Sprint 12).
+**Update (Sprint 13, Farbstil):** neu `test/test_wallpaper_theme_service.py`
+(Palette, WCAG-Kontrast, Hex-Umrechnung, Fehlerfälle);
+`test_state_machine_admin.py` um den Farbstil-Ablauf inkl. "Original"
+erweitert.
+
+**Update (Sprint 14, HDMI/Galerie aufräumen/Wallpaper):** neu
+`test_attract_slideshow.py`, `test_hdmi_output_service.py` (xrandr-Parser,
+Ein-/Ausschalten, Touch-Zuordnung mit der echten, doppelten
+`xinput`-Geräteliste des Pi, `TouchMappingGuard`, `ensure_hdmi_off`),
+`test_renderer_admin_buttons.py` (Pixeltest: Tasten werden gezeichnet),
+`test_state_machine_attract_hdmi.py`, `test_config_event_setup.py`,
+`test_event_wallpaper_reset.py`, `test_wallpaper_target.py` (Ziel-Umschalter,
+HDMI-Bildaufbereitung inkl. EXIF-Drehung, Layout);
+`test_state_machine_admin.py` um HDMI-Menü und Galerie-Aufräumen erweitert.
+
+Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **597 Tests, alle grün**
+(Stand v1.1.0, nach Sprint 14).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
@@ -883,6 +988,34 @@ python3 -m py_compile <geänderte_dateien.py>
   udev-Regel (`/etc/udev/rules.d/99-touch-rotate.rules`,
   `LIBINPUT_CALIBRATION_MATRIX`). Der `labwc-rc.xml`-Ansatz über
   `<calibrationMatrix>` funktioniert **nicht**.
+- **X11 statt Wayland (Sprint 14, am Pi bestätigt):** Die Fotobox läuft
+  unter lightdm/Xorg/openbox (RealVNC setzt X11 voraus) — Bildschirme
+  daher per `xrandr`, Eingabegeräte per `xinput` (nicht `wlr-randr`).
+  `wlr-randr` bleibt im Code nur als Rückfall für eine Wayland-Sitzung.
+- **Touch-Zuordnung bei zwei Bildschirmen (Sprint 14, Live-Test):** Mit
+  aktivem HDMI bilden Touch-Display und Monitor EINE X-Fläche (z. B.
+  1280×720 + 1920×1080 = 3200×1080). Ohne Zuordnung verteilt X den Touch
+  über die gesamte Fläche — Taps landen um Faktor 2,5/1,5 verschoben, die
+  rechte Displayhälfte sogar auf dem Monitor. Lösung:
+  `xinput map-to-output "pointer:Goodix Capacitive TouchScreen" DSI-2`
+  nach **jeder** Änderung der Aufteilung (App-Start, HDMI an/aus,
+  Hotplug — siehe `TouchMappingGuard`). **Wichtig:** Der Goodix-Controller
+  meldet sich bei X doppelt (Zeiger + Tastatur); ohne Präfix `pointer:`
+  bricht `xinput` mit "multiple devices matching" ab. Keine Umrechnung in
+  der App — die würde Maus/VNC verfälschen und Taps auf dem Monitor-Bereich
+  gar nicht erst erhalten.
+- **Fotobox-Fenster bleibt auf dem Touch-Display (Sprint 14):** DSI-2 wird
+  per `xrandr --primary` als Hauptbildschirm gesetzt, pygame wählt das
+  Display mit 1280×720; `SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0` verhindert,
+  dass SDL das Vollbildfenster minimiert, sobald das Beamer-Fenster den
+  Fokus bekommt. Die Beamer-Wiedergabe ist ein eigener Prozess (pygame
+  kann nur ein Fenster pro Prozess); Waisen-Prozesse werden bei Start/
+  Stopp/Beenden per `pkill` aufgeräumt.
+- **Musik-Wiedergabe über HDMI bewusst nicht umgesetzt (Sprint 14):**
+  Menüzeile ausgegraut, `hdmi.music_dir` nur Platzhalter — auf
+  Veranstaltungen ist es meist zu laut, Entscheidung offen.
+- **Runder "Countdown starten"-Button aus dem Wallpaper (Idee aus Sprint
+  13) zurückgestellt** — kein Termin.
 - **Passwortloses `sudo` bei Umbenennung/Verschiebung von `app.py`
   manuell nachziehen:** Die Freigabe in `/etc/sudoers.d/fotobox` ist
   auf den exakten Befehl `python3 /home/photobox/photobooth/app.py`

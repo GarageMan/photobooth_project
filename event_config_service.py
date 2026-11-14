@@ -43,6 +43,17 @@ _MAX_WALLPAPER_BYTES = 30 * 1024 * 1024
 # Verzeichnis wie das echte "hauptmenu_wallpaper.png" (assets_dir).
 WALLPAPER_PENDING_FILENAME = "hauptmenu_wallpaper.pending.png"
 
+# NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Gegenstueck fuer das Standbild
+# des HDMI-Monitors/Beamers (echtes Ziel: hdmi_monitor_wallpaper.png, siehe
+# event_wallpaper_reset.HDMI_WALLPAPER) - gleiches Zwischenablage-Prinzip.
+HDMI_WALLPAPER_PENDING_FILENAME = "hdmi_monitor_wallpaper.pending.png"
+
+# Groesste Ausgabegroesse fuer das HDMI-Standbild. Groessere Bilder (z.B.
+# Handyfotos mit 4000x3000) werden proportional verkleinert - spart Speicher
+# und Ladezeit; die Beamer-Wiedergabe skaliert ohnehin auf das jeweilige
+# Geraet (hdmi_slideshow._load_cover_surface).
+HDMI_WALLPAPER_MAX_SIZE = (1920, 1080)
+
 # Werte fuer die "Standardwerte"-Taste auf dem
 # Veranstaltungsdaten-Screen (fuellt den gerade in Bearbeitung befindlichen
 # Entwurf, OHNE selbst zu speichern - "Speichern"/"Abbrechen" bleiben wie
@@ -136,6 +147,62 @@ def import_wallpaper(source: Path, target: Path) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"Konnte Wallpaper nicht uebernehmen: {exc}"
     return True, f"Wallpaper übernommen ({source.name})."
+
+
+def import_hdmi_wallpaper(
+    source: Path, target: Path, max_size: tuple[int, int] = HDMI_WALLPAPER_MAX_SIZE,
+) -> tuple[bool, str]:
+    """NEU (Sprint 14, Nutzer-Feedback 2026-11-14): bereitet ein Bild vom
+    USB-Stick als Standbild fuer den HDMI-Monitor auf und legt es als ECHTES
+    PNG unter target ab (Zwischenablage, siehe
+    HDMI_WALLPAPER_PENDING_FILENAME).
+
+    Anders als import_wallpaper() wird das Bild hier mit Pillow geoeffnet:
+    - Handy-Fotos tragen ihre Drehung oft nur als EXIF-Angabe - ohne
+      exif_transpose() stuende das Bild auf dem Beamer quer.
+    - Groessere Bilder werden proportional auf hoechstens max_size
+      verkleinert (nie vergroessert), Seitenverhaeltnis bleibt erhalten.
+    - Ausgabe immer PNG (auch bei JPG-Quelle) - der Dateiname endet auf
+      .png, der Inhalt soll dazu passen.
+    Atomar wie import_wallpaper (Temp-Datei + os.replace). Nie eine
+    Exception; ungueltige/kaputte Bilddateien liefern (False, Meldung).
+    """
+    try:
+        if not source.is_file():
+            return False, f"Datei nicht gefunden: {source.name}"
+        size = source.stat().st_size
+    except OSError as exc:
+        return False, f"Konnte {source.name} nicht lesen: {exc}"
+    if size > _MAX_WALLPAPER_BYTES:
+        return False, f"Datei zu gross ({size // (1024 * 1024)} MB) - maximal 30 MB."
+    try:
+        from PIL import Image, ImageOps, UnidentifiedImageError
+    except ImportError:
+        return False, "Bildbearbeitung (Pillow) ist nicht installiert."
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    try:
+        with Image.open(source) as image:
+            image = ImageOps.exif_transpose(image)
+            image = image.convert("RGB")
+            image.thumbnail(max_size, Image.LANCZOS)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            image.save(tmp_path, format="PNG", optimize=True)
+            final_size = image.size
+        os.replace(tmp_path, target)
+    except (UnidentifiedImageError, ValueError, Image.DecompressionBombError) as exc:
+        _remove_quietly(tmp_path)
+        return False, f"{source.name} ist kein lesbares Bild ({exc})."
+    except OSError as exc:
+        _remove_quietly(tmp_path)
+        return False, f"Konnte HDMI-Wallpaper nicht uebernehmen: {exc}"
+    return True, f"HDMI-Wallpaper übernommen ({source.name}, {final_size[0]}x{final_size[1]})."
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def promote_pending_wallpaper(pending: Path, target: Path) -> tuple[bool, str]:

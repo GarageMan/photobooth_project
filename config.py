@@ -139,6 +139,11 @@ _event_config = load_event_config(EVENT_CONFIG_PATH)
 # "Fotobox" als generischer Fallback - die App hat keine Versionsbezeichnung
 # und keinen Namen, solange kein Event-Titel konfiguriert ist.
 EVENT_TITLE = str(_event_config.get("event_title") or "Fotobox")
+# NEU: bewusst LEERER Titel in event_config.json ("event_title": "") bedeutet
+# "keinen Titel im Hauptmenue anzeigen" (z.B. wenn das Wallpaper selbst
+# Logo/Schriftzug traegt). EVENT_TITLE bleibt dann als Fallback "Fotobox" fuer
+# Fensterbeschriftung und USB-Ordnernamen erhalten.
+EVENT_TITLE_VISIBLE = not ("event_title" in _event_config and not str(_event_config.get("event_title") or "").strip())
 PHOTO_PREFIX = str(_event_config.get("photo_prefix") or "foto_")
 
 # der Fallback auf ein eventuell noch
@@ -236,10 +241,34 @@ THEME_TEXT_COLOR = _parse_theme_color(_event_config.get("theme_text_color"))
 # GUEST_WIFI_SSID bewusst NICHT Teil dieser Pruefung: sie hat mit
 # "Fotobox_Gast" einen sinnvollen, oft schon zutreffenden Default - anders
 # als Titel/Passwort, deren Platzhalter nie als echter Wert taugen.
-NEEDS_EVENT_SETUP = (
-    EVENT_TITLE == "Fotobox"
-    or GUEST_WIFI_PASSWORD in ("BITTE_ANPASSEN", _PLACEHOLDER)
-)
+#
+# BUGFIX (Sprint 14, Nutzer-Feedback 2026-11-14): bisher galt
+# EVENT_TITLE == "Fotobox" als "nicht eingerichtet". Seit dem bewusst LEEREN
+# Titel ("event_title": "", siehe EVENT_TITLE_VISIBLE) faellt EVENT_TITLE
+# dabei aber ebenfalls auf "Fotobox" zurueck - der Hinweis blieb dann trotz
+# vollstaendig gepflegter Veranstaltungsdaten dauerhaft stehen. Jetzt wird
+# direkt der ROHWERT aus event_config.json geprueft (needs_event_setup):
+# - Titel fehlt ganz oder steht noch auf "Fotobox" (Beispieldatei) -> Hinweis
+# - Titel bewusst leer -> gilt als eingerichtet
+# - WLAN-Passwort zaehlt nur, wenn QR-Codes fuer diese Veranstaltung aktiv
+#   sind (ohne QR-Download wird das Gaeste-WLAN nirgends angezeigt).
+
+
+def needs_event_setup(event_config: dict) -> bool:
+    """True, wenn die Veranstaltungsdaten noch auf den Platzhaltern der
+    Beispieldatei stehen. Reine Funktion - ohne echte Datei testbar
+    (siehe test_config_event_setup.py)."""
+    raw_title = event_config.get("event_title")
+    title_placeholder = raw_title is None or str(raw_title).strip() == "Fotobox"
+
+    qr_enabled = bool(event_config.get("qr_codes_enabled", True))
+    password = str(event_config.get("guest_wifi_password") or "").strip()
+    password_placeholder = qr_enabled and password in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
+
+    return title_placeholder or password_placeholder
+
+
+NEEDS_EVENT_SETUP = needs_event_setup(_event_config)
 
 
 @dataclass(frozen=True)
@@ -254,6 +283,7 @@ class ScreenConfig:
     # kommt aus data/event_config.json (Fallback "Fotobox"),
     # nicht mehr fest im Code - siehe load_event_config() oben.
     title: str = EVENT_TITLE
+    title_visible: bool = EVENT_TITLE_VISIBLE
     target_fps: int = 30
     hide_mouse: bool = True
 
@@ -486,6 +516,29 @@ class ShutdownConfig:
     lockout_file: Path = DATA_DIR / "shutdown_lockout.json"
 
 
+# NEU (Sprint 14): HDMI-Ausgang (Beamer) - Verbindungsdaten fuer
+# HdmiOutputService sowie den separaten HDMI-Wiedergabe-Subprozess
+# (hdmi_slideshow.py). Der Pi laeuft unter X11 (xrandr): Touch-Display =
+# "DSI-2", HDMI-Ports = "HDMI-1-1"/"HDMI-1-2" (am echten Pi mit `xrandr`
+# bestaetigt, 2026-11-11).
+@dataclass(frozen=True)
+class HdmiConfig:
+    # Ausgabename des HDMI-Ports, wie ihn `xrandr` meldet. "auto" = erster
+    # ANGESCHLOSSENER HDMI-Ausgang (egal an welchem der zwei Ports der
+    # Beamer haengt); fester Name (z.B. "HDMI-1-2") erzwingt einen Port.
+    connector_name: str = "auto"
+    # Ausgabename des Touch-Displays (HDMI wird rechts daneben gelegt, der
+    # Touchscreen per `xinput map-to-output` fest diesem Ausgang zugeordnet).
+    touch_output: str = "DSI-2"
+    # Testbild-Dauer beim "HDMI-Test durchfuehren"-Knopf im Service-Menue.
+    test_duration_seconds: float = 5.0
+    # Verzeichnis fuer optionale MP3-Dateien der (noch nicht
+    # implementierten) Musik-Uebertragung - siehe hdmi_slideshow.py-
+    # Modul-Docstring und Sprint-14-Doku-Notiz ("ergibt das ueberhaupt
+    # Sinn?" - Nutzerfrage bewusst offen gelassen).
+    music_dir: Path = DATA_DIR / "hdmi_music"
+
+
 @dataclass(frozen=True)
 class AppConfig:
     screen: ScreenConfig = field(default_factory=ScreenConfig)
@@ -510,6 +563,7 @@ class AppConfig:
         "testbild.png", "example_01.jpg", "example_02.jpg", "example_03.jpg",
     })
     shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
+    hdmi: HdmiConfig = field(default_factory=HdmiConfig)  # NEU (Sprint 14)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
     cache_dir: Path = CACHE_DIR

@@ -118,6 +118,10 @@ class LayoutRects:
     # vorhandenen rects.left/rects.right (gleiches Prinzip wie
     # admin_event_wallpaper_pick_save/_cancel).
     admin_event_color_style_prev: pygame.Rect
+    # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel-Umschalter oben auf
+    # ADMIN_EVENT_WALLPAPER_PICK - "Hauptmenue" | "HDMI-Monitor".
+    admin_event_wallpaper_target_main: pygame.Rect
+    admin_event_wallpaper_target_hdmi: pygame.Rect
     admin_event_color_style_next: pygame.Rect
     # NEU (Veranstaltungsdaten): Bildschirmtastatur (QWERTZ) fuer
     # ADMIN_EVENT_TEXT_ENTRY - gemeinsam fuer alle vier Textfelder, analog
@@ -125,6 +129,24 @@ class LayoutRects:
     # jedes Zeichen der vier Buchstaben-/Ziffernreihen sowie "shift",
     # "backspace", "space", "cancel", "submit".
     keyboard_keys: dict[str, pygame.Rect]
+    # NEU (Sprint 14): HDMI-Untermenue des Service-Menues (AppState.
+    # ADMIN_HDMI_MENU) - drei Zeilen (zwei Schiebeschalter + ein Test-
+    # Button) plus eine vierte, dauerhaft ausgegraute Zeile fuer die
+    # (noch) nicht umgesetzte Musik-Uebertragung. "Zurück" nutzt bewusst
+    # das bereits vorhandene rects.back (gleiche Position wie ueberall
+    # sonst im Service-Menue), kein eigenes Rect noetig.
+    admin_hdmi_output_toggle: pygame.Rect
+    admin_hdmi_slideshow_toggle: pygame.Rect
+    admin_hdmi_test_button: pygame.Rect
+    admin_hdmi_music_toggle: pygame.Rect
+    # NEU (Sprint 14): "Galerie aufräumen" (AppState.ADMIN_GALLERY_CLEANUP)
+    # - Kachelraster nutzt dieselbe dynamische Hitbox-Berechnung wie
+    # GALLERY_GRID (renderer.gallery_cleanup_thumbnail_hitboxes, siehe
+    # renderer._draw_admin_gallery_cleanup), braucht daher hier keine
+    # eigenen Rects. "Löschen"/"Zurück" nutzen rects.left/rects.right
+    # (gleiches Zwei-Button-Prinzip wie REVIEW/ADMIN_EVENT_SETTINGS), die
+    # Sicherheitsabfrage ADMIN_GALLERY_CLEANUP_CONFIRM ebenso (wie
+    # ADMIN_DELETE_CONFIRM).
 
 
 # NEU (Nutzer-Feedback): Sonderzeichen-Ebene der Bildschirmtastatur
@@ -449,6 +471,20 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # nicht-quadratischem Bildschirm), mittig ueber der Übernehmen/Abbrechen-
     # Zeile platziert (die Mitte bleibt frei fuer eine Beschriftung wie
     # "Vorschlag 2 / 3", siehe renderer._draw_admin_event_color_style_pick).
+    # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel-Umschalter der
+    # Wallpaper-Auswahl - zwei gleich breite Tasten mittig unter der
+    # Ueberschrift; die Bilderliste beginnt dafuer etwas tiefer (siehe
+    # renderer._draw_admin_event_wallpaper_pick, WALLPAPER_PICK_LIST_TOP).
+    _wp_target_w = round(0.30 * width)
+    _wp_target_h = round(0.075 * height)
+    _wp_target_gap = round(0.02 * width)
+    _wp_target_y = round(0.19 * height)
+    _wp_target_x0 = (width - (2 * _wp_target_w + _wp_target_gap)) // 2
+    admin_event_wallpaper_target_main = pygame.Rect(_wp_target_x0, _wp_target_y, _wp_target_w, _wp_target_h)
+    admin_event_wallpaper_target_hdmi = pygame.Rect(
+        _wp_target_x0 + _wp_target_w + _wp_target_gap, _wp_target_y, _wp_target_w, _wp_target_h,
+    )
+
     admin_event_color_style_btn_side = round(0.10 * height)
     admin_event_color_style_y = round(0.66 * height)
     admin_event_color_style_prev = pygame.Rect(
@@ -537,6 +573,30 @@ def build_layout(width: int, height: int) -> LayoutRects:
         event_margin_x + kb_row_b_w + kb_bottom_gap, kb_row_b_y, kb_row_b_w, kb_key_h,
     )
 
+    # NEU (Sprint 14): HDMI-Untermenue - vier gleich hohe Zeilen, deutlich
+    # grosszuegiger als die Veranstaltungsdaten-Zeilen (dort acht Zeilen auf
+    # engem Raum, hier nur vier), damit die Schiebeschalter gut treffbar
+    # bleiben. row_y0=0.30 laesst unter dem generischen Titel (endet bei
+    # 720px Hoehe bei ca. 0.19) und dem status_text-Untertitel genug Luft;
+    # letzte Zeile (Index 3) endet bei 0.30+3*0.105+0.09=0.705, darunter
+    # bleibt bis rects.back (0.80) Platz fuer den Status-/Ergebnistext
+    # (siehe renderer._draw_admin_hdmi_menu). Sichtpruefung auf echter
+    # Hardware empfohlen (gleiche Einschraenkung wie bei jedem neuen
+    # Service-Menue-Layout in diesem Projekt).
+    admin_hdmi_margin_x = 0.06
+    admin_hdmi_row_w = 1 - 2 * admin_hdmi_margin_x
+    admin_hdmi_row_h = 0.09
+    admin_hdmi_row_y0 = 0.20
+    admin_hdmi_row_step = 0.105
+
+    def _hdmi_row(index: int) -> pygame.Rect:
+        return rect(admin_hdmi_margin_x, admin_hdmi_row_y0 + index * admin_hdmi_row_step, admin_hdmi_row_w, admin_hdmi_row_h)
+
+    admin_hdmi_output_toggle = _hdmi_row(0)
+    admin_hdmi_slideshow_toggle = _hdmi_row(1)
+    admin_hdmi_test_button = _hdmi_row(2)
+    admin_hdmi_music_toggle = _hdmi_row(3)
+
     return LayoutRects(
         main_photo=main_photo,
         main_gallery=main_gallery,
@@ -585,8 +645,14 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_defaults_button=admin_event_defaults_button,
         admin_event_color_style_button=admin_event_color_style_button,
         admin_event_color_style_prev=admin_event_color_style_prev,
+        admin_event_wallpaper_target_main=admin_event_wallpaper_target_main,
+        admin_event_wallpaper_target_hdmi=admin_event_wallpaper_target_hdmi,
         admin_event_color_style_next=admin_event_color_style_next,
         keyboard_keys=keyboard_keys,
+        admin_hdmi_output_toggle=admin_hdmi_output_toggle,
+        admin_hdmi_slideshow_toggle=admin_hdmi_slideshow_toggle,
+        admin_hdmi_test_button=admin_hdmi_test_button,
+        admin_hdmi_music_toggle=admin_hdmi_music_toggle,
     )
 
 
@@ -724,6 +790,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         # wie ADMIN_USB_CONFLICTS), nur "Speichern"/"Abbrechen" sind
         # statisch und nutzen die vorhandenen rects.left/rects.right.
         return {
+            "admin_event_wallpaper_target_main": rects.admin_event_wallpaper_target_main,
+            "admin_event_wallpaper_target_hdmi": rects.admin_event_wallpaper_target_hdmi,
             "admin_event_wallpaper_pick_save": rects.left,
             "admin_event_wallpaper_pick_cancel": rects.right,
         }
@@ -786,4 +854,33 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         }
     # ADMIN_DELETE_RUNNING, ADMIN_USB_CHECK, ADMIN_USB_EJECT, ADMIN_USB_RESOLVE:
     # bewusst leer - laufende Vorgaenge sind nicht abbrechbar.
+    # --- HDMI-Ausgang / Beamer-Wiedergabe (Sprint 14) -----------------------
+    if state == AppState.ADMIN_HDMI_MENU:
+        # "back" nutzt rects.back wie jede andere Service-Menue-Unterseite
+        # ohne eigenes Speichern/Abbrechen (analog ADMIN_STATUS). Die
+        # Musik-Zeile (admin_hdmi_music_toggle) ist bewusst NICHT hier
+        # gelistet - noch nicht umgesetzt (enabled=False, siehe
+        # renderer._draw_admin_hdmi_menu), reagiert also nicht auf Antippen,
+        # gleiches Prinzip wie ausgegraute admin_menu.ADMIN_MENU_ITEMS.
+        return {
+            "admin_hdmi_output_toggle": rects.admin_hdmi_output_toggle,
+            "admin_hdmi_slideshow_toggle": rects.admin_hdmi_slideshow_toggle,
+            "admin_hdmi_test": rects.admin_hdmi_test_button,
+            "back": rects.back,
+        }
+    # --- Galerie aufraeumen (Sprint 14) --------------------------------------
+    if state == AppState.ADMIN_GALLERY_CLEANUP:
+        # Die Kachel-Hitboxen selbst sind dynamisch (Scroll-Offset,
+        # renderer.gallery_cleanup_thumbnail_hitboxes) - siehe
+        # app._map_click_to_event, gleiches Prinzip wie GALLERY_GRID.
+        # "Löschen" ist nur wirksam, wenn mindestens ein Bild ausgewaehlt
+        # ist (Entscheidung faellt in der State Machine, wie bei
+        # ADMIN_USB_WAIT/usb_continue).
+        return {"admin_gallery_cleanup_delete": rects.left, "back": rects.right}
+    if state == AppState.ADMIN_GALLERY_CLEANUP_CONFIRM:
+        # Gleiches Prinzip wie ADMIN_DELETE_CONFIRM: "Nein" bewusst LINKS.
+        return {
+            "admin_gallery_cleanup_abort": rects.left,
+            "admin_gallery_cleanup_confirm": rects.right,
+        }
     return {}

@@ -6,6 +6,10 @@ from admin_usb_export import ExportConflict
 from config import AppConfig
 from events import AppEvent, EventType
 from event_config_service import DEFAULT_EVENT_VALUES  # NEU (Nutzer-Feedback): "Standardwerte"-Taste
+
+# NEU (Sprint 14, Nutzer-Feedback 2026-11-14): gueltige Ziele der Wallpaper-
+# Auswahl (siehe AppUI.admin_event_wallpaper_target).
+_WALLPAPER_TARGETS = ("main", "hdmi")
 from models import AppModel, SessionState, TimerState, TransitionResult, UiState
 from states import AppState
 from admin_service import PinResult  # NEU (3.2): nur der Ergebnis-Enum, keine Logik/Dateizugriff - umbenannt (Sprint 11, vormals shutdown_service.py)
@@ -132,7 +136,18 @@ class StateMachine:
             # das Hauptmenue einfach stehen (_go_main_menu haengt die
             # Idle-Deadline neu ein, sonst wuerde IDLE_TIMEOUT sofort wieder
             # feuern).
-            if self.config.gallery_enabled:
+            #
+            # NEU (Sprint 14, Nutzer-Feedback): laeuft die Galerie-Wiedergabe
+            # bereits auf dem Beamer (HDMI), startet auf dem Touch-Display
+            # KEINE zusaetzliche automatische Galerie - das Hauptmenue bleibt
+            # stehen und ist damit sofort fuer den naechsten Gast bereit. Die
+            # App setzt "hdmi_slideshow_running" beim Ausloesen von
+            # IDLE_TIMEOUT aus dem tatsaechlichen Prozessstatus (app.
+            # _emit_due_timers -> HdmiOutputService.is_slideshow_running),
+            # nicht aus einem evtl. veralteten UI-Wert.
+            # Die manuell geoeffnete Galerie (TAP_GALLERY) bleibt unberuehrt.
+            hdmi_slideshow_running = bool(event.payload.get("hdmi_slideshow_running", False))
+            if self.config.gallery_enabled and not hdmi_slideshow_running:
                 return self._go_attract_gallery(model, now)
             return self._go_main_menu(model, now)
         return TransitionResult(model=model)
@@ -454,6 +469,10 @@ class StateMachine:
             return self._go_admin_camera_settings(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_SETTINGS:  # NEU (Veranstaltungsdaten)
             return self._go_admin_event_settings(model, now)
+        if event.type == EventType.TAP_ADMIN_HDMI:             # NEU (Sprint 14)
+            return self._go_admin_hdmi_menu(model, now)
+        if event.type == EventType.TAP_ADMIN_GALLERY_CLEANUP:  # NEU (Sprint 14)
+            return self._go_admin_gallery_cleanup(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_main_menu(model, now)
         # BUTTON_PRESS wird hier bewusst NICHT behandelt: der Hardware-
@@ -467,6 +486,125 @@ class StateMachine:
             ui = replace(model.ui, admin_status_lines=lines)
             return TransitionResult(model=model.evolve(ui=ui))
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (Sprint 14): HDMI-Ausgang (Beamer) - Ein-/Ausschalten und
+    # Galerie-Wiedergabe sind reine Schiebeschalter, die NICHT optimistisch
+    # umgesprungen werden: der neue Zustand kommt erst mit dem naechsten
+    # ADMIN_HDMI_STATUS_READY zurueck, nachdem app.py den eigentlichen
+    # xrandr-/Prozess-Aufruf ausgefuehrt UND den tatsaechlichen Status
+    # erneut gelesen hat (siehe app._toggle_admin_hdmi_output/
+    # _toggle_admin_hdmi_slideshow). Gleiches Vorsichtsprinzip wie bei den
+    # USB-Aktionen: die Anzeige zeigt immer, was tatsaechlich der Fall ist,
+    # nie, was ein Tap nur beabsichtigt hat.
+    def _handle_admin_hdmi_menu(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_HDMI_STATUS_READY:
+            payload = event.payload
+            ui = replace(
+                model.ui,
+                admin_hdmi_available=bool(payload.get("available", False)),
+                admin_hdmi_connected=bool(payload.get("connected", False)),
+                admin_hdmi_powered_on=payload.get("powered_on"),
+                admin_hdmi_resolution=str(payload.get("resolution") or ""),
+                admin_hdmi_error=str(payload.get("error") or ""),
+                admin_hdmi_slideshow_running=bool(payload.get("slideshow_running", False)),
+            )
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_HDMI_OUTPUT_TOGGLE:
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(model=model.evolve(timers=timers), actions=("toggle_admin_hdmi_output",))
+        if event.type == EventType.TAP_ADMIN_HDMI_SLIDESHOW_TOGGLE:
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(model=model.evolve(timers=timers), actions=("toggle_admin_hdmi_slideshow",))
+        if event.type == EventType.TAP_ADMIN_HDMI_TEST:
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            ui = replace(model.ui, admin_hdmi_test_result="Teste ...")
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers), actions=("run_admin_hdmi_test",))
+        if event.type == EventType.ADMIN_HDMI_TEST_DONE:
+            ui = replace(model.ui, admin_hdmi_test_result=str(event.payload.get("message", "")))
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (Sprint 14): "Galerie aufraeumen" - Mehrfachauswahl in einem
+    # Kachelraster, analog zu GALLERY_GRID (gleiches Scroll-Prinzip ueber
+    # SWIPE_UP/SWIPE_DOWN, siehe _handle_gallery_grid), aber Antippen
+    # waehlt/entwaehlt statt Vollbild zu oeffnen.
+    def _handle_admin_gallery_cleanup(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            return self._go_admin_menu(model, now)
+        if event.type == EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT:
+            path = str(event.payload.get("path", ""))
+            if not path:
+                return TransitionResult(model=model)
+            selected = model.ui.admin_gallery_cleanup_selected
+            if path in selected:
+                new_selected = tuple(p for p in selected if p != path)
+            else:
+                new_selected = selected + (path,)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            ui = replace(model.ui, admin_gallery_cleanup_selected=new_selected)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type in {EventType.SWIPE_UP, EventType.SWIPE_DOWN}:
+            columns = max(1, self.config.gallery.grid_columns)
+            total_rows = max(1, (len(model.session.photos) + columns - 1) // columns)
+            current = model.ui.admin_gallery_cleanup_scroll_offset
+            if event.type == EventType.SWIPE_UP:
+                new_offset = min(current + 1, max(0, total_rows - 1))
+            else:
+                new_offset = max(current - 1, 0)
+            ui = replace(model.ui, admin_gallery_cleanup_scroll_offset=new_offset)
+            return TransitionResult(model=model.evolve(ui=ui))
+        if event.type == EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE:
+            # Ohne Auswahl wirkungslos - der Renderer zeichnet den Button
+            # dann ausgegraut (gleiches Prinzip wie ADMIN_USB_WAIT/"Weiter").
+            if not model.ui.admin_gallery_cleanup_selected:
+                return TransitionResult(model=model)
+            return self._go_admin_gallery_cleanup_confirm(model, now)
+        return TransitionResult(model=model)
+
+    # NEU (Sprint 14): Sicherheitsabfrage vor dem Loeschen der markierten
+    # Bilder - gleiches Prinzip wie ADMIN_DELETE_CONFIRM, nur fuer eine
+    # Auswahl statt den gesamten Bestand.
+    def _handle_admin_gallery_cleanup_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_GALLERY_CLEANUP_CONFIRM:
+            # Anders als "Alle Bilder loeschen" (Hintergrund-Thread, siehe
+            # ADMIN_DELETE_RUNNING) reicht fuer eine Handvoll ausgewaehlter
+            # Dateien ein synchrones unlink() je Datei - die Aktion
+            # "delete_selected_gallery_photos" (app.py) liest die Auswahl
+            # aus dem VORHERIGEN Modellstand, gleiches Prinzip wie
+            # "delete_photo"/_delete_photo(). session.photos wird hier
+            # bereits optimistisch bereinigt, damit das Kachelraster beim
+            # Zurueckkehren sofort korrekt aussieht, ohne auf ein
+            # Ergebnis-Event warten zu muessen.
+            selected = model.ui.admin_gallery_cleanup_selected
+            remaining = tuple(p for p in model.session.photos if p not in selected)
+            session = replace(model.session, photos=remaining)
+            count = len(selected)
+            noun = "Bild" if count == 1 else "Bilder"
+            ui = replace(
+                model.ui,
+                status_text="Galerie aufräumen",
+                error_text=None,
+                admin_gallery_cleanup_selected=(),
+                admin_gallery_cleanup_scroll_offset=0,
+                admin_gallery_cleanup_result=f"{count} {noun} gelöscht.",
+            )
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(
+                model=model.evolve(state=AppState.ADMIN_GALLERY_CLEANUP, ui=ui, timers=timers, session=session),
+                actions=("delete_selected_gallery_photos",),
+            )
+        # Jeder andere Ausstieg (Nein, Zurueck, Untaetigkeit) fuehrt - auf
+        # ausdruecklichen Nutzer-Wunsch - DIREKT ins Service-Menue zurueck,
+        # OHNE etwas zu loeschen (nicht zurueck auf den Auswahl-Screen).
+        if event.type in {
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_ABORT,
+            EventType.TAP_BACK,
+            EventType.IDLE_TIMEOUT,
+        }:
             return self._go_admin_menu(model, now)
         return TransitionResult(model=model)
 
@@ -719,9 +857,20 @@ class StateMachine:
                 admin_event_theme_button=None,
                 admin_event_theme_background=None,
                 admin_event_theme_text=None,
+                # NEU (Sprint 14, Nutzer-Feedback): ein zuvor gewaehltes, noch
+                # wartendes Wallpaper verliert gegen "Standardwerte" - fuer
+                # Hauptmenue UND HDMI-Monitor.
+                admin_event_wallpaper_pending=False,
+                admin_event_hdmi_wallpaper_pending=False,
             )
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
-            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+            # NEU (Sprint 14, Nutzer-Feedback): HDMI- und Hauptmenue-Wallpaper
+            # ebenfalls zuruecksetzen - die App merkt sich das nur und fuehrt
+            # es erst beim "Speichern" aus (Abbrechen verwirft es, siehe
+            # app._save_admin_event_settings / event_wallpaper_reset).
+            return TransitionResult(
+                model=model.evolve(ui=ui, timers=timers), actions=("mark_event_wallpaper_reset",),
+            )
         if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT:
             return self._go_admin_event_wallpaper_pick_loading(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER:      # NEU (Sprint 13)
@@ -802,6 +951,9 @@ class StateMachine:
             admin_event_wallpaper_candidates=(),
             admin_event_wallpaper_selected="",
             admin_event_wallpaper_pending=False,
+            # NEU (Sprint 14): Ziel der Wallpaper-Auswahl / wartendes HDMI-Bild.
+            admin_event_wallpaper_target="main",
+            admin_event_hdmi_wallpaper_pending=False,
             # NEU (Sprint 13): frischer Einstieg - Farbstil-Felder werden
             # gleich darauf per "collect_admin_event_settings"-Action /
             # ADMIN_EVENT_SETTINGS_READY aus der aktuellen AppConfig befuellt
@@ -872,7 +1024,10 @@ class StateMachine:
             # Wert bleibt stehen) statt einen leeren Titel/Praefix/... zu
             # uebernehmen - kein Blockieren mit Fehlermeldung noetig, da das
             # Feld dafuer einfach erneut geoeffnet werden kann.
-            if value and field:
+            # AUSNAHME "title": ein leerer Titel ist gewollt (kein Titel im
+            # Hauptmenue, z.B. wenn das Wallpaper selbst Logo/Schriftzug
+            # traegt, siehe config.EVENT_TITLE_VISIBLE) und wird uebernommen.
+            if field and (value or field == "title"):
                 ui = replace(model.ui, **{f"admin_event_{field}": value})
                 result_model = model.evolve(ui=ui)
             return self._return_to_admin_event_settings(result_model, now)
@@ -934,6 +1089,17 @@ class StateMachine:
             ui = replace(model.ui, admin_event_wallpaper_selected=name)
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
             return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_TARGET:
+            # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel umschalten -
+            # Hauptmenue oder HDMI-Monitor. Die Markierung in der Liste bleibt
+            # erhalten (gleiches Bild kann so bequem fuer das andere Ziel
+            # gewaehlt werden).
+            target = str(event.payload.get("target", ""))
+            if target not in _WALLPAPER_TARGETS:
+                return TransitionResult(model=model)
+            ui = replace(model.ui, admin_event_wallpaper_target=target)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_text_entry_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
         if event.type == EventType.TAP_ADMIN_EVENT_WALLPAPER_PICK_SAVE:
             # Ohne Auswahl passiert nichts (kein Fehlertext noetig, "Speichern"
             # bleibt einfach wirkungslos, bis eine Zeile angetippt wurde).
@@ -943,7 +1109,13 @@ class StateMachine:
         if event.type == EventType.ADMIN_EVENT_WALLPAPER_STAGE_RESULT:
             ok = bool(event.payload.get("ok", False))
             if ok:
-                ui = replace(model.ui, admin_event_wallpaper_pending=True)
+                # GEAENDERT (Sprint 14): je nach Ziel das passende "wartet"-
+                # Flag setzen - die App hat in die zum Ziel gehoerende
+                # Zwischenablage kopiert (siehe app._wallpaper_stage_selected).
+                if model.ui.admin_event_wallpaper_target == "hdmi":
+                    ui = replace(model.ui, admin_event_hdmi_wallpaper_pending=True)
+                else:
+                    ui = replace(model.ui, admin_event_wallpaper_pending=True)
                 return self._return_to_admin_event_settings(model.evolve(ui=ui), now)
             lines = (str(event.payload.get("message", "Wallpaper konnte nicht übernommen werden.")),)
             return self._go_admin_event_wallpaper_result(model, now, False, lines)
@@ -1345,6 +1517,62 @@ class StateMachine:
         return TransitionResult(
             model=model.evolve(state=AppState.ADMIN_STATUS, ui=ui, timers=timers),
             actions=("collect_admin_status",),
+        )
+
+    # NEU (Sprint 14): HDMI-Unterseite - gleiches Muster wie _go_admin_status
+    # (Idle-Timer wie im Menue, Werte kommen kurz darauf synchron per
+    # ADMIN_HDMI_STATUS_READY zurueck). admin_hdmi_slideshow_running wird
+    # bewusst NICHT zurueckgesetzt - sie spiegelt einen echten, ausserhalb
+    # der State Machine laufenden Prozess wider (siehe hdmi_output_service.
+    # HdmiOutputService) und wird ueber genau dieses READY-Event aus dem
+    # tatsaechlichen Prozessstatus neu gesetzt, nicht angenommen.
+    def _go_admin_hdmi_menu(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="HDMI",
+            error_text=None,
+            admin_hdmi_available=False,
+            admin_hdmi_connected=False,
+            admin_hdmi_powered_on=None,
+            admin_hdmi_resolution="",
+            admin_hdmi_error="",
+            admin_hdmi_test_result="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_HDMI_MENU, ui=ui, timers=timers),
+            actions=("stop_preview", "read_admin_hdmi_status"),
+        )
+
+    # NEU (Sprint 14): "Galerie aufraeumen" - Auswahl-Screen betreten,
+    # Auswahl/Scrollposition/Ergebnistext werden immer frisch geleert
+    # (kein Bezug zur normalen Galerie-Scrollposition, siehe models.py).
+    def _go_admin_gallery_cleanup(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Galerie aufräumen",
+            error_text=None,
+            admin_gallery_cleanup_selected=(),
+            admin_gallery_cleanup_scroll_offset=0,
+            admin_gallery_cleanup_result="",
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_GALLERY_CLEANUP, ui=ui, timers=timers),
+            actions=("stop_preview",),
+        )
+
+    def _go_admin_gallery_cleanup_confirm(self, model: AppModel, now: float) -> TransitionResult:
+        count = len(model.ui.admin_gallery_cleanup_selected)
+        noun = "Bild" if count == 1 else "Bilder"
+        ui = replace(
+            model.ui,
+            status_text=f"Wirklich {count} {noun} löschen?",
+            error_text=None,
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+        return TransitionResult(
+            model=model.evolve(state=AppState.ADMIN_GALLERY_CLEANUP_CONFIRM, ui=ui, timers=timers),
         )
 
     # NEU (Sprint 11, Feature 2): Kamera-Einstellungen-Unterseite - gleiches
