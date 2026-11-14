@@ -744,14 +744,29 @@ class AdminEventSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
         self.assertEqual(result.model.ui.admin_event_title, "Testfest")
 
-    def test_empty_submit_keeps_previous_value(self) -> None:
+    def test_empty_submit_title_is_accepted(self) -> None:
+        # Leerer Titel ist gewollt (kein Titel im Hauptmenue) und wird
+        # uebernommen.
         self._go_to_admin_event_settings()
         self._fill_ready()
         self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "title"})
         for _ in range(20):
             self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=12.0)
         result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
-        self.assertEqual(result.model.ui.admin_event_title, "Testfest")
+        self.assertEqual(result.model.state, AppState.ADMIN_EVENT_SETTINGS)
+        self.assertEqual(result.model.ui.admin_event_title, "")
+
+    def test_empty_submit_keeps_previous_value_for_other_fields(self) -> None:
+        # Alle anderen Felder (z.B. Datei-Praefix) behalten bei leerer
+        # Eingabe den bisherigen Wert.
+        self._go_to_admin_event_settings()
+        self._fill_ready()
+        previous = self.model.ui.admin_event_prefix
+        self.transition(EventType.TAP_ADMIN_EVENT_FIELD_EDIT, now_offset=11.0, payload={"field": "prefix"})
+        for _ in range(30):
+            self.transition(EventType.TEXT_ENTRY_BACKSPACE, now_offset=12.0)
+        result = self.transition(EventType.TEXT_ENTRY_SUBMIT, now_offset=13.0)
+        self.assertEqual(result.model.ui.admin_event_prefix, previous)
 
     def test_prefix_rejects_disallowed_characters(self) -> None:
         self._go_to_admin_event_settings()
@@ -1452,6 +1467,11 @@ class IdleTimeoutWiringTestCase(unittest.TestCase):
         "ADMIN_EVENT_WALLPAPER_PICK",
         "ADMIN_EVENT_WALLPAPER_RESULT",
         "ADMIN_EVENT_SAVED",
+        # NEU (Sprint 14): HDMI-Untermenue und Galerie-Aufraeumen - gleiches
+        # Idle-Verhalten wie andere Service-Menue-Unterseiten.
+        "ADMIN_HDMI_MENU",
+        "ADMIN_GALLERY_CLEANUP",
+        "ADMIN_GALLERY_CLEANUP_CONFIRM",
     )
 
     def test_states_with_idle_deadline_are_emitted_by_the_app(self) -> None:
@@ -1978,6 +1998,266 @@ class AdminMenuItemsTestCase(unittest.TestCase):
             self.assertLessEqual(rect.bottom, height)
             for other in rects[index + 1:]:
                 self.assertFalse(rect.colliderect(other))
+
+
+class AdminHdmiMenuTestCase(unittest.TestCase):
+    """NEU (Sprint 14): HDMI-Untermenue - Ein-/Ausschalten und Galerie-
+    Wiedergabe sind reine Schiebeschalter, die NICHT optimistisch
+    umspringen (siehe state_machine._handle_admin_hdmi_menu-Kommentar) -
+    hier wird daher nur geprueft, dass der richtige ACTION-Name ausgeloest
+    wird, nicht, dass sich ein ui-Feld sofort aendert."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_menu(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+
+    def _go_to_hdmi_menu(self) -> None:
+        self._go_to_admin_menu()
+        result = self.transition(EventType.TAP_ADMIN_HDMI, now_offset=10.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_HDMI_MENU)
+        return result
+
+    def test_entering_menu_requests_status_and_stops_preview(self) -> None:
+        result = self._go_to_hdmi_menu()
+        self.assertIn("stop_preview", result.actions)
+        self.assertIn("read_admin_hdmi_status", result.actions)
+
+    def test_status_ready_updates_ui_fields(self) -> None:
+        self._go_to_hdmi_menu()
+        self.transition(
+            EventType.ADMIN_HDMI_STATUS_READY,
+            now_offset=11.0,
+            payload={
+                "available": True, "connected": True, "powered_on": True,
+                "resolution": "1920x1080", "error": "", "slideshow_running": False,
+            },
+        )
+        self.assertTrue(self.model.ui.admin_hdmi_available)
+        self.assertTrue(self.model.ui.admin_hdmi_connected)
+        self.assertTrue(self.model.ui.admin_hdmi_powered_on)
+        self.assertEqual(self.model.ui.admin_hdmi_resolution, "1920x1080")
+
+    def test_output_toggle_triggers_action_without_optimistic_change(self) -> None:
+        self._go_to_hdmi_menu()
+        before = self.model.ui.admin_hdmi_powered_on
+        result = self.transition(EventType.TAP_ADMIN_HDMI_OUTPUT_TOGGLE, now_offset=11.0)
+        self.assertIn("toggle_admin_hdmi_output", result.actions)
+        # Bewusst UNVERAENDERT - der echte neue Wert kommt erst per
+        # ADMIN_HDMI_STATUS_READY zurueck (siehe Klassen-Docstring).
+        self.assertEqual(self.model.ui.admin_hdmi_powered_on, before)
+
+    def test_slideshow_toggle_triggers_action(self) -> None:
+        self._go_to_hdmi_menu()
+        result = self.transition(EventType.TAP_ADMIN_HDMI_SLIDESHOW_TOGGLE, now_offset=11.0)
+        self.assertIn("toggle_admin_hdmi_slideshow", result.actions)
+
+    def test_test_button_sets_placeholder_and_triggers_action(self) -> None:
+        self._go_to_hdmi_menu()
+        result = self.transition(EventType.TAP_ADMIN_HDMI_TEST, now_offset=11.0)
+        self.assertIn("run_admin_hdmi_test", result.actions)
+        self.assertEqual(self.model.ui.admin_hdmi_test_result, "Teste ...")
+
+    def test_test_done_sets_result_message(self) -> None:
+        self._go_to_hdmi_menu()
+        self.transition(EventType.TAP_ADMIN_HDMI_TEST, now_offset=11.0)
+        self.transition(
+            EventType.ADMIN_HDMI_TEST_DONE, now_offset=12.0,
+            payload={"message": "Ausgabegerät erkannt (1920x1080, eingeschaltet)."},
+        )
+        self.assertEqual(self.model.ui.admin_hdmi_test_result, "Ausgabegerät erkannt (1920x1080, eingeschaltet).")
+
+    def test_back_and_idle_timeout_return_to_admin_menu(self) -> None:
+        self._go_to_hdmi_menu()
+        self.transition(EventType.TAP_BACK, now_offset=11.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+
+        self._go_to_hdmi_menu()
+        self.transition(EventType.IDLE_TIMEOUT, now_offset=11.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+
+
+class AdminGalleryCleanupTestCase(unittest.TestCase):
+    """NEU (Sprint 14): "Galerie aufraeumen" - Mehrfachauswahl, Scrollen,
+    Loesch-Bestaetigung. Wichtigste Anforderung aus dem Nutzer-Auftrag:
+    "Nein"/Abbruch/Idle-Timeout auf der Bestaetigung fuehren DIREKT ins
+    Service-Menue zurueck (nicht auf den Auswahl-Screen)."""
+
+    def setUp(self) -> None:
+        self.config = DEFAULT_CONFIG
+        self.machine = StateMachine(self.config)
+        self.now = 1000.0
+        self.model = self.machine.initial_model(self.now)
+
+    def transition(self, event_type: EventType, now_offset: float = 0.0, payload: dict | None = None):
+        event = AppEvent(event_type, payload=payload or {}, source="test")
+        result = self.machine.transition(self.model, event, self.now + now_offset)
+        self.model = result.model
+        return result
+
+    def _go_to_admin_menu(self, now_offset: float = 5.2) -> None:
+        self.transition(EventType.TICK, now_offset=self.config.timeouts.boot_seconds + 0.1)
+        self.transition(EventType.SHUTDOWN_GESTURE_DETECTED, now_offset=now_offset)
+        self.transition(
+            EventType.PIN_SUBMIT,
+            now_offset=now_offset + 1.0,
+            payload={"pin_result": PinResult.ACCEPTED},
+        )
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+
+    def _go_to_gallery_cleanup(self, photos: tuple[str, ...] = ()) -> None:
+        self._go_to_admin_menu()
+        if photos:
+            from dataclasses import replace
+            self.model = self.model.evolve(session=replace(self.model.session, photos=photos))
+        result = self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP, now_offset=10.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_GALLERY_CLEANUP)
+        return result
+
+    def test_entering_screen_clears_selection_and_stops_preview(self) -> None:
+        result = self._go_to_gallery_cleanup()
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_selected, ())
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_scroll_offset, 0)
+        self.assertIn("stop_preview", result.actions)
+
+    def test_tapping_a_photo_selects_it(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg", "/photos/b.jpg"))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_selected, ("/photos/a.jpg",))
+
+    def test_tapping_a_selected_photo_again_deselects_it(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=12.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_selected, ())
+
+    def test_select_with_empty_path_is_ignored(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": ""},
+        )
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_selected, ())
+
+    def test_swipe_up_and_down_move_scroll_offset_within_bounds(self) -> None:
+        columns = self.config.gallery.grid_columns
+        photos = tuple(f"/photos/{i}.jpg" for i in range(columns * 5))
+        self._go_to_gallery_cleanup(photos=photos)
+
+        self.transition(EventType.SWIPE_DOWN, now_offset=11.0)
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_scroll_offset, 0)  # kann nicht unter 0
+
+        self.transition(EventType.SWIPE_UP, now_offset=12.0)
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_scroll_offset, 1)
+
+        self.transition(EventType.SWIPE_DOWN, now_offset=13.0)
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_scroll_offset, 0)
+
+    def test_delete_without_selection_is_a_noop(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=11.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_GALLERY_CLEANUP)
+
+    def test_delete_with_selection_goes_to_confirm_with_count_in_status_text(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg", "/photos/b.jpg"))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.5,
+            payload={"path": "/photos/b.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_GALLERY_CLEANUP_CONFIRM)
+        self.assertEqual(self.model.ui.status_text, "Wirklich 2 Bilder löschen?")
+
+    def test_delete_with_single_selection_uses_singular_wording(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        self.assertEqual(self.model.ui.status_text, "Wirklich 1 Bild löschen?")
+
+    def test_confirm_removes_selected_photos_from_session_and_returns_to_grid(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.5,
+            payload={"path": "/photos/c.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        result = self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_CONFIRM, now_offset=13.0)
+
+        self.assertEqual(self.model.state, AppState.ADMIN_GALLERY_CLEANUP)
+        self.assertEqual(self.model.session.photos, ("/photos/b.jpg",))
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_selected, ())
+        self.assertEqual(self.model.ui.admin_gallery_cleanup_result, "2 Bilder gelöscht.")
+        self.assertIn("delete_selected_gallery_photos", result.actions)
+
+    def test_abort_on_confirm_screen_returns_directly_to_admin_menu_without_deleting(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_ABORT, now_offset=13.0)
+
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        self.assertEqual(self.model.session.photos, ("/photos/a.jpg",))
+
+    def test_back_on_confirm_screen_also_returns_directly_to_admin_menu(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        self.transition(EventType.TAP_BACK, now_offset=13.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+
+    def test_idle_timeout_on_confirm_screen_also_returns_directly_to_admin_menu(self) -> None:
+        self._go_to_gallery_cleanup(photos=("/photos/a.jpg",))
+        self.transition(
+            EventType.TAP_ADMIN_GALLERY_CLEANUP_SELECT, now_offset=11.0,
+            payload={"path": "/photos/a.jpg"},
+        )
+        self.transition(EventType.TAP_ADMIN_GALLERY_CLEANUP_DELETE, now_offset=12.0)
+        self.transition(EventType.IDLE_TIMEOUT, now_offset=13.0)
+        self.assertEqual(self.model.state, AppState.ADMIN_MENU)
+        self.assertEqual(self.model.session.photos, ("/photos/a.jpg",))
 
 
 if __name__ == "__main__":

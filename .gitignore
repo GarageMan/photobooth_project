@@ -16,3 +16,15 @@ __pycache__/
 *.bak
 *.bak*
 event_config.json
+
+# NEU (v1.1.0): veranstaltungsspezifische Wallpaper und Zwischenablage-
+# Dateien - entstehen zur Laufzeit (Service-Menue "Veranstaltungsdaten" ->
+# "Wallpaper von USB laden" bzw. "Standardwerte"), gehoeren nicht ins Repo.
+# hdmi_monitor_wallpaper.png faellt bei Fehlen automatisch auf
+# systemstart_wallpaper.png zurueck (siehe event_wallpaper_reset.py).
+assets/hdmi_monitor_wallpaper.png
+assets/*.pending.png
+assets/*.tmp
+
+# Test-Cache
+.pytest_cache/

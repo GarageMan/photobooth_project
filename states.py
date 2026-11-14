@@ -177,3 +177,25 @@ class AppState(Enum):
     ADMIN_USB_RESOLVE = auto()
     # Ergebnis-Screen nach dem Export.
     ADMIN_USB_EXPORT_DONE = auto()
+    # --- HDMI-Ausgang / Beamer-Wiedergabe (Sprint 14) -----------------------
+    # Uebersicht/Unterseite des Service-Menues: HDMI-Ausgang ein-/ausschalten
+    # (physischer Beamer-Anschluss, siehe hdmi_output_service.py), die
+    # Galerie-Wiedergabe auf diesem Ausgang starten/stoppen (eigener Prozess,
+    # siehe hdmi_slideshow.py - laeuft unabhaengig vom Touch-Display weiter,
+    # auch waehrend im Service-Menue oder in anderen Bildschirmen navigiert
+    # wird) sowie einen Verbindungstest anstossen. Musik-Uebertragung wurde
+    # auf Nutzerwunsch NICHT umgesetzt (siehe Doku-Notiz) - der entsprechende
+    # Schalter steht bewusst auf enabled=False, gleiches Prinzip wie
+    # unimplementierte Punkte in admin_menu.ADMIN_MENU_ITEMS.
+    ADMIN_HDMI_MENU = auto()
+    # --- Galerie aufraeumen (Sprint 14) --------------------------------------
+    # Wie GALLERY_GRID, aber mit Mehrfachauswahl statt Vollbildansicht: Tap
+    # auf ein Bild waehlt es aus/ab (Haekchen-Overlay), "Löschen" fuehrt zur
+    # Sicherheitsabfrage. Nur ueber das PIN-geschuetzte Service-Menue
+    # erreichbar (admin_menu.py) - Gaeste sehen diesen Screen nie.
+    ADMIN_GALLERY_CLEANUP = auto()
+    # Sicherheitsabfrage vor dem Loeschen der markierten Bilder - gleiches
+    # Prinzip wie ADMIN_DELETE_CONFIRM, nur fuer eine Auswahl statt den
+    # gesamten Bestand. "Nein"/Zurueck/Untaetigkeit fuehrt (Nutzer-Vorgabe)
+    # DIREKT ins Service-Menue zurueck, nicht auf den Auswahl-Screen.
+    ADMIN_GALLERY_CLEANUP_CONFIRM = auto()

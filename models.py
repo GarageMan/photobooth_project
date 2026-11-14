@@ -221,6 +221,15 @@ class UiState:
     admin_event_wallpaper_candidates: tuple[str, ...] = ()
     admin_event_wallpaper_selected: str = ""
     admin_event_wallpaper_pending: bool = False
+    # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Ziel der Wallpaper-
+    # Auswahl - "main" (Hauptmenue, hauptmenu_wallpaper.png) oder "hdmi"
+    # (HDMI-Monitor/Beamer, hdmi_monitor_wallpaper.png), umschaltbar oben
+    # auf ADMIN_EVENT_WALLPAPER_PICK. hdmi_pending = Gegenstueck zu
+    # admin_event_wallpaper_pending fuer das HDMI-Bild (Zwischenablage
+    # event_config_service.HDMI_WALLPAPER_PENDING_FILENAME, erst das
+    # AEUSSERE "Speichern" macht es wirksam).
+    admin_event_wallpaper_target: str = "main"
+    admin_event_hdmi_wallpaper_pending: bool = False
     # NEU (Sprint 13): Farbstil aus dem Wallpaper. None = kein individueller
     # Farbstil gewaehlt (App nutzt die bisherigen, fest im Code stehenden
     # Farben, siehe renderer._draw_buttons/_background_color). Ein Tripel
@@ -253,6 +262,38 @@ class UiState:
         tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None, ...
     ] = ()
     admin_event_color_style_index: int = 0
+    # --- HDMI-Ausgang / Beamer-Wiedergabe (Sprint 14) --------------------
+    # Ergebnis von app._read_admin_hdmi_status() (synchron, siehe dort) -
+    # available=False deckt "xrandr fehlt/liefert einen Fehler" ab,
+    # analog zu admin_camera_available.
+    admin_hdmi_available: bool = False
+    admin_hdmi_connected: bool = False
+    # None = unbekannt (z.B. wenn available=False).
+    admin_hdmi_powered_on: bool | None = None
+    admin_hdmi_resolution: str = ""
+    admin_hdmi_error: str = ""
+    # Laeuft die Galerie-Wiedergabe (hdmi_slideshow.py) gerade auf dem
+    # HDMI-Ausgang? Wird von app.py aus dem tatsaechlichen Prozessstatus
+    # gesetzt (HdmiOutputService.is_slideshow_running()), nicht optimistisch
+    # angenommen - schliesst eine Luecke, in der der Schalter etwas anderes
+    # zeigt als tatsaechlich laeuft (z.B. wenn der Wiedergabe-Prozess von
+    # selbst beendet wurde).
+    admin_hdmi_slideshow_running: bool = False
+    # Ergebnis von "HDMI-Test durchfuehren" - kurzer Hinweistext, leer
+    # solange kein Test lief bzw. beim erneuten Betreten des Screens.
+    admin_hdmi_test_result: str = ""
+    # --- Galerie aufraeumen (Sprint 14) -----------------------------------
+    # Ausgewaehlte Bildpfade (Reihenfolge irrelevant, aber Tupel statt
+    # frozenset - gleiches Prinzip wie session.photos: unveraenderliches
+    # Feld eines frozen dataclass, jede Aenderung ersetzt das ganze Tupel).
+    admin_gallery_cleanup_selected: tuple[str, ...] = ()
+    # Gleiches Scroll-Prinzip wie gallery_scroll_offset (Zeilenindex, nicht
+    # Pixel) - eigenes Feld, damit ein Wechsel zwischen normaler Galerie und
+    # Aufraeumen-Screen die jeweils andere Scrollposition nicht verliert.
+    admin_gallery_cleanup_scroll_offset: int = 0
+    # Kurzer Ergebnistext nach dem Loeschen ("3 Bilder gelöscht."), wird
+    # beim erneuten Betreten des Screens geleert.
+    admin_gallery_cleanup_result: str = ""
 
 
 @dataclass(slots=True, frozen=True)

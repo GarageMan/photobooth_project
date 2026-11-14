@@ -149,6 +149,9 @@ class EventType(Enum):
     # Antippen einer Zeile markiert sie (payload: {"name": str}, gleiches
     # Prinzip wie TAP_ADMIN_USB_CONFLICT_DECISION).
     TAP_ADMIN_EVENT_WALLPAPER_SELECT = auto()
+    # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Umschalter oben auf
+    # ADMIN_EVENT_WALLPAPER_PICK - Payload {"target": "main" | "hdmi"}.
+    TAP_ADMIN_EVENT_WALLPAPER_TARGET = auto()
     # "Speichern" im Auswahl-Screen - kopiert die Auswahl NUR in eine
     # Zwischenablage (event_config_service.WALLPAPER_PENDING_FILENAME),
     # noch NICHT in das echte Hauptmenue-Wallpaper (siehe
@@ -252,6 +255,30 @@ class EventType(Enum):
     # Hintergrund-Thread (Phase 2 - Konfliktaufloesung) ist fertig.
     # payload: "lines", "ok" - gleiche Form wie ADMIN_USB_EXPORT_FINISHED.
     ADMIN_USB_RESOLVE_FINISHED = auto()
+    # --- HDMI-Ausgang / Beamer-Wiedergabe (Sprint 14) -----------------------
+    TAP_ADMIN_HDMI = auto()                    # Menuepunkt in ADMIN_MENU
+    # Status synchron ermittelt (siehe app._read_admin_hdmi_status);
+    # payload: available, connected, powered_on, resolution, error.
+    ADMIN_HDMI_STATUS_READY = auto()
+    TAP_ADMIN_HDMI_OUTPUT_TOGGLE = auto()      # Schiebeschalter HDMI-Ausgang
+    TAP_ADMIN_HDMI_SLIDESHOW_TOGGLE = auto()   # Schiebeschalter Galerie-Wiedergabe
+    TAP_ADMIN_HDMI_TEST = auto()               # "HDMI-Test durchfuehren"
+    # Ergebnis des Tests (synchron oder nach kurzer Wartezeit, siehe
+    # app._run_admin_hdmi_test); payload: ok, message.
+    ADMIN_HDMI_TEST_DONE = auto()
+    # --- Galerie aufraeumen (Sprint 14) --------------------------------------
+    TAP_ADMIN_GALLERY_CLEANUP = auto()         # Menuepunkt in ADMIN_MENU
+    # Tap auf eine Kachel - waehlt sie aus bzw. wieder ab (Umschalter, kein
+    # Vollbild wie in der normalen Galerie). payload: {"path": str}.
+    TAP_ADMIN_GALLERY_CLEANUP_SELECT = auto()
+    TAP_ADMIN_GALLERY_CLEANUP_DELETE = auto()  # "Löschen" - fuehrt zur Abfrage
+    # NEU (Sprint 14): anders als "Alle Bilder loeschen" (ADMIN_DELETE_
+    # RUNNING mit Hintergrund-Thread) loescht eine Handvoll ausgewaehlter
+    # Dateien synchron und optimistisch in EINEM Schritt - kein eigener
+    # Zwischenzustand/Ergebnis-Event noetig, gleiches Prinzip wie z.B.
+    # "set_admin_camera_iso" (state_machine._step_admin_camera_field).
+    TAP_ADMIN_GALLERY_CLEANUP_CONFIRM = auto()
+    TAP_ADMIN_GALLERY_CLEANUP_ABORT = auto()
 
 
 @dataclass(slots=True, frozen=True)
