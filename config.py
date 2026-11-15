@@ -10,6 +10,7 @@ from pathlib import Path
 # - reine Farb-/Hex-Konvertierung, keine pygame-/Hardware-Abhaengigkeit
 # (siehe Modul-Docstring von wallpaper_theme_service.py), daher hier
 # gefahrlos importierbar.
+import social_media_settings
 import wallpaper_theme_service
 
 # Echte Zugangsdaten liegen NICHT im Code, sondern in local_secrets.py
@@ -213,13 +214,17 @@ GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 # Veranstaltungen mit gewerblicher Nutzung einschalten. Firmenname und
 # Plattform(en) erscheinen woertlich in der Frage und in den
 # Nutzungsbedingungen (Voraussetzung fuer eine informierte Einwilligung).
-SOCIAL_MEDIA_ENABLED = bool(_event_config.get("social_media_enabled", False))
-SOCIAL_MEDIA_COMPANY = str(_event_config.get("social_media_company") or "").strip()
-SOCIAL_MEDIA_PLATFORMS = str(_event_config.get("social_media_platforms") or "Instagram").strip()
-# Kontaktdaten der veroeffentlichenden Stelle fuer die Nutzungsbedingungen
-# (Anschrift/E-Mail) - Zeilen durch "\n" getrennt. Optional; fehlt der Wert,
-# nennen die Bedingungen nur den Firmennamen.
-SOCIAL_MEDIA_CONTACT = str(_event_config.get("social_media_contact") or "").strip()
+# GEAENDERT (Sprint 15, Fix 2): alle Social-Media-Werte werden jetzt ueber
+# social_media_settings.settings_from_event_config eingelesen - Plattformen
+# als Liste von Schluesseln (alte Textform "Instagram" wird weiter
+# verstanden), Kontakt in Einzelfeldern (altes Feld social_media_contact
+# bleibt als Rueckfall lesbar). Im Service-Menue unter
+# "Veranstaltungsdaten" -> Seite 2 pflegbar.
+_SOCIAL_MEDIA = social_media_settings.settings_from_event_config(_event_config)
+SOCIAL_MEDIA_ENABLED = _SOCIAL_MEDIA.enabled
+SOCIAL_MEDIA_COMPANY = _SOCIAL_MEDIA.company
+SOCIAL_MEDIA_PLATFORMS = _SOCIAL_MEDIA.platforms
+SOCIAL_MEDIA_CONTACT = _SOCIAL_MEDIA.legacy_contact
 
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
@@ -295,9 +300,9 @@ def needs_event_setup(event_config: dict) -> bool:
     # NEU (Sprint 15): ist die Social-Media-Freigabe eingeschaltet, muss das
     # veroeffentlichende Unternehmen benannt sein - sonst wuesste der Gast
     # nicht, wem er die Einwilligung erteilt.
-    social_enabled = bool(event_config.get("social_media_enabled", False))
-    company = str(event_config.get("social_media_company") or "").strip()
-    company_placeholder = social_enabled and company in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
+    # GEAENDERT (Sprint 15, Fix 2): Firmen- ODER Personenname genuegt.
+    social = social_media_settings.settings_from_event_config(event_config)
+    company_placeholder = social.enabled and social.publisher in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
 
     return title_placeholder or password_placeholder or company_placeholder
 
@@ -630,8 +635,18 @@ class AppConfig:
     # NEU (Sprint 15): Social-Media-Freigabe, siehe SOCIAL_MEDIA_ENABLED oben.
     social_media_enabled: bool = SOCIAL_MEDIA_ENABLED
     social_media_company: str = SOCIAL_MEDIA_COMPANY
-    social_media_platforms: str = SOCIAL_MEDIA_PLATFORMS
-    social_media_contact: str = SOCIAL_MEDIA_CONTACT
+    # GEAENDERT (Sprint 15, Fix 2): Schluessel aus
+    # social_media_settings.PLATFORM_KEYS statt freiem Text.
+    social_media_platforms: tuple[str, ...] = SOCIAL_MEDIA_PLATFORMS
+    social_media_platforms_other: str = _SOCIAL_MEDIA.platforms_other
+    social_media_contact_name: str = _SOCIAL_MEDIA.contact_name
+    social_media_street: str = _SOCIAL_MEDIA.street
+    social_media_city: str = _SOCIAL_MEDIA.city
+    social_media_email: str = _SOCIAL_MEDIA.email
+    social_media_phone: str = _SOCIAL_MEDIA.phone
+    social_media_handle: str = _SOCIAL_MEDIA.handle
+    social_media_privacy_url: str = _SOCIAL_MEDIA.privacy_url
+    social_media_contact: str = SOCIAL_MEDIA_CONTACT  # alt, nur Rueckfall
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT

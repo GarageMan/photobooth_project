@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import pygame
 
+import social_media_settings
+
 from states import AppState
 
 
@@ -123,6 +125,26 @@ class LayoutRects:
     admin_event_wallpaper_target_main: pygame.Rect
     admin_event_wallpaper_target_hdmi: pygame.Rect
     admin_event_color_style_next: pygame.Rect
+    # NEU (Sprint 15, Fix 2): Seite 2 "Social Media" der Veranstaltungsdaten
+    # (gleiches Kachelraster wie Seite 1, siehe _event_tile) sowie die
+    # Seitenwechsel-Taste zwischen "Speichern" und "Abbrechen".
+    admin_event_page_button: pygame.Rect
+    admin_event_social_toggle: pygame.Rect
+    admin_event_social_platforms_button: pygame.Rect
+    admin_event_social_company_row: pygame.Rect
+    admin_event_social_name_row: pygame.Rect
+    admin_event_social_street_row: pygame.Rect
+    admin_event_social_city_row: pygame.Rect
+    admin_event_social_email_row: pygame.Rect
+    admin_event_social_phone_row: pygame.Rect
+    admin_event_social_handle_row: pygame.Rect
+    admin_event_social_privacy_url_row: pygame.Rect
+    # Plattform-Auswahl (ADMIN_EVENT_SOCIAL_PLATFORMS): Schluessel ->
+    # Kachel, "other" = Freitext "weitere".
+    admin_event_social_platform_tiles: dict[str, pygame.Rect]
+    # "Bedingungen auf USB" auf ADMIN_EVENT_SAVED (Mitte, wie die
+    # Seitenwechsel-Taste).
+    admin_event_terms_export_button: pygame.Rect
     # NEU (Veranstaltungsdaten): Bildschirmtastatur (QWERTZ) fuer
     # ADMIN_EVENT_TEXT_ENTRY - gemeinsam fuer alle vier Textfelder, analog
     # zu pin_keys, aber mit beliebigem Text statt nur Ziffern. Schluessel:
@@ -162,6 +184,8 @@ KEYBOARD_SHIFT_MAP: dict[str, str] = {
     "1": "!", "2": "\"", "3": "§", "4": "$", "5": "%",
     "6": "&", "7": "/", "8": "(", "9": ")", "0": "=",
     ",": ";", ".": ":", "-": "_",
+    # NEU (Sprint 15, Fix 2): deutsche Belegung.
+    "+": "*", "#": "'",
 }
 
 
@@ -423,47 +447,71 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # Kamera-Menue).
     event_margin_x = 0.06
     event_row_w = 1 - 2 * event_margin_x
-    event_row_h = 0.063
-    event_row_y0 = 0.21
-    event_row_step = 0.072
 
-    def _event_row(index: int) -> pygame.Rect:
-        return rect(event_margin_x, event_row_y0 + index * event_row_step, event_row_w, event_row_h)
+    # GEAENDERT (Sprint 15, Fix 2, Nutzer-Feedback): statt acht schmaler
+    # Zeilen jetzt ein Raster aus 5 x 2 GLEICH GROSSEN Kacheln je Seite
+    # (Seite 1 "Allgemein", Seite 2 "Social Media"), deutlich besser
+    # treffbar (ca. 70 statt 45 px hoch). Letzte Reihe endet bei
+    # 0.21 + 4 * 0.11 + 0.098 = 0.748 - darunter bleibt bis lower_y (0.80)
+    # Platz fuer eine Fehlerzeile (Pflichtfelder Social Media).
+    event_tile_y0 = 0.21
+    event_tile_h = 0.098
+    event_tile_step = 0.110
+    event_tile_gap_x = 0.02
+    event_tile_w = (event_row_w - event_tile_gap_x) / 2
 
-    admin_event_title_row = _event_row(0)
-    admin_event_prefix_row = _event_row(1)
-    admin_event_wifi_ssid_row = _event_row(2)
-    admin_event_wifi_password_row = _event_row(3)
-    # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
-    admin_event_welcome_text_row = _event_row(4)
-    admin_event_qr_toggle = _event_row(5)
-    admin_event_gallery_toggle = _event_row(6)
-    # GEAENDERT (Nutzer-Feedback): Zeile 7 war bisher ein einzelner voller
-    # Button ("Wallpaper von USB laden"). Der entfallene Hinweistext darunter
-    # (siehe renderer._draw_admin_event_settings, ENTFERNT) hat keinen Platz
-    # fuer eine ganz neue Zeile hinterlassen - die "Standardwerte"-Taste
-    # teilt sich stattdessen dieselbe Zeile mit "Wallpaper von USB laden"
-    # (je Haelfte, gleiches Zwei-Button-Prinzip wie admin_camera_cancel/
-    # admin_camera_save).
-    # GEAENDERT (Sprint 13): dritter Button "Farbstil vorschlagen" dazugekommen
-    # - aus der bisherigen Zwei-Button- wird eine Drei-Button-Reihe (gleiches
-    # Aufteilungsprinzip wie admin_camera_cancel/_save/_page_prev in
-    # _camera_row weiter oben: N gleich breite Buttons mit (N-1) Luecken
-    # dazwischen).
-    _admin_event_row7 = _event_row(7)
-    _admin_event_row7_gap = round(0.015 * width)
-    _admin_event_row7_third_w = (_admin_event_row7.width - 2 * _admin_event_row7_gap) // 3
-    admin_event_wallpaper_button = pygame.Rect(
-        _admin_event_row7.x, _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
-    )
-    admin_event_defaults_button = pygame.Rect(
-        _admin_event_row7.x + _admin_event_row7_third_w + _admin_event_row7_gap,
-        _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
-    )
-    admin_event_color_style_button = pygame.Rect(
-        _admin_event_row7.x + 2 * (_admin_event_row7_third_w + _admin_event_row7_gap),
-        _admin_event_row7.y, _admin_event_row7_third_w, _admin_event_row7.height,
-    )
+    def _event_tile(row: int, col: int) -> pygame.Rect:
+        return rect(
+            event_margin_x + col * (event_tile_w + event_tile_gap_x),
+            event_tile_y0 + row * event_tile_step,
+            event_tile_w, event_tile_h,
+        )
+
+    # Seite 1 - Allgemein
+    admin_event_title_row = _event_tile(0, 0)
+    admin_event_welcome_text_row = _event_tile(0, 1)
+    admin_event_wifi_ssid_row = _event_tile(1, 0)
+    admin_event_wifi_password_row = _event_tile(1, 1)
+    admin_event_prefix_row = _event_tile(2, 0)
+    admin_event_wallpaper_button = _event_tile(2, 1)
+    admin_event_qr_toggle = _event_tile(3, 0)
+    admin_event_gallery_toggle = _event_tile(3, 1)
+    admin_event_color_style_button = _event_tile(4, 0)
+    admin_event_defaults_button = _event_tile(4, 1)
+    # Seite 2 - Social Media
+    admin_event_social_toggle = _event_tile(0, 0)
+    admin_event_social_platforms_button = _event_tile(0, 1)
+    admin_event_social_company_row = _event_tile(1, 0)
+    admin_event_social_name_row = _event_tile(1, 1)
+    admin_event_social_street_row = _event_tile(2, 0)
+    admin_event_social_city_row = _event_tile(2, 1)
+    admin_event_social_email_row = _event_tile(3, 0)
+    admin_event_social_phone_row = _event_tile(3, 1)
+    admin_event_social_handle_row = _event_tile(4, 0)
+    admin_event_social_privacy_url_row = _event_tile(4, 1)
+
+    # Seitenwechsel-Taste mittig zwischen "Speichern" (left) und
+    # "Abbrechen" (right), gleiche Hoehe. Dieselbe Position nutzt
+    # "Bedingungen auf USB" auf ADMIN_EVENT_SAVED.
+    event_mid_w = 0.20
+    admin_event_page_button = rect((1 - event_mid_w) / 2.0, lower_y, event_mid_w, button_h)
+    admin_event_terms_export_button = admin_event_page_button
+
+    # Plattform-Auswahl: 4 Reihen x 3 Spalten (10 Plattformen + "weitere").
+    platform_cols = 3
+    platform_gap_x = 0.02
+    platform_tile_w = (event_row_w - (platform_cols - 1) * platform_gap_x) / platform_cols
+    platform_tile_h = 0.115
+    platform_step = 0.13
+    platform_y0 = 0.21
+    admin_event_social_platform_tiles: dict[str, pygame.Rect] = {}
+    for index, key in enumerate((*social_media_settings.PLATFORM_KEYS, "other")):
+        row, col = divmod(index, platform_cols)
+        admin_event_social_platform_tiles[key] = rect(
+            event_margin_x + col * (platform_tile_w + platform_gap_x),
+            platform_y0 + row * platform_step,
+            platform_tile_w, platform_tile_h,
+        )
 
     # NEU (Sprint 13): "<"/">" zum Durchblaettern der bis zu drei Farbstil-
     # Kandidaten auf ADMIN_EVENT_COLOR_STYLE_PICK - quadratische Buttons wie
@@ -527,9 +575,13 @@ def build_layout(width: int, height: int) -> LayoutRects:
     kb_y0 = 0.33
     _KEYBOARD_ROWS: tuple[tuple[str, ...], ...] = (
         ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-        ("q", "w", "e", "r", "t", "z", "u", "i", "o", "p", "ü"),
-        ("a", "s", "d", "f", "g", "h", "j", "k", "l", "ö", "ä"),
-        ("y", "x", "c", "v", "b", "n", "m", ",", ".", "-"),
+        # GEAENDERT (Sprint 15, Fix 2): "+", "#" und "@" ergaenzt (E-Mail,
+        # Rufnummer, Profilname) - Position wie auf einer deutschen
+        # Tastatur ("+" neben ue, "#" neben ae); "@" am Ende der unteren
+        # Reihe statt AltGr+Q.
+        ("q", "w", "e", "r", "t", "z", "u", "i", "o", "p", "ü", "+"),
+        ("a", "s", "d", "f", "g", "h", "j", "k", "l", "ö", "ä", "#"),
+        ("y", "x", "c", "v", "b", "n", "m", ",", ".", "-", "@"),
     )
 
     def _kb_key_rect(row_index: int, col_index: int, row_len: int) -> pygame.Rect:
@@ -648,6 +700,19 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_wallpaper_target_main=admin_event_wallpaper_target_main,
         admin_event_wallpaper_target_hdmi=admin_event_wallpaper_target_hdmi,
         admin_event_color_style_next=admin_event_color_style_next,
+        admin_event_page_button=admin_event_page_button,
+        admin_event_social_toggle=admin_event_social_toggle,
+        admin_event_social_platforms_button=admin_event_social_platforms_button,
+        admin_event_social_company_row=admin_event_social_company_row,
+        admin_event_social_name_row=admin_event_social_name_row,
+        admin_event_social_street_row=admin_event_social_street_row,
+        admin_event_social_city_row=admin_event_social_city_row,
+        admin_event_social_email_row=admin_event_social_email_row,
+        admin_event_social_phone_row=admin_event_social_phone_row,
+        admin_event_social_handle_row=admin_event_social_handle_row,
+        admin_event_social_privacy_url_row=admin_event_social_privacy_url_row,
+        admin_event_social_platform_tiles=admin_event_social_platform_tiles,
+        admin_event_terms_export_button=admin_event_terms_export_button,
         keyboard_keys=keyboard_keys,
         admin_hdmi_output_toggle=admin_hdmi_output_toggle,
         admin_hdmi_slideshow_toggle=admin_hdmi_slideshow_toggle,
@@ -770,9 +835,36 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_defaults": rects.admin_event_defaults_button,
             # NEU (Sprint 13): "Farbstil vorschlagen"-Taste.
             "admin_event_color_style": rects.admin_event_color_style_button,
+            # NEU (Sprint 15, Fix 2): Seite 2 "Social Media" - enthaelt
+            # bewusst die Kacheln BEIDER Seiten; welche davon gerade
+            # sichtbar sind, filtert app._map_click_to_event anhand von
+            # model.ui.admin_event_page (gleiches Prinzip wie die
+            # Kamera-Einstellungen).
+            "admin_event_social_toggle": rects.admin_event_social_toggle,
+            "admin_event_social_platforms": rects.admin_event_social_platforms_button,
+            "admin_event_edit_social_company": rects.admin_event_social_company_row,
+            "admin_event_edit_social_name": rects.admin_event_social_name_row,
+            "admin_event_edit_social_street": rects.admin_event_social_street_row,
+            "admin_event_edit_social_city": rects.admin_event_social_city_row,
+            "admin_event_edit_social_email": rects.admin_event_social_email_row,
+            "admin_event_edit_social_phone": rects.admin_event_social_phone_row,
+            "admin_event_edit_social_handle": rects.admin_event_social_handle_row,
+            "admin_event_edit_social_privacy_url": rects.admin_event_social_privacy_url_row,
+            "admin_event_page": rects.admin_event_page_button,
             "admin_event_save": rects.left,
             "back": rects.right,
         }
+    if state == AppState.ADMIN_EVENT_SOCIAL_PLATFORMS:
+        return {
+            **{f"admin_event_platform_{key}": r for key, r in rects.admin_event_social_platform_tiles.items()},
+            "admin_event_platforms_apply": rects.left,
+            "admin_event_platforms_cancel": rects.right,
+        }
+    if state == AppState.ADMIN_EVENT_TERMS_EXPORT:
+        # Laeuft, nicht abbrechbar - bewusst kein Button.
+        return {}
+    if state == AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT:
+        return {"back": rects.back}
     if state == AppState.ADMIN_EVENT_TEXT_ENTRY:
         # Wird technisch nicht ueber diese generische Tabelle abgefragt
         # (app._map_click_to_event special-cased diesen State,
@@ -814,7 +906,14 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_color_style_cancel": rects.right,
         }
     if state == AppState.ADMIN_EVENT_SAVED:
-        return {"admin_event_restart_now": rects.left, "back": rects.right}
+        # NEU (Sprint 15, Fix 2): "Bedingungen auf USB" in der Mitte - nur
+        # bei aktiver Social-Media-Freigabe sichtbar/antippbar (Filter in
+        # app._map_click_to_event).
+        return {
+            "admin_event_restart_now": rects.left,
+            "admin_event_terms_export": rects.admin_event_terms_export_button,
+            "back": rects.right,
+        }
     if state == AppState.ADMIN_SHUTDOWN_CONFIRM:  # NEU (Sprint-11-Nachbesserung)
         # Gleiches Prinzip wie ADMIN_DELETE_CONFIRM: "Nein" bewusst LINKS.
         return {"admin_shutdown_abort": rects.left, "admin_shutdown_confirm": rects.right}

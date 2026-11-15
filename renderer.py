@@ -7,6 +7,9 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 import pygame
+
+import social_media_settings
+import terms_text
 from PIL import Image as PILImage
 
 from attract_slideshow import compute_attract_slot, fly_in_offset  # NEU (Sprint 14)
@@ -265,6 +268,13 @@ class Renderer:
         if model.state == AppState.ADMIN_USB_EXPORT_DONE and self._last_rendered_state != AppState.ADMIN_USB_EXPORT_DONE:
             self._admin_usb_done_entered_at = time.time()
         self._last_rendered_state = model.state
+        # NEU (Sprint 15, Fix 2): _draw_buttons() kennt nur den State -
+        # Seitenzahl und Sichtbarkeit von "Bedingungen auf USB" hier merken
+        # (gleiches Prinzip wie self._admin_camera_page).
+        self._admin_event_page = model.ui.admin_event_page
+        self._admin_event_terms_export_available = (
+            model.ui.admin_event_save_ok and model.ui.admin_event_social_enabled
+        )
 
         self.screen.fill(self._background_color(model.state))
 
@@ -372,6 +382,19 @@ class Renderer:
 
         if model.state == AppState.ADMIN_EVENT_SAVED:         # NEU (Veranstaltungsdaten)
             self._draw_admin_event_saved(model)
+
+        # NEU (Sprint 15, Fix 2): Plattform-Auswahl und Export der
+        # Nutzungsbedingungen (Lade-Screen nutzt die generische Methode der
+        # Wallpaper-Suche mit eigenem Hinweistext).
+        if model.state == AppState.ADMIN_EVENT_SOCIAL_PLATFORMS:
+            self._draw_admin_event_social_platforms(model)
+        if model.state == AppState.ADMIN_EVENT_TERMS_EXPORT:
+            self._blit_center(
+                "Bitte einen USB-Stick in den USB-Port rechts am Gehäuse stecken.",
+                self.font_body_admin, (170, 200, 195), round(0.48 * self.config.screen.height),
+            )
+        if model.state == AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT:
+            self._draw_admin_event_terms_export_result(model)
 
         if model.state == AppState.ADMIN_RESTART_PENDING:  # NEU (4.3)
             self._draw_admin_restart_pending(model)
@@ -481,6 +504,9 @@ class Renderer:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 15, Fix 2)
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, AppState.ADMIN_EVENT_TERMS_EXPORT,
+            AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT,
             # NEU (Sprint 13, Nutzer-Feedback nach Live-Test): weder der
             # generische Fotobox-/Event-Titel noch eine status_text-
             # Ueberschrift ("Farbstil wird berechnet ..."/"Farbstil
@@ -533,6 +559,9 @@ class Renderer:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 15, Fix 2)
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, AppState.ADMIN_EVENT_TERMS_EXPORT,
+            AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT,
             # NEU (Sprint 14): gleiches Prinzip fuer die beiden normalen
             # HDMI-/Aufraeumen-Unterseiten. ADMIN_GALLERY_CLEANUP_CONFIRM
             # ist bewusst NICHT hier gelistet - die Sicherheitsabfrage zeigt
@@ -1662,7 +1691,10 @@ class Renderer:
         Uebersetzung optisch sauber ausgerichtet bleibt - vgl. den alten,
         von Hand ausgemessenen "5. "/"    "-Trick, der nur fuer genau diesen
         einen Fall zufällig gleich breit war."""
-        prefix = f"{number}. "
+        return self._wrap_prefixed(f"{number}. ", text, font, max_width)
+
+    def _wrap_prefixed(self, prefix: str, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+        """Wie _wrap_numbered, aber mit beliebigem Praefix (NEU Sprint 15)."""
         prefix_w = font.size(prefix)[0]
         space_w = font.size(" ")[0] or 1
         indent = " " * max(1, round(prefix_w / space_w))
@@ -1706,6 +1738,11 @@ class Renderer:
             elif isinstance(item, tuple) and item[0] == "NUM":
                 _, number, text = item
                 lines.extend(self._wrap_numbered(number, text, font, max_width))
+            elif isinstance(item, tuple) and item[0] == "BUL":
+                # NEU (Sprint 15, Fix 2): Aufzaehlungspunkt (Kanalliste in den
+                # Nutzungsbedingungen) - ASCII-Bindestrich statt Unicode-
+                # Punkt, der in der Pi-Schriftart als Kaestchen erscheinen kann.
+                lines.extend(self._wrap_prefixed("  - ", item[1], font, max_width))
             else:
                 lines.extend(self._wrap_text(item, font, max_width))
         return lines
@@ -2047,306 +2084,13 @@ class Renderer:
         # ebenfalls unerreichbar, unabhaengig von qr_codes_enabled. Beide
         # Schalter muessen daher UND-verknuepft aktiv sein, damit dieser
         # Passus angezeigt wird.
-        qr_active = self.config.qr_codes_enabled and self.config.gallery_enabled
-
-        # NEU (Sprint 11): diese Aussage stimmt nur, wenn die Galerie fuer
-        # diese Veranstaltung tatsaechlich aktiv ist (config.gallery_enabled)
-        # - ohne Galerie-Funktion koennen andere Gaeste die Fotos gerade
-        # NICHT auf dem Display einsehen, das muss der rechtlich relevante
-        # Text korrekt widerspiegeln statt etwas Falsches zu behaupten.
-        # NEU (Nutzer-Feedback): explizit ergaenzt, dass jede Person, die die
-        # Galerie oeffnet, dort JEDES Foto (nicht nur die eigenen) ansehen
-        # kann - und, falls QR-Codes fuer diese Veranstaltung aktiv sind,
-        # auch herunterladen kann. Der Download-Teil wird bewusst nur
-        # erwaehnt, wenn er technisch ueberhaupt moeglich ist: ohne
-        # config.qr_codes_enabled gibt es aus der Galerie-Vollansicht heraus
-        # keinen Download-Weg (siehe _handle_gallery_fullscreen), das waere
-        # sonst eine falsche Aussage in einem rechtlich relevanten Text.
-        # NEU (Sprint 15, Social-Media-Freigabe): ist die Freigabefrage fuer
-        # diese Veranstaltung eingeschaltet, ersetzt ein eigener Abschnitt
-        # den bisherigen Satz "keine Veroeffentlichung / keine kommerzielle
-        # Nutzung" (der waere sonst falsch). Unternehmen und Plattform kommen
-        # aus event_config.json - genau wie in der Frage selbst.
-        social = self.config.social_media_enabled
-        company = self.config.social_media_company or "der Veranstalter"
-        platforms = self.config.social_media_platforms or "Social Media"
-        contact_lines = [
-            ("RAW", line.strip())
-            for line in self.config.social_media_contact.replace("\\n", "\n").split("\n")
-            if line.strip()
-        ]
-
-        if model.ui.text_language == "en":
-            if self.config.gallery_enabled:
-                gallery_visibility_text = (
-                    "During the event, your photos are visible to other "
-                    "guests of the photo booth on the display. Anyone who "
-                    "opens the gallery can view every photo in it"
-                    + (" and also download it" if self.config.qr_codes_enabled else "")
-                    + " - not just their own."
-                )
-            else:
-                gallery_visibility_text = (
-                    "A gallery feature is not active for this event - other "
-                    "guests cannot view your photos on the photo booth's "
-                    "display."
-                )
-            qr_download_paragraphs: list = [
-                ("H", "Local download (WiFi)"),
-                "",
-                (
-                    f"Via the WiFi network \"{self.config.network.guest_wifi_ssid}\" "
-                    f"(password: {self.config.network.guest_wifi_password}) you can "
-                    "download your photo after the shot using a QR code. Since "
-                    "this is an event network, the image files are theoretically "
-                    "viewable by other logged-in users. Don't download any "
-                    "pictures if you're not comfortable with that."
-                ),
-                "",
-            ] if qr_active else []
-            paragraphs = [
-                ("H", "Terms of use for the photo booth"),
-                "",
-                (
-                    "By using this photo booth (e.g. by pressing the shutter "
-                    "button) you agree that photographs will be taken of you. "
-                    "Use of the photo booth is voluntary."
-                ),
-                "",
-                ("H", "Purpose & storage"),
-                "",
-                (
-                    "The photos serve as a keepsake of the event. They are "
-                    f"stored locally on the photo booth and handed over to {company} "
-                    "as the organiser after the event."
-                ) if social else (
-                    "The photos serve as a keepsake for family, friends and "
-                    "relatives as well as the host. They are first stored "
-                    "locally on the photo booth and are subsequently processed "
-                    "further by the host within a private circle."
-                ),
-                gallery_visibility_text,
-                (
-                    "Photos are only published if you expressly allow it "
-                    "(see \"Publication\" below). Otherwise they are not passed "
-                    "on to uninvolved third parties, published online, or used "
-                    "commercially."
-                ) if social else (
-                    "The photos are not passed on to uninvolved third parties, "
-                    "published online, or used commercially."
-                ),
-                "",
-                *([
-                    ("H", f"Publication on {platforms}"),
-                    "",
-                    (
-                        f"After saving, the photo booth asks whether {company} may "
-                        f"publish your photo on {platforms} (also for advertising "
-                        "purposes). Only if you tap \"Yes\" is the photo released "
-                        f"for this purpose and handed over to {company} marked as such. Your consent is "
-                        "voluntary - without it you can use the photo booth "
-                        "without restriction and your photo stays saved."
-                    ),
-                    (
-                        "Please only agree if everyone in the photo agrees. For "
-                        "children and young people under 16, a parent or legal "
-                        "guardian must decide."
-                    ),
-                    (
-                        f"Published photos are publicly visible; {platforms} also "
-                        "processes them under its own privacy policy. You can "
-                        f"withdraw your consent at any time by contacting {company} "
-                        "- the photo is then removed. Copies already made by "
-                        "third parties cannot be retrieved."
-                    ),
-                    "",
-                ] if social else []),
-                *qr_download_paragraphs,
-                ("H", "Your rights"),
-                "",
-                (
-                    "You can object to the storage of your picture directly "
-                    "after the shot via the \"Delete\" button. You also have "
-                    "the right, at any time, to information, correction, "
-                    "deletion, restriction of processing, data portability and "
-                    "objection. Simply contact the data controller named below "
-                    "for this. Any consent given can be withdrawn at any time "
-                    "with effect for the future."
-                ),
-                "",
-                (
-                    "All stored photos are irrevocably deleted from the photo "
-                    "booth within two (2) days after the event."
-                    + (
-                        f" Photos released for {platforms} are kept by {company} "
-                        "for as long as they are published or until you withdraw "
-                        "your consent."
-                        if social else ""
-                    )
-                ),
-                "",
-                (
-                    "Children & young people should only use the photo booth "
-                    "when accompanied by, or with the consent of, a parent or "
-                    "legal guardian."
-                ),
-                "",
-                *([
-                    ("H", f"Responsible for publication on {platforms}"),
-                    "",
-                    ("RAW", company),
-                    *contact_lines,
-                    "",
-                ] if social else []),
-                ("H", "Responsible for this photo booth"),
-                "",
-                ("RAW", "Lutz Buchholz"),
-                ("RAW", "Dechant-Fein-Str. 24"),
-                ("RAW", "51375 Leverkusen, Germany"),
-                ("RAW", "lutz-peter@imail.de"),
-                ("RAW", "0163 8506144"),
-            ]
-        else:
-            if self.config.gallery_enabled:
-                gallery_visibility_text = (
-                    "Während der Veranstaltung sind deine Fotos auf dem "
-                    "Display von anderen Nutzern der Fotobox einsehbar. Jede "
-                    "Person, die die Galerie öffnet, kann dabei jedes Foto "
-                    "ansehen"
-                    + (" und auch herunterladen" if self.config.qr_codes_enabled else "")
-                    + " - nicht nur die eigenen Aufnahmen."
-                )
-            else:
-                gallery_visibility_text = (
-                    "Eine Galerie-Funktion ist bei dieser Veranstaltung nicht "
-                    "aktiv - andere Gäste können deine Fotos auf dem Display "
-                    "der Fotobox nicht einsehen."
-                )
-            qr_download_paragraphs = [
-                ("H", "Lokaler Download (WLAN)"),
-                "",
-                (
-                    f"Über das WLAN \"{self.config.network.guest_wifi_ssid}\" "
-                    f"(Passwort: {self.config.network.guest_wifi_password}) kannst "
-                    "du dein Foto nach der Aufnahme per QR-Code herunterladen. Da "
-                    "es sich um ein Veranstaltungsnetzwerk handelt, sind die "
-                    "Bilddateien dabei theoretisch für andere angemeldete Nutzer "
-                    "einsehbar. Lade keine Bilder herunter, wenn du damit nicht "
-                    "einverstanden bist."
-                ),
-                "",
-            ] if qr_active else []
-            paragraphs = [
-                ("H", "Nutzungsbedingungen zur Fotobox"),
-                "",
-                (
-                    "Mit der Nutzung dieser Fotobox (z. B. durch Betätigen des "
-                    "Auslösers) erklärst du dich damit einverstanden, dass "
-                    "Fotografien von dir angefertigt werden. Die Nutzung ist "
-                    "freiwillig."
-                ),
-                "",
-                ("H", "Verwendungszweck & Speicherung"),
-                "",
-                (
-                    "Die Fotos dienen als Erinnerung an die Veranstaltung. Sie "
-                    "werden lokal auf der Fotobox gespeichert und nach der "
-                    f"Veranstaltung an {company} als Veranstalter übergeben."
-                ) if social else (
-                    "Die Fotos dienen als Erinnerung für Familie, Freunde und "
-                    "Verwandte sowie den Gastgeber. Sie werden zunächst lokal "
-                    "auf der Fotobox gespeichert und anschließend vom "
-                    "Gastgeber in einem privaten Kreis weiterverarbeitet."
-                ),
-                gallery_visibility_text,
-                (
-                    "Fotos werden nur veröffentlicht, wenn du es ausdrücklich "
-                    "erlaubst (siehe \"Veröffentlichung\" unten). Ansonsten "
-                    "findet keine Weitergabe an unbeteiligte Dritte, keine "
-                    "Veröffentlichung im Internet und keine kommerzielle "
-                    "Nutzung statt."
-                ) if social else (
-                    "Eine Weitergabe an unbeteiligte Dritte, eine "
-                    "Veröffentlichung bspw. im Internet oder eine "
-                    "kommerzielle Nutzung findet nicht statt."
-                ),
-                "",
-                *([
-                    ("H", f"Veröffentlichung auf {platforms}"),
-                    "",
-                    (
-                        f"Nach dem Speichern fragt dich die Fotobox, ob {company} "
-                        f"dein Foto auf {platforms} veröffentlichen darf (auch zu "
-                        "Werbezwecken). Nur wenn du \"Ja\" antippst, wird das Foto "
-                        f"dafür freigegeben und gekennzeichnet an {company} übergeben. Deine "
-                        "Einwilligung ist freiwillig - ohne sie kannst du die "
-                        "Fotobox uneingeschränkt nutzen, dein Foto bleibt "
-                        "gespeichert."
-                    ),
-                    (
-                        "Bitte stimme nur zu, wenn alle Personen auf dem Foto "
-                        "einverstanden sind. Für Kinder und Jugendliche unter "
-                        "16 Jahren muss eine erziehungsberechtigte Person "
-                        "entscheiden."
-                    ),
-                    (
-                        f"Veröffentlichte Fotos sind öffentlich sichtbar; {platforms} "
-                        "verarbeitet sie zusätzlich nach eigenen "
-                        "Datenschutzbestimmungen. Du kannst deine Einwilligung "
-                        f"jederzeit bei {company} widerrufen - das Foto wird dann "
-                        "entfernt. Bereits von Dritten erstellte Kopien lassen "
-                        "sich nicht zurückholen."
-                    ),
-                    "",
-                ] if social else []),
-                *qr_download_paragraphs,
-                ("H", "Deine Rechte"),
-                "",
-                (
-                    "Du kannst der Speicherung deines Bildes direkt nach der "
-                    "Aufnahme über die \"Löschen\"-Taste widersprechen. "
-                    "Außerdem hast du jederzeit das Recht auf Auskunft, "
-                    "Berichtigung, Löschung, Einschränkung der Verarbeitung, "
-                    "Datenübertragbarkeit und Widerspruch. Wende dich dazu "
-                    "einfach an den unten genannten Verantwortlichen bzw. an "
-                    "die unten genannte Verantwortliche. Eine erteilte "
-                    "Einwilligung kannst du jederzeit mit Wirkung für die "
-                    "Zukunft widerrufen."
-                ),
-                "",
-                (
-                    "Alle gespeicherten Fotos werden unwiderruflich innerhalb "
-                    "von zwei (2) Tagen nach der Veranstaltung von der Fotobox "
-                    "gelöscht."
-                    + (
-                        f" Für {platforms} freigegebene Fotos bewahrt {company} "
-                        "auf, solange sie veröffentlicht sind oder bis du deine "
-                        "Einwilligung widerrufst."
-                        if social else ""
-                    )
-                ),
-                "",
-                (
-                    "Kinder & Jugendliche nutzen die Fotobox bitte nur in "
-                    "Begleitung bzw. mit Zustimmung einer erziehungs-"
-                    "berechtigten Person."
-                ),
-                "",
-                *([
-                    ("H", f"Verantwortlich für die Veröffentlichung auf {platforms}"),
-                    "",
-                    ("RAW", company),
-                    *contact_lines,
-                    "",
-                ] if social else []),
-                ("H", "Verantwortlich für den Betrieb"),
-                "",
-                ("RAW", "Lutz Buchholz"),
-                ("RAW", "Dechant-Fein-Str. 24"),
-                ("RAW", "51375 Leverkusen"),
-                ("RAW", "lutz-peter@imail.de"),
-                ("RAW", "0163 8506144"),
-            ]
+        # GEAENDERT (Sprint 15, Fix 2): der komplette Text (inkl. QR-/
+        # Galerie-Abhaengigkeiten und Social-Media-Abschnitt mit Betreibern
+        # je Plattform) kommt jetzt aus terms_text.py - dieselbe Quelle nutzt
+        # der Word-Export fuer den USB-Stick (terms_docx.py).
+        paragraphs = terms_text.build_terms_paragraphs(
+            terms_text.context_from_config(self.config), model.ui.text_language,
+        )
 
         lines = self._build_paragraph_lines(paragraphs, font, max_text_w)
 
@@ -2562,30 +2306,21 @@ class Renderer:
             self._draw_button("-", self.layout.admin_camera_zoom_minus, (70, 70, 75), font_size=100)
             self._draw_button("+", self.layout.admin_camera_zoom_plus, (70, 70, 75), font_size=100)
         elif state == AppState.ADMIN_EVENT_SETTINGS:
+            # GEAENDERT (Sprint 15, Fix 2): Wallpaper/Standardwerte/Farbstil
+            # sind jetzt Kacheln (siehe _draw_admin_event_settings); hier nur
+            # noch die untere Tastenreihe inkl. Seitenwechsel. Einfache
+            # ASCII-Pfeile wie im Kamera-Menue.
             self._draw_button("Speichern", self.layout.left, (0, 150, 0))
+            self._draw_button(
+                "Seite 2 >" if self._admin_event_page == 0 else "< Seite 1",
+                self.layout.admin_event_page_button, (70, 70, 90),
+            )
             self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
-            # GEAENDERT (Nutzer-Feedback): Schrift verkleinert, damit sie zur
-            # uebrigen (kompakteren) Schriftgroesse dieses Screens passt
-            # (font_body_admin, siehe _draw_admin_event_settings) statt der
-            # vorherigen grossen Standard-Buttonschrift.
-            self._draw_button(
-                "Wallpaper von USB laden", self.layout.admin_event_wallpaper_button, (0, 90, 130), font_size=30,
-            )
-            # NEU (Nutzer-Feedback): "Standardwerte"-Taste - teilt sich die
-            # Zeile mit "Wallpaper von USB laden" (siehe layout.py), gleiche
-            # Schriftgroesse fuer ein einheitliches Bild.
-            self._draw_button(
-                "Standardwerte", self.layout.admin_event_defaults_button, (90, 70, 0), font_size=30,
-            )
-            # NEU (Sprint 13): "Farbstil vorschlagen" - dritter Button in
-            # derselben Zeile (siehe layout.py, Drei-Button-Aufteilung).
-            # Bewusst NICHT eingefaerbt (dieser Button gehoert selbst zum
-            # Service-Menue) - fest wie "Standardwerte" daneben.
-            self._draw_button(
-                "Farbstil vorschlagen", self.layout.admin_event_color_style_button, (30, 90, 90), font_size=30,
-            )
-            # ENTFERNT (Nutzer-Feedback): "Anzeigen"/"Verbergen"-Button - das
-            # WLAN-Passwort steht jetzt immer als Klartext da.
+        elif state == AppState.ADMIN_EVENT_SOCIAL_PLATFORMS:
+            self._draw_button("Übernehmen", self.layout.left, (0, 150, 0))
+            self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
+        elif state == AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT:
+            self._draw_button("Zurück", self.layout.back, (100, 100, 100))
         elif state == AppState.ADMIN_EVENT_COLOR_STYLE_PICK:
             # NEU (Sprint 13): "Übernehmen" traegt den gerade sichtbaren
             # Kandidaten in den Entwurf ein, "Abbrechen" verwirft nur die
@@ -2613,6 +2348,9 @@ class Renderer:
         elif state == AppState.ADMIN_EVENT_SAVED:
             self._draw_button("Jetzt neu starten", self.layout.left, (0, 150, 0))
             self._draw_button("Später", self.layout.right, (100, 100, 100))
+            # NEU (Sprint 15, Fix 2): nur bei gespeicherter, aktiver Freigabe.
+            if self._admin_event_terms_export_available:
+                self._draw_button("Bedingungen\nauf USB", self.layout.admin_event_terms_export_button, (0, 90, 130))
         # ADMIN_EVENT_TEXT_ENTRY zeichnet die Tastatur komplett selbst (siehe
         # _draw_admin_event_text_entry, analog zu PIN_ENTRY).
         # ADMIN_EVENT_WALLPAPER_PICK_LOADING: bewusst kein Button - laeuft,
@@ -3089,77 +2827,153 @@ class Renderer:
         self._blit_center(hint, self.font_small, (220, 220, 220), round(0.17 * height), shadow=True)
 
     def _draw_admin_event_settings(self, model: AppModel) -> None:
-        """NEU (Veranstaltungsdaten): Uebersichts-/Bearbeitungs-Screen fuer
-        Titel/Praefix/WLAN-SSID/WLAN-Passwort (je ein eigenes Tap-Ziel, siehe
-        layout.admin_event_*_row/app._map_click_to_event - oeffnet
-        die Tastatur fuer genau dieses Feld) sowie QR-/Galerie-Schalter (Tap
-        kippt direkt, kein Tastatur-Umweg). Die Rects sind reine Tap-Ziele
-        ohne eigene Optik aus layout.py - die sichtbare "Karte" je Zeile wird
-        hier gezeichnet, analog zu _draw_button() aber links ausgerichtet
-        (Label+Wert passen sonst nicht nebeneinander). Der Button "Wallpaper
-        von USB laden" sowie "Speichern"/"Abbrechen" werden bereits von
-        _draw_buttons() gezeichnet, hier nicht nochmal."""
+        """Veranstaltungsdaten - GEAENDERT (Sprint 15, Fix 2, Nutzer-
+        Feedback): zwei Seiten mit je 5 x 2 GLEICH GROSSEN Kacheln (siehe
+        layout._event_tile) statt acht schmaler Zeilen.
+        Seite 1 "Allgemein": Textfelder, QR-/Galerie-Schalter, Wallpaper,
+        Farbstil, Standardwerte. Seite 2 "Social Media": Freigabe-Schalter,
+        Plattformen, Kontaktdaten der veroeffentlichenden Stelle.
+        Kachel-Typen: Wert-Kachel (kleines Label oben, Wert darunter),
+        Schalter-Kachel (gruen/rot) und Aktions-Kachel (farbig, zentriert).
+        "Speichern"/"Seite"/"Abbrechen" zeichnet _draw_buttons()."""
         ui = model.ui
+        L = self.layout
+        if ui.admin_event_page == 0:
+            pending_labels = []
+            if ui.admin_event_wallpaper_pending:
+                pending_labels.append("Hauptmenü")
+            if ui.admin_event_hdmi_wallpaper_pending:
+                pending_labels.append("HDMI")
+            self._draw_event_value_tile(L.admin_event_title_row, "Titel", ui.admin_event_title)
+            self._draw_event_value_tile(L.admin_event_welcome_text_row, "Willkommenstext", ui.admin_event_welcome_text)
+            self._draw_event_value_tile(L.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid)
+            self._draw_event_value_tile(L.admin_event_wifi_password_row, "WLAN-Passwort", ui.admin_event_wifi_password)
+            self._draw_event_value_tile(L.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix)
+            self._draw_event_action_tile(
+                L.admin_event_wallpaper_button, "Wallpaper von USB laden", (0, 90, 130),
+                ("Neu mit Speichern: " + ", ".join(pending_labels)) if pending_labels else "",
+            )
+            self._draw_event_toggle_tile(L.admin_event_qr_toggle, "QR-Code", ui.admin_event_qr_enabled)
+            self._draw_event_toggle_tile(L.admin_event_gallery_toggle, "Galerie", ui.admin_event_gallery_enabled)
+            self._draw_event_action_tile(L.admin_event_color_style_button, "Farbstil vorschlagen", (30, 90, 90))
+            self._draw_event_action_tile(L.admin_event_defaults_button, "Standardwerte", (90, 70, 0))
+        else:
+            on = ui.admin_event_social_enabled
+            self._draw_event_toggle_tile(
+                L.admin_event_social_toggle, "Bilder auf Social Media veröffentlichen?", on,
+                on_text="Ja", off_text="Nein",
+            )
+            settings = social_media_settings.make_settings(
+                platforms=ui.admin_event_social_platforms, platforms_other=ui.admin_event_social_other,
+            )
+            channels = social_media_settings.channel_names(settings)
+            self._draw_event_value_tile(
+                L.admin_event_social_platforms_button, "Plattformen (antippen zum Auswählen)",
+                ", ".join(channels), enabled=on,
+            )
+            for rect, label, value in (
+                (L.admin_event_social_company_row, "Firmenname", ui.admin_event_social_company),
+                (L.admin_event_social_name_row, "Name (Ansprechpartner/in)", ui.admin_event_social_name),
+                (L.admin_event_social_street_row, "Straße und Hausnummer", ui.admin_event_social_street),
+                (L.admin_event_social_city_row, "PLZ und Ort", ui.admin_event_social_city),
+                (L.admin_event_social_email_row, "E-Mail", ui.admin_event_social_email),
+                (L.admin_event_social_phone_row, "Telefon", ui.admin_event_social_phone),
+                (L.admin_event_social_handle_row, "Profilname (optional)", ui.admin_event_social_handle),
+                (L.admin_event_social_privacy_url_row, "Datenschutzerklärung (optional)", ui.admin_event_social_privacy_url),
+            ):
+                self._draw_event_value_tile(rect, label, value, enabled=on)
+        if ui.error_text:
+            # Pflichtfeld-Hinweis (state_machine, TAP_ADMIN_EVENT_SAVE) im
+            # freien Streifen zwischen Kacheln und unterer Tastenreihe.
+            y = (L.admin_event_defaults_button.bottom + L.left.y) // 2
+            self._blit_center(ui.error_text, self.font_small, (255, 140, 140), y)
 
-        # GEAENDERT (Nutzer-Feedback): WLAN-Passwort steht jetzt immer im
-        # Klartext da - kein Masken-/Sichtbarkeits-Umschalter mehr.
-        rows = (
-            (self.layout.admin_event_title_row, "Titel", ui.admin_event_title or "-"),
-            (self.layout.admin_event_prefix_row, "Datei-Präfix", ui.admin_event_prefix or "-"),
-            (self.layout.admin_event_wifi_ssid_row, "WLAN-SSID", ui.admin_event_wifi_ssid or "-"),
-            (self.layout.admin_event_wifi_password_row, "WLAN-Passwort", ui.admin_event_wifi_password or "-"),
-            # NEU (Nutzer-Feedback): editierbarer Hauptmenue-Willkommenstext.
-            (self.layout.admin_event_welcome_text_row, "Willkommenstext", ui.admin_event_welcome_text or "-"),
+    # --- Kachel-Bausteine (Sprint 15, Fix 2) -------------------------------
+    def _draw_event_tile_frame(self, rect: pygame.Rect, fill: tuple[int, int, int], enabled: bool = True) -> None:
+        if not enabled:
+            fill = (32, 35, 42)
+        pygame.draw.rect(self.screen, fill, rect, border_radius=10)
+        pygame.draw.rect(
+            self.screen, (255, 255, 255) if enabled else (85, 88, 96), rect, width=2, border_radius=10,
         )
-        for rect, label, value in rows:
-            pygame.draw.rect(self.screen, (45, 50, 60), rect, border_radius=10)
-            pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=10)
-            text = self._truncate_text(f"{label}: {value}", self.font_body_admin, rect.width - 24)
-            self._draw_text(
-                text, self.font_body_admin, (230, 230, 230),
-                (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
-            )
 
-        toggles = (
-            (self.layout.admin_event_qr_toggle, "QR-Code", ui.admin_event_qr_enabled),
-            (self.layout.admin_event_gallery_toggle, "Galerie", ui.admin_event_gallery_enabled),
+    def _draw_event_value_tile(self, rect: pygame.Rect, label: str, value: str, enabled: bool = True) -> None:
+        self._draw_event_tile_frame(rect, (45, 50, 60), enabled)
+        pad = 14
+        label_color = (165, 175, 190) if enabled else (95, 100, 110)
+        value_color = (240, 240, 240) if enabled else (110, 114, 122)
+        label_text = self._truncate_text(label, self.font_small, rect.width - 2 * pad)
+        self._draw_text(label_text, self.font_small, label_color, (rect.x + pad, rect.y + 6))
+        shown = value if value else "-"
+        value_text = self._truncate_text(shown, self.font_body_admin, rect.width - 2 * pad)
+        self._draw_text(
+            value_text, self.font_body_admin, value_color,
+            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 6),
         )
-        for rect, label, enabled in toggles:
-            color = (20, 90, 30) if enabled else (75, 30, 30)
-            pygame.draw.rect(self.screen, color, rect, border_radius=10)
-            pygame.draw.rect(self.screen, (255, 255, 255), rect, width=2, border_radius=10)
-            text = f"{label}: {'an' if enabled else 'aus'}"
-            self._draw_text(
-                text, self.font_body_admin, (230, 230, 230),
-                (rect.x + 16, rect.centery - self.font_body_admin.get_linesize() // 2),
-            )
 
-        # NEU (Sprint 14, Nutzer-Feedback 2026-11-14): Hinweis, welche per
-        # USB gewaehlten Bilder beim "Speichern" uebernommen werden - im
-        # freien Feld zwischen "Speichern" und "Abbrechen" (die Zeilen
-        # darueber belegen den Bildschirm bereits vollstaendig).
-        pending_labels = []
-        if ui.admin_event_wallpaper_pending:
-            pending_labels.append("Hauptmenü-Bild")
-        if ui.admin_event_hdmi_wallpaper_pending:
-            pending_labels.append("HDMI-Bild")
-        if pending_labels:
-            gap_rect = pygame.Rect(
-                self.layout.left.right, self.layout.left.y,
-                self.layout.right.x - self.layout.left.right, self.layout.left.height,
-            )
-            line_h = self.font_small.get_linesize()
-            # Kurze Zeilen - das Feld ist nur ca. 300 px breit.
-            lines = ["Neu mit Speichern:", *pending_labels]
-            y0 = gap_rect.centery - (len(lines) * line_h) // 2 + line_h // 2
-            for index, line in enumerate(lines):
-                text = self._truncate_text(line, self.font_small, gap_rect.width - 16)
-                self._blit_center(text, self.font_small, (150, 230, 170), y0 + index * line_h)
+    def _draw_event_toggle_tile(
+        self, rect: pygame.Rect, label: str, enabled_value: bool, on_text: str = "an", off_text: str = "aus",
+    ) -> None:
+        self._draw_event_tile_frame(rect, (20, 90, 30) if enabled_value else (75, 30, 30))
+        pad = 14
+        label_text = self._truncate_text(label, self.font_small, rect.width - 2 * pad)
+        self._draw_text(label_text, self.font_small, (210, 225, 210), (rect.x + pad, rect.y + 6))
+        self._draw_text(
+            on_text if enabled_value else off_text, self.font_body_admin, (255, 255, 255),
+            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 6),
+        )
 
-        # ENTFERNT (Nutzer-Feedback): der Hinweis "Titel/Praefix/WLAN/
-        # Schalter wirken erst nach einem Neustart der App." stand hier
-        # redundant zur Speichern-Bestaetigungsseite (_draw_admin_event_saved)
-        # - dort ist er jetzt die einzige, dafuer deutlich groessere Stelle.
+    def _draw_event_action_tile(
+        self, rect: pygame.Rect, label: str, color: tuple[int, int, int], subline: str = "",
+    ) -> None:
+        self._draw_event_tile_frame(rect, color)
+        if subline:
+            label_y = rect.centery - self.font_body_admin.get_linesize() // 2 - 10
+            sub_y = rect.bottom - self.font_small.get_linesize() - 6
+            text = self._truncate_text(subline, self.font_small, rect.width - 24)
+            surface = self.font_small.render(text, True, (180, 240, 190))
+            self.screen.blit(surface, surface.get_rect(midtop=(rect.centerx, sub_y)))
+        else:
+            label_y = rect.centery - self.font_body_admin.get_linesize() // 2
+        text = self._truncate_text(label, self.font_body_admin, rect.width - 24)
+        surface = self.font_body_admin.render(text, True, (255, 255, 255))
+        self.screen.blit(surface, surface.get_rect(midtop=(rect.centerx, label_y)))
+
+    def _draw_admin_event_social_platforms(self, model: AppModel) -> None:
+        """NEU (Sprint 15, Fix 2): Mehrfachauswahl der Kanaele - gewaehlte
+        Kacheln gruen, "weitere" zeigt den Freitext (Tastatur)."""
+        ui = model.ui
+        selected = set(ui.admin_event_social_platforms)
+        for key, rect in self.layout.admin_event_social_platform_tiles.items():
+            if key == "other":
+                active = bool(ui.admin_event_social_other)
+                label = "Weitere: " + ui.admin_event_social_other if active else "Weitere ..."
+            else:
+                active = key in selected
+                label = social_media_settings.PLATFORM_BY_KEY[key].label
+                if key == "web":
+                    label = "Eigene Webseite"
+            self._draw_event_tile_frame(rect, (20, 110, 40) if active else (45, 50, 60))
+            text = self._truncate_text(label, self.font_body_admin, rect.width - 24)
+            surface = self.font_body_admin.render(text, True, (255, 255, 255) if active else (200, 205, 215))
+            self.screen.blit(surface, surface.get_rect(center=rect.center))
+        count = social_media_settings.channel_count(social_media_settings.make_settings(
+            platforms=ui.admin_event_social_platforms, platforms_other=ui.admin_event_social_other,
+        ))
+        hint = f"{count} ausgewählt" + (" - Frage nennt dann \"in sozialen Medien\"" if count > 2 else "")
+        last = max(r.bottom for r in self.layout.admin_event_social_platform_tiles.values())
+        self._blit_center(hint, self.font_small, (170, 200, 195), (last + self.layout.left.y) // 2)
+
+    def _draw_admin_event_terms_export_result(self, model: AppModel) -> None:
+        """NEU (Sprint 15, Fix 2): Ergebnis "Bedingungen auf USB"."""
+        ui = model.ui
+        height = self.config.screen.height
+        color = (150, 230, 170) if ui.admin_event_terms_export_ok else (255, 150, 150)
+        y = round(0.32 * height)
+        line_height = self.font_body_admin.get_linesize() + 14
+        for line in ui.admin_event_terms_export_lines:
+            self._blit_center(line, self.font_body_admin, color, y)
+            y += line_height
 
     def _draw_admin_event_text_entry(self, model: AppModel) -> None:
         """NEU (Veranstaltungsdaten): eine gemeinsame QWERTZ-Tastatur fuer
@@ -3428,7 +3242,7 @@ class Renderer:
         )
         if ui.admin_event_save_ok:
             self._blit_center(
-                "Titel/Präfix/WLAN/Schalter wirken erst nach einem Neustart der App.",
+                "Die Änderungen wirken erst nach einem Neustart der App.",
                 self.font_body_admin, (255, 165, 0), round(0.48 * height),
             )
 
@@ -3500,6 +3314,8 @@ class Renderer:
     # sichtbar ist (0=Belichtung, 1=Sonstiges) - _draw_buttons() braucht das,
     # um nur die Buttons der aktuellen Seite zu zeichnen.
     _admin_camera_page: int = 0
+    _admin_event_page: int = 0                      # NEU (Sprint 15, Fix 2)
+    _admin_event_terms_export_available: bool = False
 
     def _draw_admin_usb_copy(self, model: AppModel) -> None:
         # GEAENDERT (4.8): Fortschrittsbalken statt durchlaufender
@@ -4204,6 +4020,21 @@ class Renderer:
         # waere.
         max_w = rect.width - 24
         size = font_size if font_size is not None else 50
+        if "\n" in label:
+            # NEU (Sprint 15, Fix 2): zweizeilige Beschriftung fuer schmale
+            # Tasten (z. B. "Bedingungen\nauf USB") - alle Zeilen in derselben,
+            # notfalls verkleinerten Schriftgroesse, gemeinsam zentriert.
+            parts = label.split("\n")
+            font = pygame.font.Font(None, size)
+            while max(font.size(part)[0] for part in parts) > max_w and size > 24:
+                size -= 4
+                font = pygame.font.Font(None, size)
+            line_h = font.get_linesize()
+            y0 = rect.centery - (line_h * len(parts)) // 2
+            for index, part in enumerate(parts):
+                surface = font.render(part, True, text_color)
+                self.screen.blit(surface, surface.get_rect(midtop=(rect.centerx, y0 + index * line_h)))
+            return
         font = self.font_button if font_size is None else pygame.font.Font(None, size)
         text_surface = font.render(label, True, text_color)
         while text_surface.get_width() > max_w and size > 24:
@@ -4579,6 +4410,9 @@ class Renderer:
             AppState.ADMIN_EVENT_SETTINGS: (18, 22, 30),
             AppState.ADMIN_EVENT_TEXT_ENTRY: (18, 22, 30),
             AppState.ADMIN_EVENT_SAVED: (18, 22, 30),
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS: (18, 22, 30),     # NEU (Sprint 15, Fix 2)
+            AppState.ADMIN_EVENT_TERMS_EXPORT: (18, 22, 30),
+            AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT: (18, 22, 30),
             # NEU (Nutzer-Feedback): Auswahlliste - gleiches ruhige Blaugrau
             # wie die uebrigen interaktiven Veranstaltungsdaten-Screens.
             AppState.ADMIN_EVENT_WALLPAPER_PICK: (18, 22, 30),

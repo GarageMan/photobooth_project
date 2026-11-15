@@ -132,6 +132,21 @@ class AppState(Enum):
     # Menuepunkt "App neu starten") oder "Spaeter" (zurueck ins
     # Service-Menue, Werte greifen erst beim naechsten Neustart).
     ADMIN_EVENT_SAVED = auto()
+    # NEU (Sprint 15, Fix 2): Mehrfachauswahl der Social-Media-Kanaele
+    # (Kacheln zum An-/Abwaehlen, "weitere" oeffnet die Tastatur).
+    # "Uebernehmen" behaelt die Auswahl im Entwurf, "Abbrechen" stellt den
+    # Stand beim Betreten wieder her. Gespeichert wird erst mit dem
+    # AEUSSEREN "Speichern" auf ADMIN_EVENT_SETTINGS.
+    ADMIN_EVENT_SOCIAL_PLATFORMS = auto()
+    # NEU (Sprint 15, Fix 2): "Bedingungen auf USB" auf ADMIN_EVENT_SAVED -
+    # Hintergrund-Thread erzeugt die ausgefuellten Nutzungsbedingungen als
+    # Word-Datei und kopiert sie auf den Stick (gleiche Stick-Routine wie
+    # Wallpaper-Suche/USB-Export). Nicht abbrechbar, analog
+    # ADMIN_EVENT_WALLPAPER_PICK_LOADING.
+    ADMIN_EVENT_TERMS_EXPORT = auto()
+    # Ergebnis (Erfolg mit Dateiname oder Fehlermeldung), "Zurueck" fuehrt
+    # auf ADMIN_EVENT_SAVED.
+    ADMIN_EVENT_TERMS_EXPORT_RESULT = auto()
     # Sicherheitsabfrage vor dem eigentlichen App-
     # Neustart ueber den Menuepunkt "App neu starten" - ein Fehltipp im
     # Service-Menue fuehrte bisher SOFORT (ohne Rueckfrage) in

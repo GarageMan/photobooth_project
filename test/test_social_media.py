@@ -37,7 +37,7 @@ def _config(enabled: bool = True, qr: bool = True):
         DEFAULT_CONFIG,
         social_media_enabled=enabled,
         social_media_company="Holler Hof",
-        social_media_platforms="Instagram",
+        social_media_platforms=("instagram",),
         qr_codes_enabled=qr,
     )
 
@@ -120,9 +120,9 @@ class SocialMediaFlowTestCase(unittest.TestCase):
         self.assertEqual(result.model.state, AppState.DELETE_CONFIRM)
 
     def test_question_fallbacks(self) -> None:
-        config = replace(DEFAULT_CONFIG, social_media_company="", social_media_platforms="")
+        config = replace(DEFAULT_CONFIG, social_media_company="", social_media_platforms=())
         self.assertEqual(
-            social_media_question(config), "Darf der Veranstalter dieses Foto auf Social Media veröffentlichen?",
+            social_media_question(config), "Darf der Veranstalter dieses Foto in sozialen Medien veröffentlichen?",
         )
 
 
@@ -261,9 +261,6 @@ class SocialMediaConfigAndLayoutTestCase(unittest.TestCase):
         self.assertFalse(buttons["social_yes"].colliderect(buttons["social_no"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class PreservedSettingsTestCase(unittest.TestCase):
     """NEU (Sprint 15): Social-Media-Einstellungen stehen nur in
@@ -299,3 +296,7 @@ class PreservedSettingsTestCase(unittest.TestCase):
         self.assertEqual(preserved_settings(self.path), {})
         self.path.write_text("[1, 2]", encoding="utf-8")
         self.assertEqual(preserved_settings(self.path), {})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -117,8 +117,10 @@ class AdminEventWelcomeTextRowTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.rects = build_layout(WIDTH, HEIGHT)
 
-    def test_row_exists_and_is_below_wifi_password_row(self) -> None:
-        self.assertGreater(
+    def test_row_exists_and_is_above_wifi_password_row(self) -> None:
+        # GEAENDERT (Sprint 15, Fix 2): Kachelraster - Willkommenstext steht
+        # jetzt rechts neben dem Titel (Reihe 0), WLAN-Passwort in Reihe 1.
+        self.assertLess(
             self.rects.admin_event_welcome_text_row.top, self.rects.admin_event_wifi_password_row.top,
         )
 

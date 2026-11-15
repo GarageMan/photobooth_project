@@ -111,6 +111,9 @@ class ExportResult:
     # SOCIAL_MEDIA_SUBFOLDER im Zielordner), siehe export_social_media().
     social_copied: int = 0
     social_skipped: int = 0
+    # NEU (Sprint 15, Fix 2): Dateiname der mitexportierten
+    # Nutzungsbedingungen (Word), "" = nicht exportiert.
+    terms_file: str = ""
 
     @property
     def ok(self) -> bool:
@@ -139,6 +142,8 @@ class ExportResult:
                 f"Social-Media-Freigaben: {self.social_copied + self.social_skipped} "
                 f"(Unterordner {SOCIAL_MEDIA_SUBFOLDER})"
             )
+        if self.terms_file:
+            lines.append(f"Nutzungsbedingungen: {self.terms_file}")
         if self.target_dir:
             lines.append(f"Zielordner: {self.target_dir.name}")
         return tuple(lines)

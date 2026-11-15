@@ -262,7 +262,23 @@ HDMI abgeschaltet und der Touch neu zugeordnet.
   Freigaben zusätzlich im Unterordner `social_media` ab; Löschen (Galerie
   aufräumen, "Alle Bilder löschen") entfernt auch die Freigaben. Die
   Nutzungsbedingungen auf der Fotobox passen sich automatisch an
-  (`docs/fotobox_nutzungsbedingungen_social_media.docx` als Langfassung)
+  (`docs/fotobox_nutzungsbedingungen_social_media.docx` als Langfassung).
+  **Seit Sprint 15, Fix 2** komplett im Service-Menü pflegbar:
+  "Veranstaltungsdaten" hat zwei Seiten mit gleich großen Kacheln
+  (Seite 1 Allgemein, Seite 2 Social Media). Seite 2: Freigabe Ja/Nein,
+  Plattformen als Mehrfachauswahl (Instagram, Facebook, TikTok, Twitch,
+  X, LinkedIn, XING, Reddit, Snapchat, eigene Webseite, weitere als
+  Freitext), Firmenname, Ansprechpartner/in, Straße, PLZ/Ort, E-Mail,
+  Telefon, Profilname, Link zur Datenschutzerklärung. Speichern prüft
+  Pflichtfelder (mind. eine Plattform, Firmen- oder Personenname, E-Mail
+  oder Telefon). Ab drei Kanälen fragt die Fotobox „… in sozialen Medien
+  veröffentlichen?“; die Nutzungsbedingungen nennen je Plattform den
+  Betreiber und mögliche Übermittlungen außerhalb der EU
+  (`social_media_settings.py`, Stand der Recherche dort im Kopf).
+  "Bedingungen auf USB" (nach dem Speichern) legt die ausgefüllten
+  Nutzungsbedingungen DE+EN als Word-Datei in den Veranstaltungsordner
+  auf dem Stick; der normale USB-Export legt sie bei aktiver Freigabe
+  automatisch mit ab. Die Bildschirmtastatur hat dafür `+`, `#` und `@`
 - **Titel im Hauptmenü ausblendbar** (Sprint 14): ein bewusst leerer
   Event-Titel (`"event_title": ""`) blendet Titel und dunklen Verlauf oben
   aus — für Wallpaper, die Logo/Schriftzug selbst tragen
@@ -469,6 +485,9 @@ vollständige, autoritative Liste in `states.py`).
 | `attract_slideshow.py` | NEU (Sprint 14): gemeinsame Zufalls-/Timing-Logik der Standby-Galerie — von `renderer.py` und `hdmi_slideshow.py` genutzt, damit beide identisch laufen |
 | `hdmi_output_service.py` | NEU (Sprint 14): HDMI-Status/ein/aus per `xrandr`, Touch-Zuordnung per `xinput` (`TouchMappingGuard` für Hotplug), Verwaltung des Beamer-Prozesses |
 | `social_media_service.py` | NEU (Sprint 15): freigegebene Kopien in `data/social_media/` anlegen, auflisten, mitlöschen |
+| `social_media_settings.py` | NEU (Sprint 15, Fix 2): Plattform-/Betreibertabelle, Einlesen, Freigabefrage, Pflichtfelder |
+| `terms_text.py` | NEU (Sprint 15, Fix 2): Nutzungsbedingungen DE/EN als Absatzliste (Bildschirm + Word-Export) |
+| `terms_docx.py` | NEU (Sprint 15, Fix 2): ausgefüllte Nutzungsbedingungen als .docx, Ablage auf USB-Stick |
 | `hdmi_slideshow.py` | NEU (Sprint 14): eigenständiger pygame-Prozess für den HDMI-Bildschirm (Galerie-Wiedergabe oder Standbild) |
 | `start_fotobox.sh` | Autostart-Skript mit Neustart-Schleife |
 | `test/test_*.py` | Unit-Tests (pytest) |
@@ -611,22 +630,28 @@ noch auf dem Beispielwert "Fotobox" steht, bzw. wenn bei aktiven
 QR-Codes das Gäste-WLAN-Passwort noch ein Platzhalter ist
 (`config.needs_event_setup`).
 
-**`social_media_enabled` / `social_media_company` / `social_media_platforms` /
-`social_media_contact`** (optional, Sprint 15): schaltet die
-Social-Media-Freigabefrage ein (Standard `false`). Unternehmen und
-Plattform erscheinen wörtlich in der Frage und in den Nutzungsbedingungen;
-`social_media_contact` (Anschrift/E-Mail, Zeilen mit `\n` getrennt) wird
-dort als verantwortliche Stelle genannt. Ist die Freigabe an, aber kein
-Unternehmen eingetragen, erscheint der Hinweis "Standardkonfiguration
-aktiv". Diese Schlüssel werden nur in der Datei gepflegt, bleiben beim
-Speichern von "Veranstaltungsdaten" erhalten und werden durch
-"Standardwerte" + "Speichern" entfernt (Freigabe wieder aus).
+**`social_media_*`** (optional, Sprint 15, Fix 2): werden über
+"Veranstaltungsdaten" → Seite 2 gepflegt (Standard: Freigabe aus).
+`social_media_platforms` ist eine Liste von Schlüsseln (`instagram`,
+`facebook`, `tiktok`, `twitch`, `x`, `linkedin`, `xing`, `reddit`,
+`snapchat`, `web`); die alte Textform `"Instagram"` wird weiter
+verstanden. Das alte Feld `social_media_contact` (Zeilen mit `\n`) gilt
+nur noch als Rückfall und entfällt beim nächsten Speichern im
+Service-Menü. "Standardwerte" + "Speichern" schaltet die Freigabe aus und
+leert die Felder.
 
 ```json
   "social_media_enabled": true,
+  "social_media_platforms": ["instagram", "facebook"],
+  "social_media_platforms_other": "",
   "social_media_company": "Holler Hof",
-  "social_media_platforms": "Instagram",
-  "social_media_contact": "Musterstraße 1\n12345 Musterstadt\ninfo@example.org"
+  "social_media_contact_name": "Ena Muster",
+  "social_media_street": "Musterstraße 1",
+  "social_media_city": "12345 Musterstadt",
+  "social_media_email": "info@example.org",
+  "social_media_phone": "",
+  "social_media_handle": "@hollerhof",
+  "social_media_privacy_url": "https://example.org/datenschutz"
 ```
 
 **`theme_button_color` / `theme_background_color` / `theme_text_color`**
@@ -939,8 +964,15 @@ HDMI-Bildaufbereitung inkl. EXIF-Drehung, Layout);
 Web-Export unabhängig von der Antwort, Dateioperationen, Mitlöschen,
 USB-Unterordner, Konfiguration, erhaltene Einstellungen beim Speichern).
 
-Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **624 Tests, alle grün**
-(Stand Sprint 15, Social-Media-Freigabe).
+**Update (Sprint 15, Fix 2):** neu `test/test_social_media_settings.py`
+(Plattformen/alte Textform, Freigabefrage ab drei Kanälen, Pflichtfelder,
+Seiten/Plattform-Auswahl/Abbrechen/Standardwerte, Export der Bedingungen,
+Kachel- und Tastaturlayout, Bedingungstext und Word-Datei);
+`test/conftest.py` lässt die Tests nie die Live-`event_config.json` lesen
+(`PHOTOBOOTH_EVENT_CONFIG`).
+
+Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **666 Tests, alle grün**
+(Stand Sprint 15, Fix 2).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
