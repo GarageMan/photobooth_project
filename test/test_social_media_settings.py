@@ -444,6 +444,15 @@ class TermsDocxTestCase(unittest.TestCase):
         self.assertEqual(len(list(stick.rglob("*.docx"))), 1)
         self.assertEqual(list(stick.rglob("*.tmp")), [])
 
+    def test_export_never_calls_global_sync(self) -> None:
+        # Bugfix 2026-11-15: os.sync() blieb auf dem Pi haengen (CIFS-Mount).
+        from unittest import mock
+        stick = self.root / "stick"
+        stick.mkdir()
+        with mock.patch("os.sync", side_effect=AssertionError("os.sync aufgerufen")):
+            ok, lines = terms_docx.export_terms_to_stick(self.ctx, "Basar", stick, self.root / "work")
+        self.assertTrue(ok, lines)
+
     def test_export_summary_line(self) -> None:
         result = ExportResult(terms_file="Nutzungsbedingungen_Basar.docx")
         self.assertIn("Nutzungsbedingungen: Nutzungsbedingungen_Basar.docx", result.summary_lines())

@@ -179,6 +179,16 @@ def terms_filename(event_title: str) -> str:
     return f"{TERMS_FILENAME_PREFIX}{sanitize_folder_name(event_title)}.docx"
 
 
+def _fsync_file(path: Path) -> None:
+    """Schreibt den Inhalt einer Datei sicher auf ihr Laufwerk (nur diese
+    Datei, kein globales sync)."""
+    try:
+        with open(path, "rb+") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        pass
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -204,13 +214,14 @@ def export_terms_to_stick(
         target_dir.mkdir(parents=True, exist_ok=True)
         tmp = target_dir / (name + ".tmp")
         shutil.copyfile(local, tmp)
+        # GEAENDERT (Bugfix 2026-11-15): nur DIESE Datei auf den Stick
+        # schreiben (fsync) statt os.sync() - os.sync() wartet auf ALLE
+        # eingebundenen Dateisysteme und blieb auf dem Pi haengen, wenn z. B.
+        # das CIFS-Backup-Laufwerk nicht erreichbar war.
+        _fsync_file(tmp)
         os.replace(tmp, target_dir / name)
         if _sha256(local) != _sha256(target_dir / name):
             return False, ("Prüfsumme stimmt nicht - bitte erneut versuchen.",)
-        try:
-            os.sync()
-        except (AttributeError, OSError):
-            pass
         return True, (f"{folder}/{name}", "Deutsch und Englisch, zum Ausdrucken geeignet.")
     except OSError as exc:
         return False, ("Schreiben auf den Stick fehlgeschlagen.", str(exc)[:70])
