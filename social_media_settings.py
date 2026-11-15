@@ -278,22 +278,20 @@ def validate(settings: SocialMediaSettings) -> list[str]:
 
 
 def contact_lines(settings: SocialMediaSettings, lang: str = "de") -> list[str]:
-    """Adressblock der veroeffentlichenden Stelle (ohne Ueberschrift)."""
-    lines: list[str] = []
-    if settings.company:
-        lines.append(settings.company)
-    if settings.contact_name:
-        prefix = "Contact: " if (lang == "en" and settings.company) else (
-            "Ansprechpartner/in: " if settings.company else ""
-        )
-        lines.append(prefix + settings.contact_name)
+    """Angaben der veroeffentlichenden Stelle (ohne Ueberschrift).
+
+    GEAENDERT (Nutzer-Feedback 2026-11-15): ohne Vorsaetze wie
+    "Ansprechpartner/in:" oder "E-Mail:" - die Teile werden in den
+    Nutzungsbedingungen in EINER Zeile, durch Kommata getrennt, ausgegeben
+    (siehe contact_line). Die englische Fassung nennt nach PLZ/Ort das
+    Land "Germany"."""
+    lines = [v for v in (settings.company, settings.contact_name) if v]
     structured = any((settings.street, settings.city, settings.email, settings.phone))
     if structured:
         lines += [v for v in (settings.street, settings.city) if v]
-        if settings.email:
-            lines.append(("E-mail: " if lang == "en" else "E-Mail: ") + settings.email)
-        if settings.phone:
-            lines.append(("Phone: " if lang == "en" else "Telefon: ") + settings.phone)
+        if lang == "en" and (settings.street or settings.city):
+            lines.append("Germany")
+        lines += [v for v in (settings.email, settings.phone) if v]
     elif settings.legacy_contact:
         lines += [
             line.strip()
@@ -301,6 +299,11 @@ def contact_lines(settings: SocialMediaSettings, lang: str = "de") -> list[str]:
             if line.strip()
         ]
     return lines
+
+
+def contact_line(settings: SocialMediaSettings, lang: str = "de") -> str:
+    """Alle Angaben in einer Zeile, durch Kommata getrennt."""
+    return ", ".join(contact_lines(settings, lang))
 
 
 def to_event_config(settings: SocialMediaSettings) -> dict:

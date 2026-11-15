@@ -68,9 +68,15 @@ class PlatformParsingTestCase(unittest.TestCase):
         settings = _full(legacy_contact="ALT", phone="0123")
         lines = sms.contact_lines(settings)
         self.assertNotIn("ALT", lines)
-        self.assertIn("E-Mail: info@hollerhof.de", lines)
-        self.assertIn("Telefon: 0123", lines)
-        self.assertIn("Ansprechpartner/in: Ena", lines)
+        # Nutzer-Feedback: eine Zeile, Kommata, keine Vorsaetze; EN mit Land.
+        self.assertEqual(
+            sms.contact_line(settings),
+            "Holler Hof, Ena, Hofweg 1, 12345 Musterdorf, info@hollerhof.de, 0123",
+        )
+        self.assertEqual(
+            sms.contact_line(settings, "en"),
+            "Holler Hof, Ena, Hofweg 1, 12345 Musterdorf, Germany, info@hollerhof.de, 0123",
+        )
 
     def test_operator_table_complete(self) -> None:
         self.assertEqual(
@@ -400,11 +406,19 @@ class TermsDocxTestCase(unittest.TestCase):
         terms_docx.write_terms_docx(target, self.ctx, "Weihnachtsbasar")
         with zipfile.ZipFile(target) as zf:
             self.assertIn("word/document.xml", zf.namelist())
+            self.assertIn("word/numbering.xml", zf.namelist())
             document = zf.read("word/document.xml").decode("utf-8")
+            styles = zf.read("word/styles.xml").decode("utf-8")
         self.assertIn("Nutzungsbedingungen zur Fotobox", document)
         self.assertIn("Terms of use for the photo booth", document)
         self.assertIn("Holler Hof", document)
-        self.assertIn("Weihnachtsbasar", document)
+        # Kein Untertitel (Platz), echte Aufzaehlung, Format der Vorlage.
+        self.assertNotIn("Weihnachtsbasar", document)
+        self.assertIn('<w:numId w:val="1"/>', document)
+        self.assertIn('w:top="567"', document)
+        self.assertIn('w:fill="DDDDDD"', styles)
+        self.assertIn("Calibri", styles)
+        self.assertIn("+49 163 8506144", document)
         self.assertFalse((self.root / "t.docx.tmp").exists())
 
     def test_xml_special_chars_are_escaped(self) -> None:

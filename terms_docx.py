@@ -31,6 +31,7 @@ _CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 </Types>"""
 
@@ -43,27 +44,40 @@ _RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 _DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
 </Relationships>"""
 
-# GEAENDERT (Nutzer-Feedback 2026-11-15): Formatierung wie die Vorlage
-# fotobox_nutzungsbedingungen.docx - Calibri 11 pt in #333333, Titel
-# zentriert in #365F91, Abschnittsueberschriften fett in #4F81BD auf
-# grauem Hintergrund (#DDDDDD).
+# GEAENDERT (Nutzer-Feedback 2026-11-15): Formatparameter 1:1 aus der
+# Vorlage "Nutzungsbedingungen zur Fotobox.docx" - Calibri 11 pt in
+# #333333, einfacher Zeilenabstand, 3 pt nach jedem Absatz; Titel 20 pt
+# fett zentriert in #365F91 ohne Abstand davor; Abschnittsueberschriften
+# 11 pt fett in #4F81BD auf grauem Hintergrund (#DDDDDD), 6 pt davor;
+# Aufzaehlungen als echte Word-Aufzaehlung (Symbol-Punkt, Einzug 1,27 cm,
+# haengend 0,63 cm, ohne Abstand zwischen den Punkten).
 _STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:docDefaults>
-<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/><w:color w:val="333333"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="de-DE"/></w:rPr></w:rPrDefault>
-<w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/><w:lang w:val="de-DE"/></w:rPr></w:rPrDefault>
+<w:pPrDefault/>
 </w:docDefaults>
-<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>
+<w:pPr><w:spacing w:after="60"/></w:pPr><w:rPr><w:color w:val="333333"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>
-<w:pPr><w:keepNext/><w:spacing w:before="0" w:after="60"/><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="365F91"/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style>
+<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="0" w:after="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="365F91"/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>
-<w:pPr><w:keepNext/><w:keepLines/><w:shd w:val="clear" w:color="auto" w:fill="DDDDDD"/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="4F81BD"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Subtle"><w:name w:val="Subtle"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="200"/><w:jc w:val="center"/></w:pPr><w:rPr><w:color w:val="7F7F7F"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Address"><w:name w:val="Address"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
-<w:style w:type="paragraph" w:styleId="Bullet"><w:name w:val="Bullet"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="40"/><w:ind w:left="720" w:hanging="360"/></w:pPr></w:style>
+<w:pPr><w:keepNext/><w:keepLines/><w:shd w:val="clear" w:color="auto" w:fill="DDDDDD"/><w:spacing w:before="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="4F81BD"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/>
+<w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style>
 </w:styles>"""
+
+_NUMBERING = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>
+<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="\uf0b7"/><w:lvlJc w:val="left"/>
+<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr></w:lvl>
+</w:abstractNum>
+<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+</w:numbering>"""
 
 _NS = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -71,12 +85,14 @@ _NS = (
 )
 
 
-def _p(text: str, style: str | None = None, page_break_before: bool = False) -> str:
+def _p(text: str, style: str | None = None, page_break_before: bool = False, bullet: bool = False) -> str:
     ppr = ""
-    if style or page_break_before:
+    if style or page_break_before or bullet:
         ppr = "<w:pPr>"
         if style:
             ppr += f'<w:pStyle w:val="{style}"/>'
+        if bullet:
+            ppr += '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>'
         if page_break_before:
             ppr += "<w:pageBreakBefore/>"
         ppr += "</w:pPr>"
@@ -94,11 +110,11 @@ def _paragraphs_xml(paragraphs: list) -> list[str]:
             if kind == "H":
                 out.append(_p(item[1], "Heading1"))
             elif kind == "RAW":
-                out.append(_p(item[1], "Address"))
+                out.append(_p(item[1]))
             elif kind == "BUL":
-                out.append(_p("–\t" + item[1], "Bullet"))
+                out.append(_p(item[1], "ListParagraph", bullet=True))
             elif kind == "NUM":
-                out.append(_p(f"{item[1]}.\t{item[2]}", "Bullet"))
+                out.append(_p(f"{item[1]}. {item[2]}", "ListParagraph"))
             continue
         out.append(_p(str(item)))
     return out
@@ -111,18 +127,15 @@ def build_docx_bytes_parts(ctx: terms_text.TermsContext, event_title: str, today
         # Erste Ueberschrift ("Nutzungsbedingungen zur Fotobox") als Titel.
         first, rest = paragraphs[0], paragraphs[1:]
         title = first[1] if isinstance(first, tuple) else str(first)
+        # GEAENDERT (Nutzer-Feedback 2026-11-15): kein Untertitel mehr
+        # (Veranstaltung/Stand) - Platz, je Sprache genau ein DIN-A4-Blatt.
         body.append(_p(title, "Title", page_break_before=index > 0))
-        label = "Veranstaltung" if lang == "de" else "Event"
-        stand = "Stand" if lang == "de" else "As of"
-        subtitle = f"{label}: {event_title}  |  {stand}: {today.strftime('%d.%m.%Y')}" if event_title else (
-            f"{stand}: {today.strftime('%d.%m.%Y')}"
-        )
-        body.append(_p(subtitle, "Subtle"))
         body.extend(_paragraphs_xml(rest))
+    # Seitenformat/-raender wie die Vorlage: A4, 1 cm rundum.
     sect = (
         '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
-        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" '
-        'w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>'
+        '<w:pgMar w:top="567" w:right="567" w:bottom="567" w:left="567" '
+        'w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
     )
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -144,6 +157,7 @@ def build_docx_bytes_parts(ctx: terms_text.TermsContext, event_title: str, today
         "_rels/.rels": _RELS,
         "word/_rels/document.xml.rels": _DOC_RELS,
         "word/styles.xml": _STYLES,
+        "word/numbering.xml": _NUMBERING,
         "word/document.xml": document,
         "docProps/core.xml": core,
     }

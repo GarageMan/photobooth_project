@@ -19,20 +19,13 @@ import social_media_settings
 from social_media_settings import PLATFORM_BY_KEY, SocialMediaSettings
 
 # Betreiber der Fotobox (unveraendert aus renderer._draw_terms uebernommen).
-OPERATOR_LINES_DE = (
-    "Lutz Buchholz",
-    "Dechant-Fein-Str. 24",
-    "51375 Leverkusen",
-    "lutz-peter@imail.de",
-    "0163 8506144",
-)
-OPERATOR_LINES_EN = (
-    "Lutz Buchholz",
-    "Dechant-Fein-Str. 24",
-    "51375 Leverkusen, Germany",
-    "lutz-peter@imail.de",
-    # GEAENDERT (Nutzer-Feedback 2026-11-15): internationale Schreibweise.
-    "+49 163 8506144",
+# GEAENDERT (Nutzer-Feedback 2026-11-15): Angaben in EINER Zeile, durch
+# Kommata getrennt (Platz: DE und EN sollen je auf ein DIN-A4-Blatt
+# passen); EN mit Land und internationaler Rufnummer.
+OPERATOR_LINE_DE = "Lutz Buchholz, Dechant-Fein-Str. 24, 51375 Leverkusen, lutz-peter@imail.de, 0163 8506144"
+OPERATOR_LINE_EN = (
+    "Lutz Buchholz, Dechant-Fein-Str. 24, 51375 Leverkusen, Germany, "
+    "lutz-peter@imail.de, +49 163 8506144"
 )
 
 
@@ -64,15 +57,14 @@ def context_from_config(config) -> TermsContext:
 def _channel_bullets(s: SocialMediaSettings, lang: str) -> list:
     publisher = s.publisher or ("the organiser" if lang == "en" else "dem Veranstalter")
     items: list = []
+    # GEAENDERT (Nutzer-Feedback 2026-11-15, Platz): Kanaele mit gleichem
+    # Betreiber und gleicher Uebermittlungsangabe (z. B. Instagram und
+    # Facebook) in EINEM Aufzaehlungspunkt.
+    groups: dict[tuple[str, str], list[str]] = {}
     for key in s.platforms:
-        p = PLATFORM_BY_KEY[key]
         if key == "web":
-            items.append(("BUL", (
-                f"Website of {publisher} - no disclosure to a platform operator."
-                if lang == "en" else
-                f"Webseite von {publisher} - keine Weitergabe an einen Plattformbetreiber."
-            )))
             continue
+        p = PLATFORM_BY_KEY[key]
         operator = p.operator_en if lang == "en" else p.operator_de
         transfer = p.transfer_en if lang == "en" else p.transfer_de
         if not transfer:
@@ -80,8 +72,16 @@ def _channel_bullets(s: SocialMediaSettings, lang: str) -> list:
                 "Processing takes place in the EU." if lang == "en"
                 else "Die Verarbeitung erfolgt in der EU."
             )
-        prefix = "operator" if lang == "en" else "Betreiber"
-        items.append(("BUL", f"{p.label}: {prefix} {operator}. {transfer}"))
+        groups.setdefault((operator, transfer), []).append(p.label)
+    prefix = "operator" if lang == "en" else "Betreiber"
+    for (operator, transfer), labels in groups.items():
+        items.append(("BUL", f"{', '.join(labels)}: {prefix} {operator}. {transfer}"))
+    if "web" in s.platforms:
+        items.append(("BUL", (
+            f"Website of {publisher} - no disclosure to a platform operator."
+            if lang == "en" else
+            f"Webseite von {publisher} - keine Weitergabe an einen Plattformbetreiber."
+        )))
     for name in s.other_names:
         items.append(("BUL", (
             f"{name}: operator and data processing according to that "
@@ -277,12 +277,12 @@ def build_terms_paragraphs(ctx: TermsContext, lang: str = "de") -> list:
             *([
                 ("H", "Responsible for publication"),
                 "",
-                *[("RAW", line) for line in social_media_settings.contact_lines(s, "en")],
+                social_media_settings.contact_line(s, "en"),
                 "",
             ] if social else []),
             ("H", "Responsible for this photo booth"),
             "",
-            *[("RAW", line) for line in OPERATOR_LINES_EN],
+            OPERATOR_LINE_EN,
         ]
 
     pub = s.publisher or "der Veranstalter"
@@ -387,10 +387,10 @@ def build_terms_paragraphs(ctx: TermsContext, lang: str = "de") -> list:
         *([
             ("H", "Verantwortlich für die Veröffentlichung"),
             "",
-            *[("RAW", line) for line in social_media_settings.contact_lines(s, "de")],
+            social_media_settings.contact_line(s, "de"),
             "",
         ] if social else []),
         ("H", "Verantwortlich für den Betrieb"),
         "",
-        *[("RAW", line) for line in OPERATOR_LINES_DE],
+        OPERATOR_LINE_DE,
     ]
