@@ -74,6 +74,10 @@ class DeleteResult:
     """Ergebnis eines kompletten Loeschlaufs."""
     deleted_photos: int = 0
     deleted_web_copies: int = 0
+    # NEU (Sprint 15): freigegebene Kopien aus data/social_media/.
+    deleted_social_media: int = 0
+    # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale aus data/rahmenlos/.
+    deleted_unframed: int = 0
     camera_status: str = "nicht geprüft"
     camera_ok: bool = False
     errors: list[str] = field(default_factory=list)
@@ -87,6 +91,13 @@ class DeleteResult:
             f"Web-Kopien (QR-Download) gelöscht: {self.deleted_web_copies}",
             f"Kamera: {self.camera_status}",
         ]
+        # NEU (Sprint 15): nur erwaehnen, wenn es ueberhaupt Freigaben gab -
+        # bei privaten Feiern ohne Social-Media-Frage bleibt der Screen wie
+        # bisher.
+        if self.deleted_social_media:
+            lines.insert(2, f"Social-Media-Freigaben gelöscht: {self.deleted_social_media}")
+        if self.deleted_unframed:
+            lines.insert(1, f"Originale ohne Rahmen gelöscht: {self.deleted_unframed}")
         if self.errors:
             lines.append(f"Fehler aufgetreten: {len(self.errors)}")
         if self.report_path is not None:
@@ -227,6 +238,8 @@ def _write_report(log_dir: Path, result: DeleteResult, started: datetime) -> Pat
     lines.append("-" * 70)
     lines.append(f"Fotos (data/photos/) geloescht:     {result.deleted_photos}")
     lines.append(f"Web-Kopien (data/web/) geloescht:   {result.deleted_web_copies}")
+    lines.append(f"Social-Media-Freigaben geloescht:   {result.deleted_social_media}")
+    lines.append(f"Originale ohne Rahmen geloescht:    {result.deleted_unframed}")
     lines.append(f"Gesamtgroesse der Dateien:          {total_bytes} Bytes")
     lines.append(f"Kamera-Speicherkarte:               {result.camera_status}")
     lines.append(f"Fehler waehrend des Laufs:          {len(result.errors)}")
@@ -282,6 +295,8 @@ def delete_all_photos(
     delete_from_camera: bool = True,
     overwrite_before_delete: bool = True,
     progress: DeleteProgress | None = None,
+    social_media_dir: Path | None = None,
+    unframed_dir: Path | None = None,
 ) -> DeleteResult:
     """Loescht alle Bilder von Pi und Kamera und schreibt ein Protokoll.
 
@@ -296,7 +311,17 @@ def delete_all_photos(
 
     photo_files = _collect_files(photo_dir, excluded, "photos")
     web_files = _collect_files(web_dir, excluded, "web")
-    result.files = photo_files + web_files
+    # NEU (Sprint 15): freigegebene Social-Media-Kopien mitloeschen
+    # (Nutzer-Vorgabe) - optional, damit bestehende Aufrufer unveraendert
+    # funktionieren.
+    social_files = (
+        _collect_files(social_media_dir, excluded, "social_media") if social_media_dir is not None else []
+    )
+    # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale mitloeschen.
+    unframed_files = (
+        _collect_files(unframed_dir, excluded, "rahmenlos") if unframed_dir is not None else []
+    )
+    result.files = photo_files + web_files + social_files + unframed_files
 
     if progress is not None:
         progress.total_files = len(result.files)
@@ -304,6 +329,8 @@ def delete_all_photos(
 
     result.deleted_photos = _delete_files(photo_files, overwrite_before_delete, result.errors, progress)
     result.deleted_web_copies = _delete_files(web_files, overwrite_before_delete, result.errors, progress)
+    result.deleted_social_media = _delete_files(social_files, overwrite_before_delete, result.errors, progress)
+    result.deleted_unframed = _delete_files(unframed_files, overwrite_before_delete, result.errors, progress)
 
     if delete_from_camera:
         # Fuer die Kamera gibt es keinen Zwischenstand - gphoto2 loescht in

@@ -11,7 +11,10 @@ Bestätigung/Löschung an, exportiert gespeicherte Fotos für den QR-Code-
 Download und zeigt zwischendurch eine "Fliegende Galerie" bereits
 aufgenommener Fotos als Blickfang. Optional zeigt ein zweiter Bildschirm
 (Beamer/Monitor am HDMI-Ausgang des Pi) die Galerie bzw. ein
-veranstaltungsspezifisches Standbild (seit v1.1.0).
+veranstaltungsspezifisches Standbild (seit v1.1.0). Für Veranstaltungen
+mit gewerblichem Veranstalter lassen sich eine Social-Media-Freigabe pro
+Foto, ausgefüllte Nutzungsbedingungen als Word-Datei und ein Bilderrahmen
+mit Firmenlogo zuschalten (seit v1.2.0).
 
 > Aktuell im Einsatz für private Veranstaltungen.
 > Alle UI-Texte und Code-Kommentare sind auf Deutsch.
@@ -252,6 +255,44 @@ HDMI abgeschaltet und der Touch neu zugeordnet.
   1920×1080 verkleinert und als PNG gespeichert. "Standardwerte" setzt
   beim Speichern auch beide Wallpaper auf den Grundzustand zurück (siehe
   [Wallpaper-Dateien](#wallpaper-dateien-ordner-assets))
+- **Social-Media-Freigabe pro Foto** (Sprint 15, pro Veranstaltung
+  schaltbar, Standard aus): nach "Speichern" fragt die Fotobox
+  „Darf <Unternehmen> dieses Foto auf <Plattform> veröffentlichen?“ —
+  **[Ja, freigeben]** / **[Nein]**, keine Antwort = Nein. Bei "Ja" landet
+  eine Kopie als `data/social_media/freigegeben_<name>.jpg` (nicht in der
+  Galerie). Das Foto selbst bleibt in jedem Fall gespeichert und (bei
+  aktiven QR-Codes) per QR-Code herunterladbar. Der USB-Export legt die
+  Freigaben zusätzlich im Unterordner `social_media` ab; Löschen (Galerie
+  aufräumen, "Alle Bilder löschen") entfernt auch die Freigaben. Die
+  Nutzungsbedingungen auf der Fotobox passen sich automatisch an
+  (`docs/fotobox_nutzungsbedingungen_social_media.docx` als Langfassung).
+  **Seit Sprint 15, Fix 2** komplett im Service-Menü pflegbar:
+  "Veranstaltungsdaten" hat zwei Seiten mit gleich großen Kacheln
+  (Seite 1 Allgemein, Seite 2 Social Media). Seite 2: Freigabe Ja/Nein,
+  Plattformen als Mehrfachauswahl (Instagram, Facebook, TikTok, Twitch,
+  X, LinkedIn, XING, Reddit, Snapchat, eigene Webseite, weitere als
+  Freitext), Firmenname, Ansprechpartner/in, Straße, PLZ/Ort, E-Mail,
+  Telefon, Profilname, Link zur Datenschutzerklärung. Speichern prüft
+  Pflichtfelder (mind. eine Plattform, Firmen- oder Personenname, E-Mail
+  oder Telefon). Ab drei Kanälen fragt die Fotobox „… in sozialen Medien
+  veröffentlichen?“; die Nutzungsbedingungen nennen je Plattform den
+  Betreiber und mögliche Übermittlungen außerhalb der EU
+  (`social_media_settings.py`, Stand der Recherche dort im Kopf).
+  "Bedingungen auf USB" (nach dem Speichern) legt die ausgefüllten
+  Nutzungsbedingungen DE+EN als Word-Datei in den Veranstaltungsordner
+  auf dem Stick; der normale USB-Export legt sie bei aktiver Freigabe
+  automatisch mit ab. Die Bildschirmtastatur hat dafür `+`, `#` und `@`
+- **Bilderrahmen** (Sprint 15, pro Veranstaltung schaltbar, Standard aus;
+  Service-Menü → Veranstaltungsdaten → Kachel "Bilderrahmen"): Goldrahmen
+  mit Schneeflocken und Holler-Hof-Logo unten rechts (Entwurf B1,
+  `assets/rahmen_weihnachten_b1.png`, 6000×4000 RGBA). Auch im Live View
+  sichtbar. Nach jeder Aufnahme entstehen zwei Versionen: `data/photos/
+  <name>.jpg` mit Rahmen (Galerie, HDMI, Attract-Modus, QR-Download,
+  Social-Media-Freigabe) und `data/rahmenlos/rahmenlos_<name>.jpg` als
+  unbearbeitetes Original (in keiner Fotoliste). USB-Export legt die
+  Originale im Unterordner `rahmenlos` ab; Löschen entfernt beide
+  Versionen; die Speicherschätzung rechnet mit zwei Dateien pro Aufnahme
+  (`photo_frame.py`)
 - **Titel im Hauptmenü ausblendbar** (Sprint 14): ein bewusst leerer
   Event-Titel (`"event_title": ""`) blendet Titel und dunklen Verlauf oben
   aus — für Wallpaper, die Logo/Schriftzug selbst tragen
@@ -457,6 +498,11 @@ vollständige, autoritative Liste in `states.py`).
 | `wallpaper_theme_service.py` | NEU (Sprint 13): Farbpaletten-Vorschläge aus dem Wallpaper, WCAG-Kontrast, Hex-Umrechnung |
 | `attract_slideshow.py` | NEU (Sprint 14): gemeinsame Zufalls-/Timing-Logik der Standby-Galerie — von `renderer.py` und `hdmi_slideshow.py` genutzt, damit beide identisch laufen |
 | `hdmi_output_service.py` | NEU (Sprint 14): HDMI-Status/ein/aus per `xrandr`, Touch-Zuordnung per `xinput` (`TouchMappingGuard` für Hotplug), Verwaltung des Beamer-Prozesses |
+| `social_media_service.py` | NEU (Sprint 15): freigegebene Kopien in `data/social_media/` anlegen, auflisten, mitlöschen |
+| `social_media_settings.py` | NEU (Sprint 15, Fix 2): Plattform-/Betreibertabelle, Einlesen, Freigabefrage, Pflichtfelder |
+| `photo_frame.py` | NEU (Sprint 15): Bilderrahmen einrechnen (kachelweise), rahmenlose Originale verwalten |
+| `terms_text.py` | NEU (Sprint 15, Fix 2): Nutzungsbedingungen DE/EN als Absatzliste (Bildschirm + Word-Export) |
+| `terms_docx.py` | NEU (Sprint 15, Fix 2): ausgefüllte Nutzungsbedingungen als .docx, Ablage auf USB-Stick |
 | `hdmi_slideshow.py` | NEU (Sprint 14): eigenständiger pygame-Prozess für den HDMI-Bildschirm (Galerie-Wiedergabe oder Standbild) |
 | `start_fotobox.sh` | Autostart-Skript mit Neustart-Schleife |
 | `test/test_*.py` | Unit-Tests (pytest) |
@@ -598,6 +644,34 @@ und USB-Ordnername nutzen dann intern weiter "Fotobox". Der Hinweisstreifen
 noch auf dem Beispielwert "Fotobox" steht, bzw. wenn bei aktiven
 QR-Codes das Gäste-WLAN-Passwort noch ein Platzhalter ist
 (`config.needs_event_setup`).
+
+**`social_media_*`** (optional, Sprint 15, Fix 2): werden über
+"Veranstaltungsdaten" → Seite 2 gepflegt (Standard: Freigabe aus).
+`social_media_platforms` ist eine Liste von Schlüsseln (`instagram`,
+`facebook`, `tiktok`, `twitch`, `x`, `linkedin`, `xing`, `reddit`,
+`snapchat`, `web`); die alte Textform `"Instagram"` wird weiter
+verstanden. Das alte Feld `social_media_contact` (Zeilen mit `\n`) gilt
+nur noch als Rückfall und entfällt beim nächsten Speichern im
+Service-Menü. "Standardwerte" + "Speichern" schaltet die Freigabe aus und
+leert die Felder.
+
+```json
+  "social_media_enabled": true,
+  "social_media_platforms": ["instagram", "facebook"],
+  "social_media_platforms_other": "",
+  "social_media_company": "Holler Hof",
+  "social_media_contact_name": "Ena Muster",
+  "social_media_street": "Musterstraße 1",
+  "social_media_city": "12345 Musterstadt",
+  "social_media_email": "info@example.org",
+  "social_media_phone": "",
+  "social_media_handle": "@hollerhof",
+  "social_media_privacy_url": "https://example.org/datenschutz"
+```
+
+**`frame_enabled`** (optional, Sprint 15): Bilderrahmen an/aus (Standard
+`false`), wird über die Kachel "Bilderrahmen" gepflegt; wirkt nach einem
+Neustart der App.
 
 **`theme_button_color` / `theme_background_color` / `theme_text_color`**
 (optional, Sprint 13): Hex-Farben wie `"#2a3479"`, werden über "Farbstil
@@ -904,8 +978,25 @@ Ein-/Ausschalten, Touch-Zuordnung mit der echten, doppelten
 HDMI-Bildaufbereitung inkl. EXIF-Drehung, Layout);
 `test_state_machine_admin.py` um HDMI-Menü und Galerie-Aufräumen erweitert.
 
-Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **597 Tests, alle grün**
-(Stand v1.1.0, nach Sprint 14).
+**Update (Sprint 15, Social-Media-Freigabe):** neu `test/test_social_media.py`
+(Ablauf Speichern → Freigabefrage → Bestätigung, Ja/Nein/Zeitablauf,
+Web-Export unabhängig von der Antwort, Dateioperationen, Mitlöschen,
+USB-Unterordner, Konfiguration, erhaltene Einstellungen beim Speichern).
+
+**Update (Sprint 15, Fix 2):** neu `test/test_social_media_settings.py`
+(Plattformen/alte Textform, Freigabefrage ab drei Kanälen, Pflichtfelder,
+Seiten/Plattform-Auswahl/Abbrechen/Standardwerte, Export der Bedingungen,
+Kachel- und Tastaturlayout, Bedingungstext und Word-Datei);
+`test/conftest.py` lässt die Tests nie die Live-`event_config.json` lesen
+(`PHOTOBOOTH_EVENT_CONFIG`).
+
+**Update (Sprint 15, Bilderrahmen):** neu `test/test_photo_frame.py`
+(zwei Versionen, EXIF, Fehlerfälle, andere Bildgrößen, Asset B1 ohne
+weiße Logo-Reste, Mitlöschen, USB-Unterordner, Speicherschätzung,
+Schalter im Service-Menü, Live-View-Overlay).
+
+Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **681 Tests, alle grün**
+(Stand Sprint 15, Bilderrahmen).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:

@@ -69,6 +69,7 @@ def assess_storage(
     critical_threshold_percent: float = DEFAULT_CRITICAL_THRESHOLD_PERCENT,
     fallback_avg_photo_size_bytes: int = DEFAULT_FALLBACK_AVG_PHOTO_SIZE_BYTES,
     disk_usage_fn: Callable[[str], object] = shutil.disk_usage,
+    files_per_photo: int = 1,
 ) -> StorageStatus:
     """Ermittelt den aktuellen Speicherstand und leitet die Alarmstufe ab.
 
@@ -103,7 +104,10 @@ def assess_storage(
         average_size = fallback_avg_photo_size_bytes
         average_is_fallback = True
 
-    estimated_remaining = free // average_size if average_size > 0 else 0
+    # NEU (Sprint 15, Bilderrahmen): bei eingeschaltetem Rahmen belegt jede
+    # Aufnahme zwei Dateien (mit Rahmen + rahmenloses Original).
+    per_shot = average_size * max(1, files_per_photo)
+    estimated_remaining = free // per_shot if per_shot > 0 else 0
 
     if free_percent <= critical_threshold_percent:
         alarm_level = 2

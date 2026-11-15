@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from admin_usb_export import ExportConflict
 from config import AppConfig
+import social_media_settings
 from events import AppEvent, EventType
 from event_config_service import DEFAULT_EVENT_VALUES  # NEU (Nutzer-Feedback): "Standardwerte"-Taste
 
@@ -23,9 +24,21 @@ _MAX_PIN_LENGTH = 12
 # editierbaren Textfelder, dazu ihre jeweilige Laengenobergrenze - grosszuegig
 # genug fuer sinnvolle Werte, aber verhindert unbegrenztes Anwachsen des
 # Puffers (gleicher Grund wie _MAX_PIN_LENGTH oben).
-_ADMIN_EVENT_TEXT_FIELDS = ("title", "prefix", "wifi_ssid", "wifi_password", "welcome_text")
+# GEAENDERT (Sprint 15, Fix 2): plus die Social-Media-Felder der Seite 2
+# ("social_other" = Freitext "weitere" aus der Plattform-Auswahl).
+_ADMIN_EVENT_SOCIAL_TEXT_FIELDS = (
+    "social_company", "social_name", "social_street", "social_city",
+    "social_email", "social_phone", "social_handle", "social_privacy_url",
+    "social_other",
+)
+_ADMIN_EVENT_TEXT_FIELDS = (
+    "title", "prefix", "wifi_ssid", "wifi_password", "welcome_text",
+) + _ADMIN_EVENT_SOCIAL_TEXT_FIELDS
 _ADMIN_EVENT_FIELD_MAX_LENGTH = {
     "title": 40, "prefix": 20, "wifi_ssid": 32, "wifi_password": 63,
+    "social_company": 60, "social_name": 60, "social_street": 60,
+    "social_city": 60, "social_email": 80, "social_phone": 30,
+    "social_handle": 40, "social_privacy_url": 100, "social_other": 60,
     # NEU (Nutzer-Feedback): grosszuegiger als die uebrigen Felder - ist ein
     # ganzer Satz, kein einzelnes Wort/Name. Wird auf dem Hauptmenue ueber
     # die automatische Schriftverkleinerung (siehe renderer.Renderer.
@@ -41,7 +54,66 @@ _ADMIN_EVENT_FIELD_LABELS = {
     "wifi_ssid": "WLAN-SSID",
     "wifi_password": "WLAN-Passwort",
     "welcome_text": "Willkommenstext",
+    "social_company": "Firmenname",
+    "social_name": "Name (Ansprechpartner/in)",
+    "social_street": "Straße und Hausnummer",
+    "social_city": "PLZ und Ort",
+    "social_email": "E-Mail",
+    "social_phone": "Telefon",
+    "social_handle": "Profilname (z. B. @firma)",
+    "social_privacy_url": "Link zur Datenschutzerklärung",
+    "social_other": "Weitere Plattformen (Komma-getrennt)",
 }
+
+# NEU (Sprint 15, Fix 2): alle Social-Media-Entwurfsfelder der Seite 2 -
+# fuer Snapshot ("Abbrechen") und "Standardwerte".
+_SOCIAL_UI_DEFAULTS = {
+    "admin_event_social_enabled": False,
+    "admin_event_social_platforms": (),
+    "admin_event_social_other": "",
+    "admin_event_social_company": "",
+    "admin_event_social_name": "",
+    "admin_event_social_street": "",
+    "admin_event_social_city": "",
+    "admin_event_social_email": "",
+    "admin_event_social_phone": "",
+    "admin_event_social_handle": "",
+    "admin_event_social_privacy_url": "",
+}
+_SOCIAL_UI_FIELDS = tuple(_SOCIAL_UI_DEFAULTS)
+
+
+def _admin_event_title(page: int) -> str:
+    """Ueberschrift der Veranstaltungsdaten je Seite (Sprint 15, Fix 2)."""
+    return "Social Media (Seite 2/2)" if page == 1 else "Veranstaltungsdaten (1/2)"
+
+
+def _social_snapshot(ui) -> tuple:
+    return tuple(getattr(ui, name) for name in _SOCIAL_UI_FIELDS)
+
+
+def _social_restore(snapshot: tuple) -> dict:
+    if len(snapshot) != len(_SOCIAL_UI_FIELDS):
+        return dict(_SOCIAL_UI_DEFAULTS)
+    return dict(zip(_SOCIAL_UI_FIELDS, snapshot))
+
+
+def social_settings_from_ui(ui) -> social_media_settings.SocialMediaSettings:
+    """Entwurf der Seite 2 als SocialMediaSettings (Pflichtfeldpruefung,
+    Speichern, Word-Export)."""
+    return social_media_settings.make_settings(
+        enabled=ui.admin_event_social_enabled,
+        platforms=ui.admin_event_social_platforms,
+        platforms_other=ui.admin_event_social_other,
+        company=ui.admin_event_social_company,
+        contact_name=ui.admin_event_social_name,
+        street=ui.admin_event_social_street,
+        city=ui.admin_event_social_city,
+        email=ui.admin_event_social_email,
+        phone=ui.admin_event_social_phone,
+        handle=ui.admin_event_social_handle,
+        privacy_url=ui.admin_event_social_privacy_url,
+    )
 # Datei-Praefix landet direkt im Dateinamen gespeicherter Fotos (siehe
 # hw_capture_provider.py) - deshalb auf ein sicheres Zeichenset beschraenkt,
 # statt beliebigen Text zuzulassen (kein Leerzeichen, kein "/", keine Umlaute).
@@ -73,6 +145,16 @@ _SAVE_CONFIRMATION_TEXT_QR = (
 _SAVE_CONFIRMATION_TEXT_NO_QR = (
     "Das Bild kann in der Galerie betrachtet werden."
 )
+
+
+def social_media_question(config) -> str:
+    """NEU (Sprint 15): Text der Freigabefrage - nennt Unternehmen und
+    Plattform(en) ausdruecklich (Voraussetzung fuer eine informierte
+    Einwilligung). GEAENDERT (Fix 2): ab drei Kanaelen "in sozialen Medien"
+    statt einer unlesbar langen Aufzaehlung (siehe
+    social_media_settings.channel_phrase); die vollstaendige Liste steht in
+    den Nutzungsbedingungen."""
+    return social_media_settings.consent_question(social_media_settings.settings_from_config(config))
 
 
 class StateMachine:
@@ -381,15 +463,25 @@ class StateMachine:
             # ist nicht nur Aufraeumen, sondern auch Datenschutz: kein Foto
             # landet dann ueberhaupt erst dort, wo es theoretisch abrufbar
             # waere.
-            if self.config.qr_codes_enabled:
-                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_QR)
-                actions = ("export_photo", "set_led_qr", "stop_preview")
-            else:
-                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_NO_QR)
-                actions = ("set_led_qr", "stop_preview")
-            return TransitionResult(
-                model=model.evolve(state=AppState.QR_DISPLAY, session=session, timers=timers, ui=ui),
-                actions=actions,
+            export_actions = ("export_photo",) if self.config.qr_codes_enabled else ()
+            # NEU (Sprint 15): bei eingeschalteter Social-Media-Freigabe
+            # kommt VOR der Speicher-Bestaetigung die Frage, ob das Foto
+            # veroeffentlicht werden darf. Das Foto ist zu diesem Zeitpunkt
+            # bereits gespeichert und (bei QR-Codes) ins Web-Verzeichnis
+            # exportiert - unabhaengig von der Antwort (Nutzer-Vorgabe).
+            if self.config.social_media_enabled:
+                consent_timers = replace(
+                    timers, idle_deadline=now + self.config.timeouts.social_media_consent_seconds,
+                )
+                ui = replace(model.ui, status_text=social_media_question(self.config))
+                return TransitionResult(
+                    model=model.evolve(
+                        state=AppState.SOCIAL_MEDIA_CONSENT, session=session, timers=consent_timers, ui=ui,
+                    ),
+                    actions=export_actions + ("set_led_review", "stop_preview"),
+                )
+            return self._go_save_confirmation(
+                model.evolve(session=session), now, export_actions + ("stop_preview",),
             )
         if event.type == EventType.TAP_DELETE:
             timers = replace(model.timers, delete_deadline=now + self.config.timeouts.delete_confirm_seconds)
@@ -402,6 +494,33 @@ class StateMachine:
                 model=self._main_menu_model(model.evolve(session=session), now),
                 actions=("delete_photo", "set_led_main_menu", "stop_preview"),
             )
+        return TransitionResult(model=model)
+
+    def _go_save_confirmation(
+        self, model: AppModel, now: float, extra_actions: tuple[str, ...] = (),
+    ) -> TransitionResult:
+        """Speicher-Bestaetigung (AppState.QR_DISPLAY) - bisher direkt in
+        _handle_review/TAP_SAVE, seit Sprint 15 auch nach der Social-Media-
+        Freigabefrage erreichbar. extra_actions laufen VOR set_led_qr."""
+        timers = replace(model.timers, qr_deadline=now + self.config.timeouts.qr_display_seconds)
+        text = _SAVE_CONFIRMATION_TEXT_QR if self.config.qr_codes_enabled else _SAVE_CONFIRMATION_TEXT_NO_QR
+        ui = replace(model.ui, status_text=text)
+        return TransitionResult(
+            model=model.evolve(state=AppState.QR_DISPLAY, timers=timers, ui=ui),
+            actions=extra_actions + ("set_led_qr",),
+        )
+
+    def _handle_social_media_consent(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        """NEU (Sprint 15): Antwort auf die Social-Media-Freigabefrage.
+        "Ja" -> Kopie nach data/social_media/ (Action
+        "release_photo_social_media", siehe app.py/social_media_service).
+        "Nein" und Untaetigkeit -> KEINE Freigabe (eine Einwilligung
+        braucht eine aktive Zustimmung). In jedem Fall bleibt das Foto
+        gespeichert und es geht weiter zur Speicher-Bestaetigung."""
+        if event.type == EventType.TAP_SOCIAL_MEDIA_YES:
+            return self._go_save_confirmation(model, now, ("release_photo_social_media",))
+        if event.type in {EventType.TAP_SOCIAL_MEDIA_NO, EventType.IDLE_TIMEOUT}:
+            return self._go_save_confirmation(model, now)
         return TransitionResult(model=model)
 
     def _handle_delete_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
@@ -805,7 +924,23 @@ class StateMachine:
                 admin_event_theme_button=payload.get("theme_button"),
                 admin_event_theme_background=payload.get("theme_background"),
                 admin_event_theme_text=payload.get("theme_text"),
+                # NEU (Sprint 15, Fix 2): Seite 2 "Social Media".
+                admin_event_social_enabled=bool(payload.get("social_enabled", False)),
+                admin_event_social_platforms=tuple(payload.get("social_platforms", ())),
+                admin_event_social_other=str(payload.get("social_other", "")),
+                admin_event_social_company=str(payload.get("social_company", "")),
+                admin_event_social_name=str(payload.get("social_name", "")),
+                admin_event_social_street=str(payload.get("social_street", "")),
+                admin_event_social_city=str(payload.get("social_city", "")),
+                admin_event_social_email=str(payload.get("social_email", "")),
+                admin_event_social_phone=str(payload.get("social_phone", "")),
+                admin_event_social_handle=str(payload.get("social_handle", "")),
+                admin_event_social_privacy_url=str(payload.get("social_privacy_url", "")),
+                # NEU (Sprint 15): Bilderrahmen.
+                admin_event_frame_enabled=bool(payload.get("frame_enabled", False)),
             )
+            changes["admin_event_entry_frame_enabled"] = changes["admin_event_frame_enabled"]
+            changes["admin_event_entry_social"] = tuple(changes[name] for name in _SOCIAL_UI_FIELDS)
             changes.update(
                 admin_event_entry_title=changes["admin_event_title"],
                 admin_event_entry_prefix=changes["admin_event_prefix"],
@@ -831,10 +966,30 @@ class StateMachine:
                 ui = replace(model.ui, admin_event_qr_enabled=not model.ui.admin_event_qr_enabled)
             elif field == "gallery":
                 ui = replace(model.ui, admin_event_gallery_enabled=not model.ui.admin_event_gallery_enabled)
+            elif field == "frame":
+                # NEU (Sprint 15): Bilderrahmen an/aus.
+                ui = replace(model.ui, admin_event_frame_enabled=not model.ui.admin_event_frame_enabled)
+            elif field == "social":
+                # NEU (Sprint 15, Fix 2): Social-Media-Freigabe an/aus.
+                ui = replace(
+                    model.ui, admin_event_social_enabled=not model.ui.admin_event_social_enabled, error_text=None,
+                )
             else:
                 return TransitionResult(model=model)
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
             return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_PAGE:
+            # NEU (Sprint 15, Fix 2): Seite 1 <-> Seite 2.
+            page = 1 - model.ui.admin_event_page
+            ui = replace(
+                model.ui, admin_event_page=page, error_text=None, status_text=_admin_event_title(page),
+            )
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS:
+            if not model.ui.admin_event_social_enabled:
+                return TransitionResult(model=model)
+            return self._go_admin_event_social_platforms(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_DEFAULTS:
             # NEU (Nutzer-Feedback): befuellt nur den Entwurf (admin_event_*),
             # NICHT den Entry-Snapshot (admin_event_entry_*) - "Abbrechen"
@@ -862,6 +1017,11 @@ class StateMachine:
                 # Hauptmenue UND HDMI-Monitor.
                 admin_event_wallpaper_pending=False,
                 admin_event_hdmi_wallpaper_pending=False,
+                # NEU (Sprint 15, Fix 2): Social-Media-Freigabe aus, alle
+                # Felder der Seite 2 leer (Standard fuer private Feiern).
+                **_SOCIAL_UI_DEFAULTS,
+                admin_event_frame_enabled=False,   # NEU (Sprint 15): Rahmen aus
+                error_text=None,
             )
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
             # NEU (Sprint 14, Nutzer-Feedback): HDMI- und Hauptmenue-Wallpaper
@@ -876,6 +1036,18 @@ class StateMachine:
         if event.type == EventType.TAP_ADMIN_EVENT_COLOR_STYLE_ENTER:      # NEU (Sprint 13)
             return self._go_admin_event_color_style_loading(model, now)
         if event.type == EventType.TAP_ADMIN_EVENT_SAVE:
+            # NEU (Sprint 15, Fix 2): Pflichtfelder bei eingeschalteter
+            # Social-Media-Freigabe - ohne Kanal, Namen und erreichbaren
+            # Kontakt (Widerruf!) wird nicht gespeichert, die Seite 2 zeigt
+            # stattdessen, was fehlt.
+            problems = social_media_settings.validate(social_settings_from_ui(model.ui))
+            if problems:
+                ui = replace(
+                    model.ui, admin_event_page=1, status_text=_admin_event_title(1),
+                    error_text="Bitte ergänzen: " + ", ".join(problems),
+                )
+                timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+                return TransitionResult(model=model.evolve(ui=ui, timers=timers))
             # Schreibt noch nicht selbst - das Ergebnis kommt synchron als
             # ADMIN_EVENT_SAVE_RESULT zurueck (siehe
             # app._save_admin_event_settings, das bei Erfolg
@@ -908,6 +1080,9 @@ class StateMachine:
                 admin_event_theme_button=model.ui.admin_event_entry_theme_button,
                 admin_event_theme_background=model.ui.admin_event_entry_theme_background,
                 admin_event_theme_text=model.ui.admin_event_entry_theme_text,
+                # NEU (Sprint 15, Fix 2): Seite 2 ebenfalls zuruecksetzen.
+                **_social_restore(model.ui.admin_event_entry_social),
+                admin_event_frame_enabled=model.ui.admin_event_entry_frame_enabled,
             )
             menu_result = self._go_admin_menu(model.evolve(ui=ui), now)
             # NEU (Nutzer-Feedback, Bugfix): ein evtl. in dieser Sitzung
@@ -925,7 +1100,7 @@ class StateMachine:
     def _go_admin_event_settings(self, model: AppModel, now: float) -> TransitionResult:
         ui = replace(
             model.ui,
-            status_text="Veranstaltungsdaten",
+            status_text=_admin_event_title(0),
             error_text=None,
             admin_event_title="",
             admin_event_prefix="",
@@ -961,6 +1136,14 @@ class StateMachine:
             # Screens zurueckgesetzt.
             admin_event_color_style_candidates=(),
             admin_event_color_style_index=0,
+            # NEU (Sprint 15, Fix 2): immer auf Seite 1 beginnen; Seite 2
+            # wird gleich per ADMIN_EVENT_SETTINGS_READY befuellt.
+            admin_event_page=0,
+            **_SOCIAL_UI_DEFAULTS,
+            admin_event_entry_social=(),
+            admin_event_social_platforms_entry=(),
+            admin_event_terms_export_ok=False,
+            admin_event_terms_export_lines=(),
         )
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
         return TransitionResult(
@@ -968,12 +1151,55 @@ class StateMachine:
             actions=("collect_admin_event_settings",),
         )
 
+    # --- Plattform-Auswahl (Sprint 15, Fix 2) ------------------------------
+    def _go_admin_event_social_platforms(self, model: AppModel, now: float) -> TransitionResult:
+        ui = replace(
+            model.ui,
+            status_text="Plattformen auswählen",
+            error_text=None,
+            admin_event_social_platforms_entry=(
+                model.ui.admin_event_social_platforms, model.ui.admin_event_social_other,
+            ),
+        )
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, ui=ui, timers=timers))
+
+    def _return_to_admin_event_social_platforms(self, model: AppModel, now: float) -> TransitionResult:
+        """Rueckkehr von der Tastatur ("weitere") - ohne neuen Snapshot."""
+        ui = replace(model.ui, status_text="Plattformen auswählen", error_text=None)
+        timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+        return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, ui=ui, timers=timers))
+
+    def _handle_admin_event_social_platforms(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORM_TOGGLE:
+            key = str(event.payload.get("key", ""))
+            if key == "other":
+                return self._go_admin_event_text_entry(model, now, "social_other")
+            if key not in social_media_settings.PLATFORM_KEYS:
+                return TransitionResult(model=model)
+            current = set(model.ui.admin_event_social_platforms)
+            current ^= {key}
+            platforms = tuple(k for k in social_media_settings.PLATFORM_KEYS if k in current)
+            ui = replace(model.ui, admin_event_social_platforms=platforms)
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
+            return TransitionResult(model=model.evolve(ui=ui, timers=timers))
+        if event.type == EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_APPLY:
+            return self._return_to_admin_event_settings(model, now)
+        if event.type in {EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_CANCEL, EventType.IDLE_TIMEOUT}:
+            entry = model.ui.admin_event_social_platforms_entry
+            if len(entry) == 2:
+                model = model.evolve(ui=replace(
+                    model.ui, admin_event_social_platforms=entry[0], admin_event_social_other=entry[1],
+                ))
+            return self._return_to_admin_event_settings(model, now)
+        return TransitionResult(model=model)
+
     def _return_to_admin_event_settings(self, model: AppModel, now: float) -> TransitionResult:
         """Rueckkehr aus einem Unter-Screen (Tastatur, Wallpaper-Ergebnis) -
         anders als _go_admin_event_settings OHNE Reset/Snapshot-Neubefuellung
         und OHNE die "collect_admin_event_settings"-Action, damit der noch
         offene Bearbeitungsstand erhalten bleibt."""
-        ui = replace(model.ui, status_text="Veranstaltungsdaten", error_text=None)
+        ui = replace(model.ui, status_text=_admin_event_title(model.ui.admin_event_page), error_text=None)
         timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
         return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SETTINGS, ui=ui, timers=timers))
 
@@ -1027,11 +1253,17 @@ class StateMachine:
             # AUSNAHME "title": ein leerer Titel ist gewollt (kein Titel im
             # Hauptmenue, z.B. wenn das Wallpaper selbst Logo/Schriftzug
             # traegt, siehe config.EVENT_TITLE_VISIBLE) und wird uebernommen.
-            if field and (value or field == "title"):
+            # NEU (Sprint 15, Fix 2): auch die Social-Media-Felder duerfen
+            # bewusst geleert werden (z. B. Telefon entfernen).
+            if field and (value or field == "title" or field in _ADMIN_EVENT_SOCIAL_TEXT_FIELDS):
                 ui = replace(model.ui, **{f"admin_event_{field}": value})
                 result_model = model.evolve(ui=ui)
+            if field == "social_other":
+                return self._return_to_admin_event_social_platforms(result_model, now)
             return self._return_to_admin_event_settings(result_model, now)
         if event.type in {EventType.TEXT_ENTRY_CANCEL, EventType.IDLE_TIMEOUT}:
+            if field == "social_other":
+                return self._return_to_admin_event_social_platforms(model, now)
             return self._return_to_admin_event_settings(model, now)
         return TransitionResult(model=model)
 
@@ -1253,12 +1485,50 @@ class StateMachine:
         return TransitionResult(model=model)
 
     def _handle_admin_event_saved(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.TAP_ADMIN_EVENT_TERMS_EXPORT:
+            # NEU (Sprint 15, Fix 2): ausgefuellte Nutzungsbedingungen als
+            # Word-Datei auf den USB-Stick (nur bei erfolgreich gespeicherter,
+            # eingeschalteter Social-Media-Freigabe - der Button erscheint
+            # sonst gar nicht, siehe app._map_click_to_event).
+            if not (model.ui.admin_event_save_ok and model.ui.admin_event_social_enabled):
+                return TransitionResult(model=model)
+            ui = replace(model.ui, status_text="Nutzungsbedingungen auf USB ...", error_text=None)
+            timers = replace(model.timers, idle_deadline=None)
+            return TransitionResult(
+                model=model.evolve(state=AppState.ADMIN_EVENT_TERMS_EXPORT, ui=ui, timers=timers),
+                actions=("export_event_terms",),
+            )
         if event.type == EventType.TAP_ADMIN_EVENT_RESTART_NOW:
             # Exakt derselbe Ablauf wie der bestehende Menuepunkt
             # "App neu starten" - kein eigener Neustart-Mechanismus.
             return self._go_admin_restart_pending(model, now)
         if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
             return self._go_admin_menu(model, now)
+        return TransitionResult(model=model)
+
+    def _handle_admin_event_terms_export(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type == EventType.ADMIN_EVENT_TERMS_EXPORT_FINISHED:
+            ok = bool(event.payload.get("ok", False))
+            ui = replace(
+                model.ui,
+                status_text="Nutzungsbedingungen exportiert" if ok else "Export fehlgeschlagen",
+                admin_event_terms_export_ok=ok,
+                admin_event_terms_export_lines=tuple(event.payload.get("lines", ())),
+            )
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(
+                model=model.evolve(state=AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT, ui=ui, timers=timers),
+            )
+        return TransitionResult(model=model)
+
+    def _handle_admin_event_terms_export_result(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        if event.type in {EventType.TAP_BACK, EventType.IDLE_TIMEOUT}:
+            ui = replace(
+                model.ui,
+                status_text="Veranstaltungsdaten gespeichert" if model.ui.admin_event_save_ok else "Speichern fehlgeschlagen",
+            )
+            timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_menu_idle_seconds)
+            return TransitionResult(model=model.evolve(state=AppState.ADMIN_EVENT_SAVED, ui=ui, timers=timers))
         return TransitionResult(model=model)
 
     # NEU (4.3): kurzer, nicht abbrechbarer Zwischenscreen vor dem

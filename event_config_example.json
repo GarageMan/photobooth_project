@@ -5,5 +5,19 @@
   "guest_wifi_password": "BITTE_ANPASSEN",
   "welcome_text": "Lass dich zur Erinnerung an die Veranstaltung fotografieren!",
   "qr_codes_enabled": true,
-  "gallery_enabled": true
+  "gallery_enabled": true,
+  "social_media_enabled": false,
+  "social_media_company": "",
+  "social_media_platforms": [
+    "instagram"
+  ],
+  "social_media_platforms_other": "",
+  "social_media_contact_name": "",
+  "social_media_street": "",
+  "social_media_city": "",
+  "social_media_email": "",
+  "social_media_phone": "",
+  "social_media_handle": "",
+  "social_media_privacy_url": "",
+  "frame_enabled": false
 }

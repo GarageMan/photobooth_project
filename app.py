@@ -65,6 +65,8 @@ from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolution
     apply_conflict_resolutions,
     clear_stick,
     export_photos,
+    export_social_media,  # NEU (Sprint 15)
+    export_unframed,  # NEU (Sprint 15, Bilderrahmen)
 )
 from storage_service import StorageService
 from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
@@ -73,6 +75,12 @@ from renderer import Renderer
 from admin_service import PinLockout, SecretGestureDetector  # NEU (3.4), umbenannt (Sprint 11, vormals shutdown_service.py)
 import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
 import event_wallpaper_reset  # NEU (Sprint 14): Wallpaper-Reset bei "Standardwerte"
+import social_media_service  # NEU (Sprint 15): Social-Media-Freigabe
+import social_media_settings  # NEU (Sprint 15, Fix 2)
+import terms_docx  # NEU (Sprint 15, Fix 2): Nutzungsbedingungen als Word-Datei
+import terms_text  # NEU (Sprint 15, Fix 2)
+import photo_frame  # NEU (Sprint 15): Bilderrahmen
+from state_machine import social_settings_from_ui  # NEU (Sprint 15, Fix 2)
 from hdmi_output_service import HdmiOutputService, TouchMappingGuard, ensure_hdmi_off, ensure_touch_primary, pick_display_index, read_status as hdmi_read_status, set_power as hdmi_set_power  # NEU (Sprint 14, Fix 6: TouchMappingGuard)
 
 # ------------------------------------------------------------------------------
@@ -303,6 +311,24 @@ class PhotoboothApp:
         # von wallpaper_theme_service.py).
         self._color_style_thread: threading.Thread | None = None
         self._color_style_job_result = None
+
+        # NEU (Sprint 15, Fix 2): "Bedingungen auf USB" - gleiches
+        # Einzelwert-Poll-Muster wie die Wallpaper-Suche.
+        self._terms_export_thread: threading.Thread | None = None
+        self._terms_export_job_result = None
+
+        # NEU (Sprint 15): Bilderrahmen - Overlay-Kacheln schon beim Start im
+        # Hintergrund vorbereiten, damit die erste Aufnahme nicht laenger
+        # dauert als die folgenden.
+        self._frame: photo_frame.FrameCompositor | None = None
+        if config.frame_enabled:
+            self._frame = photo_frame.FrameCompositor(config.assets_dir / photo_frame.FRAME_FILENAME)
+            if self._frame.available():
+                threading.Thread(
+                    target=self._frame._tiles_for, args=((6000, 4000),), name="frame-warmup", daemon=True,
+                ).start()
+            else:
+                print(f"[App] WARNUNG: Rahmen-Datei fehlt: {self._frame.overlay_path}")
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -676,6 +702,28 @@ class PhotoboothApp:
         # antippbarer Button waere trotzdem verwirrend.
         if not self.config.gallery_enabled:
             rects = {name: rect for name, rect in rects.items() if name != "gallery"}
+        # NEU (Sprint 15, Fix 2): Veranstaltungsdaten auf zwei Seiten - nur
+        # die Kacheln der sichtbaren Seite sind antippbar (gleiches Prinzip
+        # wie die Kamera-Einstellungen weiter unten). Auf Seite 2 sind die
+        # Felder bei ausgeschalteter Freigabe gesperrt (ausgegraut).
+        if state == AppState.ADMIN_EVENT_SETTINGS:
+            page2 = {
+                "admin_event_social_toggle", "admin_event_social_platforms",
+                "admin_event_edit_social_company", "admin_event_edit_social_name",
+                "admin_event_edit_social_street", "admin_event_edit_social_city",
+                "admin_event_edit_social_email", "admin_event_edit_social_phone",
+                "admin_event_edit_social_handle", "admin_event_edit_social_privacy_url",
+            }
+            always = {"admin_event_page", "admin_event_save", "back"}
+            if self.model.ui.admin_event_page == 0:
+                rects = {name: r for name, r in rects.items() if name not in page2}
+            else:
+                allowed = page2 if self.model.ui.admin_event_social_enabled else {"admin_event_social_toggle"}
+                rects = {name: r for name, r in rects.items() if name in allowed or name in always}
+        if state == AppState.ADMIN_EVENT_SAVED and not (
+            self.model.ui.admin_event_save_ok and self.model.ui.admin_event_social_enabled
+        ):
+            rects = {name: r for name, r in rects.items() if name != "admin_event_terms_export"}
         # NEU (Kamera-Menue 2.0): button_rects_for_state() liefert bewusst
         # die Buttons BEIDER Seiten (siehe layout.py) - hier wird auf die
         # aktuell sichtbare Seite eingeschraenkt, sonst waeren z.B. die
@@ -716,6 +764,9 @@ class PhotoboothApp:
             "cancel":         AppEvent(EventType.TAP_CANCEL, source="touch"),
             "save":           AppEvent(EventType.TAP_SAVE, payload={"filename": None}, source="touch"),
             "delete":         AppEvent(EventType.TAP_DELETE, source="touch"),
+            # NEU (Sprint 15): Social-Media-Freigabefrage.
+            "social_yes":     AppEvent(EventType.TAP_SOCIAL_MEDIA_YES, source="touch"),
+            "social_no":      AppEvent(EventType.TAP_SOCIAL_MEDIA_NO, source="touch"),
             "confirm_delete": AppEvent(EventType.TAP_CONFIRM_DELETE, source="touch"),
             "abort_delete":   AppEvent(EventType.TAP_ABORT_DELETE, source="touch"),
             # NEU (4.4): Gesamtbestand loeschen - bewusst eigene Events,
@@ -796,10 +847,36 @@ class PhotoboothApp:
             "admin_event_toggle_gallery": AppEvent(
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "gallery"}, source="touch",
             ),
+            # NEU (Sprint 15): Bilderrahmen an/aus.
+            "admin_event_toggle_frame": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "frame"}, source="touch",
+            ),
             "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
             # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
             "admin_event_defaults": AppEvent(EventType.TAP_ADMIN_EVENT_DEFAULTS, source="touch"),
             "admin_event_save": AppEvent(EventType.TAP_ADMIN_EVENT_SAVE, source="touch"),
+            # NEU (Sprint 15, Fix 2): Seitenwechsel, Seite 2 "Social Media",
+            # Plattform-Auswahl und "Bedingungen auf USB".
+            "admin_event_page": AppEvent(EventType.TAP_ADMIN_EVENT_PAGE, source="touch"),
+            "admin_event_social_toggle": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "social"}, source="touch",
+            ),
+            "admin_event_social_platforms": AppEvent(EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS, source="touch"),
+            **{
+                f"admin_event_edit_social_{name}": AppEvent(
+                    EventType.TAP_ADMIN_EVENT_FIELD_EDIT, payload={"field": f"social_{name}"}, source="touch",
+                )
+                for name in ("company", "name", "street", "city", "email", "phone", "handle", "privacy_url")
+            },
+            **{
+                f"admin_event_platform_{key}": AppEvent(
+                    EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORM_TOGGLE, payload={"key": key}, source="touch",
+                )
+                for key in (*social_media_settings.PLATFORM_KEYS, "other")
+            },
+            "admin_event_platforms_apply": AppEvent(EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_APPLY, source="touch"),
+            "admin_event_platforms_cancel": AppEvent(EventType.TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_CANCEL, source="touch"),
+            "admin_event_terms_export": AppEvent(EventType.TAP_ADMIN_EVENT_TERMS_EXPORT, source="touch"),
             "admin_event_restart_now": AppEvent(EventType.TAP_ADMIN_EVENT_RESTART_NOW, source="touch"),
             # NEU (Nutzer-Feedback): statische Buttons des Wallpaper-
             # Auswahl-Screens (die Listenzeilen selbst sind dynamisch, siehe
@@ -1072,6 +1149,18 @@ class PhotoboothApp:
                 )
             return
 
+        # NEU (Sprint 15, Fix 2): "Bedingungen auf USB" - gleiches Muster.
+        if state == AppState.ADMIN_EVENT_TERMS_EXPORT:
+            job = self._terms_export_job_result
+            if job is not None:
+                self._terms_export_job_result = None
+                self._terms_export_thread = None
+                self.dispatch(
+                    AppEvent(EventType.ADMIN_EVENT_TERMS_EXPORT_FINISHED, payload=job, source="terms_export"),
+                    now,
+                )
+            return
+
         # NEU (Sprint 13): "Farbstil vorschlagen" - gleiches Einzelwert-Poll-
         # Muster wie die Wallpaper-Suche oben, nicht abbrechbar.
         if state == AppState.ADMIN_EVENT_COLOR_STYLE_LOADING:
@@ -1145,6 +1234,9 @@ class PhotoboothApp:
             AppState.GALLERY_EMPTY,   # NEU (Etappe 7)
             AppState.GALLERY_FULLSCREEN,
             AppState.REVIEW,
+            # NEU (Sprint 15): ohne Antwort gilt die Freigabefrage nach
+            # timeouts.social_media_consent_seconds als "Nein".
+            AppState.SOCIAL_MEDIA_CONSENT,
             # TERMS: anders als INSTRUCTIONS soll diese Ansicht nach
             # terms_idle_seconds (3 Minuten) automatisch verlassen werden,
             # falls der Gast "Verstanden" vergisst zu druecken.
@@ -1201,6 +1293,8 @@ class PhotoboothApp:
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
             AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 15, Fix 2): Plattform-Auswahl und Export-Ergebnis.
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT,
             # NEU (Sprint 14): HDMI-Untermenue und Galerie-Aufraeumen -
             # gleiches Idle-Verhalten wie andere Service-Menue-Unterseiten
             # (schliesst sich nach admin_menu_idle_seconds automatisch,
@@ -1298,6 +1392,14 @@ class PhotoboothApp:
                 result = self.capture_service.capture_photo()
             except Exception as exc:  # Sicherheitsnetz - darf den Thread nie stumm sterben lassen
                 result = CaptureResult(ok=False, error_message=str(exc))
+            # NEU (Sprint 15): Bilderrahmen noch im Aufnahme-Thread einrechnen -
+            # REVIEW, Galerie, QR-Download und Social-Media-Freigabe sehen so
+            # automatisch die Version mit Rahmen; das Original landet als
+            # rahmenlos_<name> in data/rahmenlos/. Die Zeit fliesst in die
+            # Uebertragungs-Schaetzung ein (Fortschrittsanzeige passt sich an).
+            if self._frame is not None and result.ok and result.photo_path:
+                framed_ok, frame_message = self._frame.apply(Path(result.photo_path), self.config.unframed_dir)
+                print(f"[App] Bilderrahmen: {frame_message}")
             progress.measured_seconds = time.monotonic() - start
             progress.result = result
             progress.done = True  # zuletzt setzen - das ist das Fertigsignal fuer den Hauptloop
@@ -1391,6 +1493,8 @@ class PhotoboothApp:
                 self.preview_service.start()
             elif action == "stop_preview":
                 self.preview_service.stop()
+            elif action == "release_photo_social_media":   # NEU (Sprint 15)
+                self._release_photo_social_media()
             elif action == "export_photo":
                 self._export_photo()
             elif action == "generate_qr":
@@ -1452,6 +1556,8 @@ class PhotoboothApp:
                 self._event_wallpaper_reset_requested = True
             elif action == "save_event_config":                # NEU (Veranstaltungsdaten)
                 self._save_admin_event_settings()
+            elif action == "export_event_terms":               # NEU (Sprint 15, Fix 2)
+                self._terms_export_start()
             elif action == "wallpaper_pick_list":              # NEU (Nutzer-Feedback), war "wallpaper_import"
                 self._wallpaper_start_list()
             elif action == "wallpaper_pick_stage":             # NEU (Nutzer-Feedback)
@@ -1493,6 +1599,19 @@ class PhotoboothApp:
             self.gallery_service.clear_caches()
         except Exception as exc:
             print(f"[App] Export fehlgeschlagen: {exc}")
+
+    def _release_photo_social_media(self) -> None:
+        """NEU (Sprint 15): Gast hat der Social-Media-Veroeffentlichung
+        zugestimmt - Kopie nach data/social_media/freigegeben_<name>. Quelle
+        ist das gerade gespeicherte Foto (session.last_saved_photo_path, von
+        TAP_SAVE gesetzt). Fehler werden nur geloggt; das Foto selbst bleibt
+        in jedem Fall gespeichert."""
+        path = self.model.session.last_saved_photo_path or self.model.session.current_photo_path
+        if not path:
+            print("[App] Social-Media-Freigabe: kein Foto-Pfad vorhanden.")
+            return
+        ok, message = social_media_service.release_photo(Path(path), self.config.social_media_dir)
+        print(f"[App] Social-Media-Freigabe: {message}")
 
     def _generate_qr_surface(self, filename: str | None = None) -> None:
         """GEAENDERT (Sprint 11, Feature 4): `filename` ist jetzt optional
@@ -1543,6 +1662,8 @@ class PhotoboothApp:
             print("[App] Loeschen angefordert, aber kein current_photo_path im vorherigen Modellstand vorhanden.")
             return
         deleted = self.gallery_service.delete_photo(path)
+        # NEU (Sprint 15): rahmenloses Original mitloeschen (falls vorhanden).
+        photo_frame.delete_unframed_copy(Path(path).name, self.config.unframed_dir)
         if deleted:
             print(f"[App] Foto gelöscht: {path}")
         else:
@@ -1562,8 +1683,14 @@ class PhotoboothApp:
             return
         deleted_count = 0
         for path in selected:
+            # NEU (Sprint 15): rahmenloses Original mitloeschen.
+            photo_frame.delete_unframed_copy(Path(path).name, self.config.unframed_dir)
             if self.gallery_service.delete_photo(path):
                 deleted_count += 1
+                # NEU (Sprint 15): eine evtl. vorhandene Social-Media-
+                # Freigabe dieses Fotos mitloeschen (Nutzer-Vorgabe).
+                if social_media_service.delete_released_copy(Path(path).name, self.config.social_media_dir):
+                    print(f"[App] Social-Media-Freigabe mitgeloescht: {Path(path).name}")
             else:
                 print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
         print(f"[App] Galerie aufgeraeumt: {deleted_count}/{len(selected)} Foto(s) geloescht.")
@@ -1706,6 +1833,17 @@ class PhotoboothApp:
         count, net, gross = admin_usb_service.required_export_bytes(
             self.config.photo_dir, self.config.gallery.excluded_filenames,
         )
+        # NEU (Sprint 15): freigegebene Social-Media-Kopien kommen zusaetzlich
+        # auf den Stick (Unterordner social_media) - Platzbedarf mitrechnen.
+        social_count, _social_net, social_gross = admin_usb_service.required_export_bytes(
+            self.config.social_media_dir,
+        )
+        gross += social_gross
+        # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale werden mitexportiert.
+        unframed_count, _unframed_net, unframed_gross = admin_usb_service.required_export_bytes(
+            self.config.unframed_dir,
+        )
+        gross += unframed_gross
         self._usb_required_bytes = gross
         if count == 0:
             lines = (
@@ -1714,7 +1852,9 @@ class PhotoboothApp:
             )
         else:
             lines = (
-                f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})",
+                f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})"
+                + (f" + {unframed_count} Originale ohne Rahmen" if unframed_count else "")
+                + (f" + {social_count} Social-Media-Freigaben" if social_count else ""),
                 f"Benötigter Platz auf dem Stick: {admin_usb_service.format_bytes(gross)}",
                 "",
                 "Bitte einen USB-Stick mit ausreichend freiem Speicher",
@@ -1819,8 +1959,36 @@ class PhotoboothApp:
                     # aus Etappe 6a scharf (war dort dormant, Default=False).
                     collect_conflicts=True,
                 )
+                # NEU (Sprint 15): freigegebene Social-Media-Fotos in den
+                # Unterordner "social_media" des Zielordners - im selben
+                # Thread, damit der Abschluss-Screen erst danach erscheint.
+                export_social_media(
+                    self.config.social_media_dir, stick.mountpoint, result,
+                    folder_name=self.config.screen.title, verify=True,
+                )
+                # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale in den
+                # Unterordner "rahmenlos".
+                export_unframed(
+                    self.config.unframed_dir, stick.mountpoint, result,
+                    folder_name=self.config.screen.title, verify=True,
+                )
+                # NEU (Sprint 15, Fix 2): bei aktiver Freigabe die ausgefuellten
+                # Nutzungsbedingungen (Word, DE+EN) mit in den Zielordner -
+                # dokumentiert, unter welchen Bedingungen die Gaeste
+                # eingewilligt haben. Fehler hier brechen den Foto-Export
+                # bewusst NICHT ab (nur Log + Fehlerzaehler).
+                if self.config.social_media_enabled:
+                    terms_ok, terms_lines = terms_docx.export_terms_to_stick(
+                        terms_text.context_from_config(self.config), self.config.screen.title,
+                        stick.mountpoint, self.config.cache_dir,
+                    )
+                    if terms_ok:
+                        result.terms_file = terms_docx.terms_filename(self.config.screen.title)
+                    else:
+                        result.errors.append("Nutzungsbedingungen: " + " ".join(terms_lines))
                 print(
                     f"[App] Export beendet: {result.copied} kopiert, "
+                    f"Social Media: {result.social_copied} kopiert/{result.social_skipped} vorhanden, "
                     f"{result.skipped} uebersprungen, {result.verified} verifiziert, "
                     f"Konflikte: {len(result.conflicts)}, "
                     f"Fehler: {len(result.errors)}, Pruefsummenfehler: {len(result.failed_verify)}"
@@ -2000,6 +2168,8 @@ class PhotoboothApp:
                     camera_lock=self._camera_lock,
                     delete_from_camera=True,
                     progress=progress,          # NEU (4.9)
+                    social_media_dir=self.config.social_media_dir,  # NEU (Sprint 15)
+                    unframed_dir=self.config.unframed_dir,          # NEU (Sprint 15, Bilderrahmen)
                 )
                 print(
                     f"[App] Loeschlauf beendet: {result.deleted_photos} Fotos, "
@@ -2051,6 +2221,7 @@ class PhotoboothApp:
                 warn_threshold_percent=self.config.storage.warn_threshold_percent,
                 critical_threshold_percent=self.config.storage.critical_threshold_percent,
                 fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+                files_per_photo=2 if self.config.frame_enabled else 1,
             )
         except OSError as exc:
             print(f"[App] Speicherplatz-Pruefung fehlgeschlagen: {exc}")
@@ -2096,6 +2267,7 @@ class PhotoboothApp:
                 warn_threshold_percent=self.config.storage.warn_threshold_percent,
                 critical_threshold_percent=self.config.storage.critical_threshold_percent,
                 fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+                files_per_photo=2 if self.config.frame_enabled else 1,
             )
             avg_mb = storage_status.average_photo_size_bytes / (1024 * 1024)
             herkunft = "geschätzt, noch keine eigenen Fotos" if storage_status.average_is_fallback else "aus vorhandenen Fotos"
@@ -2133,10 +2305,16 @@ class PhotoboothApp:
         # AppConfig, nicht ein frischer load_event_config()-Aufruf: das
         # spiegelt korrekt wider, was die App gerade tatsaechlich verwendet
         # (und damit auch, dass Aenderungen erst nach einem Neustart wirken).
+        # NEU (Sprint 15, Fix 2, Bugfix): wurde in dieser Sitzung bereits
+        # gespeichert (Neustart steht noch aus), zeigt der Screen die
+        # GESPEICHERTEN Werte statt der noch laufenden AppConfig - sonst
+        # wuerde ein zweites "Speichern" vor dem Neustart die eigenen
+        # Aenderungen mit den alten Werten ueberschreiben.
+        saved = getattr(self, "_saved_event_payload", None) or {}
         self.dispatch(
             AppEvent(
                 EventType.ADMIN_EVENT_SETTINGS_READY,
-                payload={
+                payload={**{
                     "title": self.config.screen.title if self.config.screen.title_visible else "",
                     "prefix": self.config.photo_prefix,
                     "wifi_ssid": self.config.network.guest_wifi_ssid,
@@ -2148,7 +2326,20 @@ class PhotoboothApp:
                     "theme_button": self.config.theme_button_color,
                     "theme_background": self.config.theme_background_color,
                     "theme_text": self.config.theme_text_color,
-                },
+                    # NEU (Sprint 15, Fix 2): Seite 2 "Social Media".
+                    "social_enabled": self.config.social_media_enabled,
+                    "social_platforms": tuple(self.config.social_media_platforms),
+                    "social_other": self.config.social_media_platforms_other,
+                    "social_company": self.config.social_media_company,
+                    "social_name": self.config.social_media_contact_name,
+                    "social_street": self.config.social_media_street,
+                    "social_city": self.config.social_media_city,
+                    "social_email": self.config.social_media_email,
+                    "social_phone": self.config.social_media_phone,
+                    "social_handle": self.config.social_media_handle,
+                    "social_privacy_url": self.config.social_media_privacy_url,
+                    "frame_enabled": self.config.frame_enabled,   # NEU (Sprint 15)
+                }, **saved},
                 source="event_settings",
             )
         )
@@ -2167,6 +2358,7 @@ class PhotoboothApp:
             "welcome_text": ui.admin_event_welcome_text,
             "qr_codes_enabled": ui.admin_event_qr_enabled,
             "gallery_enabled": ui.admin_event_gallery_enabled,
+            "frame_enabled": ui.admin_event_frame_enabled,   # NEU (Sprint 15)
         }
         # NEU (Sprint 13): Farbstil - nur geschrieben, wenn tatsaechlich einer
         # gewaehlt wurde (None -> Schluessel bleibt weg, load_event_config/
@@ -2178,8 +2370,50 @@ class PhotoboothApp:
             data["theme_background_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_background)
         if ui.admin_event_theme_text is not None:
             data["theme_text_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_text)
+        # NEU (Sprint 15): nur in event_config.json gepflegte Einstellungen
+        # (Social-Media-Freigabe) beim Speichern erhalten - AUSSER nach
+        # "Standardwerte": dann bewusst weglassen, die Freigabefrage ist
+        # danach wieder aus (Standard fuer private Feiern).
+        # GEAENDERT (Sprint 15, Fix 2): die Social-Media-Werte kommen jetzt
+        # aus der Seite 2 dieses Screens (Entwurf) und werden immer
+        # vollstaendig geschrieben - auch bei ausgeschalteter Freigabe, damit
+        # ein spaeteres Wiedereinschalten die Daten noch kennt. Das alte
+        # Einzelfeld social_media_contact entfaellt dabei (ersetzt durch
+        # Strasse/Ort/E-Mail/Telefon).
+        data.update(social_media_settings.to_event_config(social_settings_from_ui(ui)))
+        if not getattr(self, "_event_wallpaper_reset_requested", False):
+            for key, value in event_config_service.preserved_settings(EVENT_CONFIG_PATH).items():
+                data.setdefault(key, value)
+        data.pop("social_media_contact", None)
         ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
         if ok:
+            # NEU (Sprint 15, Fix 2, Bugfix): gespeicherten Stand fuer ein
+            # erneutes Oeffnen vor dem Neustart merken (siehe
+            # _collect_admin_event_settings).
+            self._saved_event_payload = {
+                "title": ui.admin_event_title,
+                "prefix": ui.admin_event_prefix,
+                "wifi_ssid": ui.admin_event_wifi_ssid,
+                "wifi_password": ui.admin_event_wifi_password,
+                "welcome_text": ui.admin_event_welcome_text,
+                "qr_enabled": ui.admin_event_qr_enabled,
+                "gallery_enabled": ui.admin_event_gallery_enabled,
+                "theme_button": ui.admin_event_theme_button,
+                "theme_background": ui.admin_event_theme_background,
+                "theme_text": ui.admin_event_theme_text,
+                "social_enabled": ui.admin_event_social_enabled,
+                "social_platforms": tuple(ui.admin_event_social_platforms),
+                "social_other": ui.admin_event_social_other,
+                "social_company": ui.admin_event_social_company,
+                "social_name": ui.admin_event_social_name,
+                "social_street": ui.admin_event_social_street,
+                "social_city": ui.admin_event_social_city,
+                "social_email": ui.admin_event_social_email,
+                "social_phone": ui.admin_event_social_phone,
+                "social_handle": ui.admin_event_social_handle,
+                "social_privacy_url": ui.admin_event_social_privacy_url,
+                "frame_enabled": ui.admin_event_frame_enabled,
+            }
             # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
             # Erfolg "event_config.json gespeichert." zurueck - der
             # Dateiname ist fuer den Admin keine relevante Information
@@ -2234,6 +2468,57 @@ class PhotoboothApp:
         self.dispatch(
             AppEvent(EventType.ADMIN_EVENT_SAVE_RESULT, payload={"ok": ok, "message": message}, source="event_settings")
         )
+
+    def _terms_export_start(self) -> None:
+        # NEU (Sprint 15, Fix 2): ausgefuellte Nutzungsbedingungen (DE+EN)
+        # als Word-Datei auf den USB-Stick - Stick suchen/einbinden wie bei
+        # der Wallpaper-Suche (admin_usb_service), Ablage im selben
+        # Veranstaltungsordner wie der Foto-Export, SHA256-Pruefung, danach
+        # wieder aushaengen. Grundlage sind die GERADE GESPEICHERTEN Werte
+        # (Entwurf), nicht die noch laufende AppConfig - die greift erst
+        # nach einem Neustart.
+        ui = self.model.ui
+        ctx = terms_text.TermsContext(
+            gallery_enabled=ui.admin_event_gallery_enabled,
+            qr_enabled=ui.admin_event_qr_enabled,
+            wifi_ssid=ui.admin_event_wifi_ssid,
+            wifi_password=ui.admin_event_wifi_password,
+            social=social_settings_from_ui(ui),
+        )
+        title = ui.admin_event_title or self.config.screen.title
+        work_dir = self.config.cache_dir
+
+        def worker() -> None:
+            stick = None
+            try:
+                partition = admin_usb_service.pick_best_partition(admin_usb_service.find_usb_partitions())
+                if partition is None:
+                    self._terms_export_job_result = {"ok": False, "lines": ("Kein USB-Stick gefunden.",)}
+                    return
+                stick, mount_message = admin_usb_service.mount_partition(partition)
+                if stick is None:
+                    self._terms_export_job_result = {"ok": False, "lines": (mount_message,)}
+                    return
+                ok, lines = terms_docx.export_terms_to_stick(ctx, title, stick.mountpoint, work_dir)
+                if ok and stick.mounted_by_us:
+                    unmounted, _ = admin_usb_service.unmount(stick.mountpoint)
+                    lines = lines + (
+                        ("Der Stick kann jetzt abgezogen werden.",) if unmounted
+                        else ("Stick bitte über den Export-Ablauf auswerfen.",)
+                    )
+                    stick = None
+                self._terms_export_job_result = {"ok": ok, "lines": lines}
+            except Exception as exc:
+                print(f"[App] FEHLER beim Export der Nutzungsbedingungen: {exc}")
+                self._terms_export_job_result = {
+                    "ok": False, "lines": ("Unerwarteter Fehler beim Export.", str(exc)[:70]),
+                }
+            finally:
+                if stick is not None and stick.mounted_by_us:
+                    admin_usb_service.unmount(stick.mountpoint)
+
+        self._terms_export_thread = threading.Thread(target=worker, name="terms-export", daemon=True)
+        self._terms_export_thread.start()
 
     def _wallpaper_start_list(self) -> None:
         # NEU (Nutzer-Feedback): Hintergrund-Thread nach demselben
@@ -2618,6 +2903,10 @@ class PhotoboothApp:
                     effect = LedEffect.PRE_TRIGGER_DARK
         elif state == AppState.REVIEW:
             effect = LedEffect.REVIEW_BREATHE
+        elif state == AppState.SOCIAL_MEDIA_CONSENT:
+            # NEU (Sprint 15): gleiche Bedeutung wie REVIEW ("eine Frage zum
+            # gerade aufgenommenen Foto wartet auf Antwort").
+            effect = LedEffect.REVIEW_BREATHE
         elif state == AppState.DELETE_CONFIRM:
             effect = LedEffect.DELETE_CONFIRM
         elif state == AppState.QR_DISPLAY:
@@ -2656,11 +2945,14 @@ class PhotoboothApp:
             AppState.ADMIN_EVENT_SETTINGS, AppState.ADMIN_EVENT_TEXT_ENTRY,
             AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT, AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 15, Fix 2)
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT,
         }:
             # NEU (Veranstaltungsdaten): gleiche ruhige Welle wie die
             # uebrigen Service-Menue-Unterseiten.
             effect = LedEffect.INSTRUCTIONS_WAVE
-        elif state == AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING:
+        elif state in {AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_TERMS_EXPORT}:
+            # NEU (Sprint 15, Fix 2): auch beim Export der Bedingungen.
             # NEU (Veranstaltungsdaten): "es passiert gerade etwas" - wie
             # beim USB-Pruefen/Neustart. Umbenannt von
             # ADMIN_EVENT_WALLPAPER_IMPORT.
@@ -2783,6 +3075,9 @@ class PhotoboothApp:
         if state in {
             AppState.CAPTURE_PENDING, AppState.REVIEW, AppState.QR_DISPLAY,
             AppState.DELETE_CONFIRM, AppState.ERROR_SCREEN,
+            # NEU (Sprint 15): der Taster darf hier weder "Ja" noch "Nein"
+            # ausloesen - eine Einwilligung nur per bewusstem Antippen.
+            AppState.SOCIAL_MEDIA_CONSENT,
             AppState.BOOT, AppState.MAINTENANCE,
             # NEU (4.1): im Service-Menue loest der Taster nichts aus.
             AppState.ADMIN_MENU,
@@ -2824,6 +3119,9 @@ class PhotoboothApp:
             AppState.ADMIN_EVENT_WALLPAPER_PICK_LOADING, AppState.ADMIN_EVENT_WALLPAPER_PICK,
             AppState.ADMIN_EVENT_WALLPAPER_RESULT,
             AppState.ADMIN_EVENT_SAVED,
+            # NEU (Sprint 15, Fix 2)
+            AppState.ADMIN_EVENT_SOCIAL_PLATFORMS, AppState.ADMIN_EVENT_TERMS_EXPORT,
+            AppState.ADMIN_EVENT_TERMS_EXPORT_RESULT,
             # NEU (Sprint 14): HDMI-Untermenue und Galerie-Aufraeumen - auch
             # hier darf der Taster nichts ausloesen (Service-Menue-
             # Unterseiten wie ADMIN_STATUS).

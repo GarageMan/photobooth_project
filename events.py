@@ -18,6 +18,9 @@ class EventType(Enum):
     TAP_CANCEL = auto()
     TAP_SAVE = auto()
     TAP_DELETE = auto()
+    # NEU (Sprint 15): Antworten auf die Social-Media-Freigabefrage.
+    TAP_SOCIAL_MEDIA_YES = auto()
+    TAP_SOCIAL_MEDIA_NO = auto()
     TAP_CONFIRM_DELETE = auto()
     TAP_ABORT_DELETE = auto()
     TAP_FULLSCREEN_PHOTO = auto()
@@ -187,6 +190,18 @@ class EventType(Enum):
     # Ergebnis des synchronen JSON-Schreibens; payload: ok, message.
     ADMIN_EVENT_SAVE_RESULT = auto()
     TAP_ADMIN_EVENT_RESTART_NOW = auto()
+    # NEU (Sprint 15, Fix 2): Seitenwechsel auf ADMIN_EVENT_SETTINGS
+    # (Seite 1 Allgemein / Seite 2 Social Media).
+    TAP_ADMIN_EVENT_PAGE = auto()
+    # NEU (Sprint 15, Fix 2): Kachel "Plattformen" -> Auswahl-Screen.
+    TAP_ADMIN_EVENT_SOCIAL_PLATFORMS = auto()
+    # Payload {"key": "<plattform>"} - Kachel in ADMIN_EVENT_SOCIAL_PLATFORMS.
+    TAP_ADMIN_EVENT_SOCIAL_PLATFORM_TOGGLE = auto()
+    TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_APPLY = auto()
+    TAP_ADMIN_EVENT_SOCIAL_PLATFORMS_CANCEL = auto()
+    # "Bedingungen auf USB" auf ADMIN_EVENT_SAVED und Ergebnis des Threads.
+    TAP_ADMIN_EVENT_TERMS_EXPORT = auto()
+    ADMIN_EVENT_TERMS_EXPORT_FINISHED = auto()
     # Tastatur-Eingaben - gleiches Prinzip wie PIN_DIGIT/PIN_BACKSPACE/
     # PIN_SUBMIT/PIN_ENTRY_CANCEL, aber fuer beliebigen Text statt nur
     # Ziffern, dazu eine Umschalt-Taste fuer Gross-/Kleinschreibung.

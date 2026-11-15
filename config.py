@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from pathlib import Path
 # - reine Farb-/Hex-Konvertierung, keine pygame-/Hardware-Abhaengigkeit
 # (siehe Modul-Docstring von wallpaper_theme_service.py), daher hier
 # gefahrlos importierbar.
+import social_media_settings
 import wallpaper_theme_service
 
 # Echte Zugangsdaten liegen NICHT im Code, sondern in local_secrets.py
@@ -82,6 +84,16 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PHOTO_DIR = DATA_DIR / "photos"
 WEB_DIR = DATA_DIR / "web"
+# NEU (Sprint 15, Social-Media-Freigabe): Kopien der Fotos, deren
+# Veroeffentlichung der Gast ausdruecklich erlaubt hat (Dateiname mit
+# Praefix "freigegeben_", siehe social_media_service.py). Liegt bewusst
+# AUSSERHALB von PHOTO_DIR - Galerie, Attract-Modus und HDMI-Wiedergabe
+# lesen nur PHOTO_DIR und zeigen diese Kopien dadurch nie (doppelt) an.
+SOCIAL_MEDIA_DIR = DATA_DIR / "social_media"
+# NEU (Sprint 15, Bilderrahmen): unbearbeitete Originale ("rahmenlos_<name>")
+# bei eingeschaltetem Bilderrahmen - bewusst ausserhalb von data/photos,
+# damit sie in keiner Fotoliste (Galerie, HDMI, Attract, QR) auftauchen.
+UNFRAMED_DIR = DATA_DIR / "rahmenlos"
 CACHE_DIR = DATA_DIR / "cache"
 LOG_DIR = DATA_DIR / "logs"
 ASSETS_DIR = BASE_DIR / "assets"
@@ -105,7 +117,12 @@ ASSETS_DIR = BASE_DIR / "assets"
 # Admin-Screen "Veranstaltungsdaten" tatsaechlich zurueckzuschreiben (siehe
 # event_config_service.save_event_config). Vorher wurde diese Datei nur
 # gelesen, nie geschrieben.
-EVENT_CONFIG_PATH = BASE_DIR / "event_config.json"
+# NEU (Sprint 15, Fix 1): Pfad per Umgebungsvariable PHOTOBOOTH_EVENT_CONFIG
+# ueberschreibbar. Die Testsuite (test/conftest.py) zeigt damit auf eine
+# leere Temp-Datei - sonst wuerden die Tests auf dem Pi die LIVE-
+# Veranstaltungsdaten (z. B. social_media_enabled=true) mitlesen und
+# schlimmstenfalls sogar zurueckschreiben.
+EVENT_CONFIG_PATH = Path(os.environ.get("PHOTOBOOTH_EVENT_CONFIG") or (BASE_DIR / "event_config.json"))
 
 
 def load_event_config(path: Path) -> dict:
@@ -194,6 +211,31 @@ QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
 # gemeinsam (UND-verknuepft).
 GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 
+# NEU (Sprint 15, Social-Media-Freigabe): nach "Speichern" fragt die Fotobox
+# den Gast, ob das Foto auf Social Media veroeffentlicht werden darf. Bei
+# "Ja" landet eine Kopie in SOCIAL_MEDIA_DIR. Standard AUS - private Feiern
+# (Geburtstag, Hochzeit) sollen die Frage nicht sehen; nur fuer
+# Veranstaltungen mit gewerblicher Nutzung einschalten. Firmenname und
+# Plattform(en) erscheinen woertlich in der Frage und in den
+# Nutzungsbedingungen (Voraussetzung fuer eine informierte Einwilligung).
+# GEAENDERT (Sprint 15, Fix 2): alle Social-Media-Werte werden jetzt ueber
+# social_media_settings.settings_from_event_config eingelesen - Plattformen
+# als Liste von Schluesseln (alte Textform "Instagram" wird weiter
+# verstanden), Kontakt in Einzelfeldern (altes Feld social_media_contact
+# bleibt als Rueckfall lesbar). Im Service-Menue unter
+# "Veranstaltungsdaten" -> Seite 2 pflegbar.
+_SOCIAL_MEDIA = social_media_settings.settings_from_event_config(_event_config)
+SOCIAL_MEDIA_ENABLED = _SOCIAL_MEDIA.enabled
+SOCIAL_MEDIA_COMPANY = _SOCIAL_MEDIA.company
+SOCIAL_MEDIA_PLATFORMS = _SOCIAL_MEDIA.platforms
+SOCIAL_MEDIA_CONTACT = _SOCIAL_MEDIA.legacy_contact
+
+# NEU (Sprint 15): Bilderrahmen (Entwurf B1: Goldrahmen + Schneeflocken +
+# Holler-Hof-Logo) - pro Veranstaltung schaltbar, Standard aus. Siehe
+# photo_frame.py; im Service-Menue "Veranstaltungsdaten" -> Kachel
+# "Bilderrahmen".
+FRAME_ENABLED = bool(_event_config.get("frame_enabled", False))
+
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
 # "Veranstaltungsdaten" editierbar (siehe event_config_service.
@@ -265,7 +307,14 @@ def needs_event_setup(event_config: dict) -> bool:
     password = str(event_config.get("guest_wifi_password") or "").strip()
     password_placeholder = qr_enabled and password in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
 
-    return title_placeholder or password_placeholder
+    # NEU (Sprint 15): ist die Social-Media-Freigabe eingeschaltet, muss das
+    # veroeffentlichende Unternehmen benannt sein - sonst wuesste der Gast
+    # nicht, wem er die Einwilligung erteilt.
+    # GEAENDERT (Sprint 15, Fix 2): Firmen- ODER Personenname genuegt.
+    social = social_media_settings.settings_from_event_config(event_config)
+    company_placeholder = social.enabled and social.publisher in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
+
+    return title_placeholder or password_placeholder or company_placeholder
 
 
 NEEDS_EVENT_SETUP = needs_event_setup(_event_config)
@@ -315,6 +364,10 @@ class TimeoutConfig:
     # Ablauf unnoetig zu verlangsamen (anders als vorher, wo Gaeste Zeit zum
     # Scannen eines QR-Codes brauchten).
     qr_display_seconds: float = 20.0
+    # NEU (Sprint 15): Social-Media-Freigabefrage nach "Speichern". Bleibt
+    # der Gast ohne Antwort, gilt das als "Nein" (keine Einwilligung ohne
+    # aktive Zustimmung) - das Foto ist trotzdem gespeichert.
+    social_media_consent_seconds: float = 60.0
     delete_confirm_seconds: float = 30.0
     attract_frame_seconds: float = 5.0
     countdown_seconds: tuple[int, ...] = (5, 4, 3, 2, 1)
@@ -566,6 +619,8 @@ class AppConfig:
     hdmi: HdmiConfig = field(default_factory=HdmiConfig)  # NEU (Sprint 14)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
+    social_media_dir: Path = SOCIAL_MEDIA_DIR  # NEU (Sprint 15)
+    unframed_dir: Path = UNFRAMED_DIR          # NEU (Sprint 15, Bilderrahmen)
     cache_dir: Path = CACHE_DIR
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
@@ -588,6 +643,23 @@ class AppConfig:
     # kommt aus data/event_config.json (Fallback True),
     # siehe GALLERY_ENABLED oben.
     gallery_enabled: bool = GALLERY_ENABLED
+    # NEU (Sprint 15): Social-Media-Freigabe, siehe SOCIAL_MEDIA_ENABLED oben.
+    social_media_enabled: bool = SOCIAL_MEDIA_ENABLED
+    social_media_company: str = SOCIAL_MEDIA_COMPANY
+    # GEAENDERT (Sprint 15, Fix 2): Schluessel aus
+    # social_media_settings.PLATFORM_KEYS statt freiem Text.
+    social_media_platforms: tuple[str, ...] = SOCIAL_MEDIA_PLATFORMS
+    social_media_platforms_other: str = _SOCIAL_MEDIA.platforms_other
+    social_media_contact_name: str = _SOCIAL_MEDIA.contact_name
+    social_media_street: str = _SOCIAL_MEDIA.street
+    social_media_city: str = _SOCIAL_MEDIA.city
+    social_media_email: str = _SOCIAL_MEDIA.email
+    social_media_phone: str = _SOCIAL_MEDIA.phone
+    social_media_handle: str = _SOCIAL_MEDIA.handle
+    social_media_privacy_url: str = _SOCIAL_MEDIA.privacy_url
+    social_media_contact: str = SOCIAL_MEDIA_CONTACT  # alt, nur Rueckfall
+    # NEU (Sprint 15): Bilderrahmen an/aus, siehe FRAME_ENABLED oben.
+    frame_enabled: bool = FRAME_ENABLED
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
@@ -599,7 +671,10 @@ class AppConfig:
     theme_text_color: tuple[int, int, int] | None = THEME_TEXT_COLOR
 
     def ensure_directories(self) -> None:
-        for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):
+        for path in (
+            self.photo_dir, self.web_dir, self.social_media_dir, self.unframed_dir,
+            self.cache_dir, self.log_dir, self.assets_dir,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
 

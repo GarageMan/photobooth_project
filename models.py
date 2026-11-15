@@ -262,6 +262,35 @@ class UiState:
         tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None, ...
     ] = ()
     admin_event_color_style_index: int = 0
+    # --- Veranstaltungsdaten: Seiten + Social Media (Sprint 15, Fix 2) ----
+    # 0 = Seite 1 "Allgemein", 1 = Seite 2 "Social Media".
+    admin_event_page: int = 0
+    # NEU (Sprint 15): Bilderrahmen an/aus (Entwurf + Snapshot fuer "Abbrechen").
+    admin_event_frame_enabled: bool = False
+    admin_event_entry_frame_enabled: bool = False
+    # Entwurf der Social-Media-Einstellungen. Die Textfelder heissen bewusst
+    # admin_event_social_<feld>, damit die gemeinsame Bildschirmtastatur
+    # (state_machine._go_admin_event_text_entry, getattr(ui,
+    # f"admin_event_{field}")) sie ohne Sonderfall bedienen kann.
+    admin_event_social_enabled: bool = False
+    admin_event_social_platforms: tuple[str, ...] = ()
+    admin_event_social_other: str = ""
+    admin_event_social_company: str = ""
+    admin_event_social_name: str = ""
+    admin_event_social_street: str = ""
+    admin_event_social_city: str = ""
+    admin_event_social_email: str = ""
+    admin_event_social_phone: str = ""
+    admin_event_social_handle: str = ""
+    admin_event_social_privacy_url: str = ""
+    # Snapshot beim Betreten (fuer "Abbrechen") - Tupel aus
+    # state_machine._social_snapshot, gleiches Prinzip wie admin_event_entry_*.
+    admin_event_entry_social: tuple = ()
+    # Snapshot beim Betreten der Plattform-Auswahl (Plattformen, weitere).
+    admin_event_social_platforms_entry: tuple = ()
+    # Ergebnis "Bedingungen auf USB" (ADMIN_EVENT_TERMS_EXPORT_RESULT).
+    admin_event_terms_export_ok: bool = False
+    admin_event_terms_export_lines: tuple[str, ...] = ()
     # --- HDMI-Ausgang / Beamer-Wiedergabe (Sprint 14) --------------------
     # Ergebnis von app._read_admin_hdmi_status() (synchron, siehe dort) -
     # available=False deckt "xrandr fehlt/liefert einen Fehler" ab,

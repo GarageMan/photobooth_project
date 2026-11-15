@@ -98,6 +98,30 @@ def save_event_config(path: Path, data: dict) -> tuple[bool, str]:
     return True, f"{path.name} gespeichert."
 
 
+# NEU (Sprint 15): Schluessel, die NICHT auf dem Screen "Veranstaltungsdaten"
+# bearbeitet werden (nur direkt in event_config.json) und beim Speichern
+# dieses Screens deshalb erhalten bleiben muessen - sonst waere z.B. die
+# Social-Media-Freigabe nach jedem Speichern stillschweigend wieder aus.
+PRESERVED_KEY_PREFIXES = ("social_media_",)
+
+
+def preserved_settings(path: Path) -> dict:
+    """NEU (Sprint 15): liest aus der bestehenden event_config.json alle
+    Schluessel mit einem der PRESERVED_KEY_PREFIXES. Fehlende/kaputte Datei
+    -> {} (nie eine Exception)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            existing = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(existing, dict):
+        return {}
+    return {
+        key: value for key, value in existing.items()
+        if any(key.startswith(prefix) for prefix in PRESERVED_KEY_PREFIXES)
+    }
+
+
 def find_wallpaper_candidates(mountpoint: Path) -> list[Path]:
     """Sucht auf der obersten Ebene von mountpoint (KEINE Rekursion in
     Unterordner) nach Bilddateien und liefert ALLE Treffer, alphabetisch
