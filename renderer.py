@@ -14,10 +14,24 @@ from PIL import Image as PILImage
 
 from attract_slideshow import compute_attract_slot, fly_in_offset  # NEU (Sprint 14)
 from config import AppConfig
+from hw_camera_settings_provider import format_shutter_label  # NEU: Verschlusszeit als Bruch
 from layout import KEYBOARD_SHIFT_MAP, LayoutRects, build_layout
 from models import AppModel
 from states import AppState
 from admin_menu import ADMIN_MENU_ITEMS, build_admin_rects  # NEU (4.1)
+
+
+def _shutter_row_text(raw: str) -> str:
+    """Zeile "Verschlusszeit" im Kamera-Menue, z. B. "Verschlusszeit: 1/125 s
+    (automatisch)" - Brueche bekommen die Einheit "s" angehaengt, Sekunden-
+    werte ("1,3 s") bringen sie bereits mit, Sonderwerte ("Bulb") bleiben
+    ohne Einheit."""
+    label = format_shutter_label(raw)
+    if not label:
+        return "Verschlusszeit: -"
+    if "/" in label:
+        label += " s"
+    return f"Verschlusszeit: {label} (automatisch)"
 
 
 @dataclass
@@ -2742,7 +2756,8 @@ class Renderer:
                     self.layout.admin_camera_aperture_minus.centery,
                 ),
                 (
-                    f"Verschlusszeit: {ui.admin_camera_shutter} (automatisch)" if ui.admin_camera_shutter else "Verschlusszeit: -",
+                    # GEAENDERT (Nutzer-Feedback 2026-11-15): als Bruch "1/N s" statt dezimal.
+                    _shutter_row_text(ui.admin_camera_shutter),
                     self.layout.admin_camera_expcomp_minus.centery - round(0.105 * height),
                 ),
                 (
