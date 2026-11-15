@@ -69,6 +69,8 @@ laesst sich unabhaengig vom Modus setzen.
 
 from __future__ import annotations
 
+import math
+
 import threading
 from dataclasses import dataclass, field
 
@@ -494,6 +496,46 @@ def format_zoom_label(hardware: bool, value: str, choices: tuple[str, ...]) -> s
     if index == 0:
         return "Kein Zoom (Originalansicht)"
     return f"Zoomstufe {index} von {len(choices) - 1}"
+
+
+# NEU (Nutzer-Feedback 2026-11-15): Standard-Verschlusszeiten der Kamera als
+# Nenner (1/N s), Drittelstufen wie im Nikon-Display. Ein von gphoto2
+# gelieferter Dezimalwert (z. B. "0.0080s") wird auf den naechstgelegenen
+# Eintrag gerundet - die Kamera rechnet intern mit gerundeten Zweierpotenzen,
+# 1/125 kommt z. B. als 0.0080 an.
+_SHUTTER_DENOMINATORS = (
+    4000, 3200, 2500, 2000, 1600, 1250, 1000, 800, 640, 500, 400, 320, 250,
+    200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4,
+    3, 2.5, 2, 1.6, 1.3,
+)
+
+
+def format_shutter_label(value: str) -> str:
+    """Verschlusszeit fuer die Anzeige als Bruch "1/N" (z. B. "1/125").
+
+    - Dezimalwerte von gphoto2 ("0.0080s", "0.008") -> naechste Standard-
+      Verschlusszeit als Bruch.
+    - Werte ab 1 Sekunde -> Sekunden mit deutschem Komma ("1 s", "1,3 s").
+    - Bereits als Bruch gelieferte Werte ("1/125") und Nicht-Zahlen
+      ("Bulb", "Time") bleiben unveraendert.
+    """
+    raw = (value or "").strip()
+    if not raw or "/" in raw:
+        return raw
+    number = raw.rstrip("sS\" ").strip().replace(",", ".")
+    try:
+        seconds = float(number)
+    except ValueError:
+        return raw
+    if seconds <= 0:
+        return raw
+    if seconds >= 0.95:
+        rounded = round(seconds, 1)
+        text = f"{rounded:g}".replace(".", ",")
+        return f"{text} s"
+    denominator = 1.0 / seconds
+    nearest = min(_SHUTTER_DENOMINATORS, key=lambda d: abs(math.log(d / denominator)))
+    return f"1/{nearest:g}".replace(".", ",")
 
 
 # ------------------------------------------------------------------------------

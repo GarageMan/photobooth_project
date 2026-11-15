@@ -79,5 +79,35 @@ class FormatZoomLabelTestCase(unittest.TestCase):
         self.assertEqual(format_zoom_label(True, "0", ()), "0")
 
 
+
+class FormatShutterLabelTestCase(unittest.TestCase):
+    """NEU (Nutzer-Feedback 2026-11-15): Verschlusszeit als Bruch."""
+
+    def test_decimal_values_become_fractions(self) -> None:
+        from hw_camera_settings_provider import format_shutter_label
+        cases = {
+            "0.0080s": "1/125", "0.0080": "1/125", "0.0167s": "1/60", "0.0333s": "1/30",
+            "0.0040s": "1/250", "0.0010s": "1/1000", "0.0002s": "1/4000", "0.5000s": "1/2",
+            "0,0080 s": "1/125",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(format_shutter_label(raw), expected, raw)
+
+    def test_long_and_special_values(self) -> None:
+        from hw_camera_settings_provider import format_shutter_label
+        self.assertEqual(format_shutter_label("1.0000s"), "1 s")
+        self.assertEqual(format_shutter_label("1.3s"), "1,3 s")
+        self.assertEqual(format_shutter_label("30.0000s"), "30 s")
+        self.assertEqual(format_shutter_label("1/125"), "1/125")
+        self.assertEqual(format_shutter_label("Bulb"), "Bulb")
+        self.assertEqual(format_shutter_label(""), "")
+
+    def test_renderer_row_text(self) -> None:
+        from renderer import _shutter_row_text
+        self.assertEqual(_shutter_row_text("0.0080s"), "Verschlusszeit: 1/125 s (automatisch)")
+        self.assertEqual(_shutter_row_text("1.3s"), "Verschlusszeit: 1,3 s (automatisch)")
+        self.assertEqual(_shutter_row_text(""), "Verschlusszeit: -")
+
+
 if __name__ == "__main__":
     unittest.main()
