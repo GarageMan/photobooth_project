@@ -31,7 +31,8 @@ OPERATOR_LINES_EN = (
     "Dechant-Fein-Str. 24",
     "51375 Leverkusen, Germany",
     "lutz-peter@imail.de",
-    "0163 8506144",
+    # GEAENDERT (Nutzer-Feedback 2026-11-15): internationale Schreibweise.
+    "+49 163 8506144",
 )
 
 
@@ -116,7 +117,7 @@ def _social_section(s: SocialMediaSettings, lang: str) -> list:
             (
                 f"After saving, the photo booth asks whether {pub} may "
                 f"publish your photo {phrase} (also for advertising "
-                "purposes). Only if you tap \"Yes\" is the photo released "
+                "purposes). Only if you tap \"Yes\" will the photo be released "
                 f"for this purpose and handed over to {pub} marked as such. "
                 "Your consent is voluntary - without it you can use the "
                 "photo booth without restriction and your photo stays saved."
@@ -133,7 +134,7 @@ def _social_section(s: SocialMediaSettings, lang: str) -> list:
             (
                 "Published photos are publicly visible. " + platforms_note
                 + f"You can withdraw your consent at any time by contacting "
-                f"{pub} - the photo is then removed. Copies already made by "
+                f"{pub} - the photo will then be removed. Copies already made by "
                 "third parties cannot be retrieved."
             ),
         ]
