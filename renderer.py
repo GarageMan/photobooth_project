@@ -301,6 +301,9 @@ class Renderer:
         if model.state == AppState.REVIEW:
             self._draw_review_photo(model)
 
+        if model.state == AppState.SOCIAL_MEDIA_CONSENT:   # NEU (Sprint 15)
+            self._draw_social_media_consent(model)
+
         if model.state == AppState.GALLERY_FULLSCREEN:
             self._draw_gallery_fullscreen(model)
 
@@ -441,6 +444,9 @@ class Renderer:
             # dort selbst gezeichnet, der generische Block soll nicht
             # zusaetzlich darueberzeichnen.
             AppState.QR_DISPLAY,
+            # NEU (Sprint 15): zeichnet Frage und Hinweise selbst (siehe
+            # _draw_social_media_consent).
+            AppState.SOCIAL_MEDIA_CONSENT,
             # NEU (Sprint-11-Nachbesserung): GALLERY_PHOTO_QR zeichnet seine
             # eigene Ueberschrift ("QR-Code für dieses Foto", siehe
             # _draw_gallery_photo_qr) - der generische Fotobox-Titel oben
@@ -1584,6 +1590,49 @@ class Renderer:
             self._blit_center(line, self.font_body, (230, 230, 230), y + line_height // 2)
             y += line_height
 
+    def _draw_social_media_consent(self, model: AppModel) -> None:
+        """NEU (Sprint 15): Social-Media-Freigabefrage nach "Speichern".
+        Das gerade gespeicherte Foto bleibt abgedunkelt im Hintergrund
+        sichtbar (der Gast soll wissen, WORUEBER er entscheidet), darueber
+        die Frage (status_text, siehe state_machine.social_media_question)
+        und drei kurze Hinweise. Teil von text_screens - Titel und Text
+        werden vollstaendig hier gezeichnet."""
+        width, height = self.config.screen.width, self.config.screen.height
+        path = model.session.last_saved_photo_path or model.session.current_photo_path
+        if path:
+            image = self._get_thumbnail_surface(path, (width, height))
+            if image is not None:
+                self.screen.blit(image, (0, 0))
+        shade = pygame.Surface((width, height), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 175))
+        self.screen.blit(shade, (0, 0))
+
+        self._blit_center("Foto gespeichert!", self.font_body, (170, 230, 170), round(0.10 * height))
+
+        max_text_w = width - 160
+        question_lines = self._wrap_text(model.ui.status_text, self.font_title, max_text_w)
+        line_h = self.font_title.get_linesize()
+        y = round(0.21 * height)
+        for line in question_lines:
+            self._blit_center(line, self.font_title, (255, 255, 255), y + line_h // 2)
+            y += line_h
+
+        # Der QR-Hinweis nur, wenn der Download fuer diese Veranstaltung
+        # tatsaechlich moeglich ist (gleiche UND-Bedingung wie in _draw_terms).
+        qr_active = self.config.qr_codes_enabled and self.config.gallery_enabled
+        hints = (
+            "Bitte nur zustimmen, wenn alle Personen auf dem Foto einverstanden sind.",
+            "Unter 16 Jahren: bitte eine erziehungsberechtigte Person fragen.",
+            "Dein Foto bleibt in jedem Fall gespeichert"
+            + (" und kann per QR-Code heruntergeladen werden." if qr_active else "."),
+        )
+        small_h = self.font_small.get_linesize()
+        y += round(0.03 * height)
+        for hint in hints:
+            for line in self._wrap_text(hint, self.font_small, max_text_w):
+                self._blit_center(line, self.font_small, (215, 215, 215), y + small_h // 2)
+                y += small_h
+
     def _wrap_text(self, text: str, font: pygame.font.Font, max_width: int) -> list[str]:
         """Greedy Wortumbruch: haengt Woerter zeilenweise an, bis die Zeile
         breiter als max_width waere, dann beginnt eine neue Zeile. Reicht
@@ -2013,6 +2062,20 @@ class Renderer:
         # config.qr_codes_enabled gibt es aus der Galerie-Vollansicht heraus
         # keinen Download-Weg (siehe _handle_gallery_fullscreen), das waere
         # sonst eine falsche Aussage in einem rechtlich relevanten Text.
+        # NEU (Sprint 15, Social-Media-Freigabe): ist die Freigabefrage fuer
+        # diese Veranstaltung eingeschaltet, ersetzt ein eigener Abschnitt
+        # den bisherigen Satz "keine Veroeffentlichung / keine kommerzielle
+        # Nutzung" (der waere sonst falsch). Unternehmen und Plattform kommen
+        # aus event_config.json - genau wie in der Frage selbst.
+        social = self.config.social_media_enabled
+        company = self.config.social_media_company or "der Veranstalter"
+        platforms = self.config.social_media_platforms or "Social Media"
+        contact_lines = [
+            ("RAW", line.strip())
+            for line in self.config.social_media_contact.replace("\\n", "\n").split("\n")
+            if line.strip()
+        ]
+
         if model.ui.text_language == "en":
             if self.config.gallery_enabled:
                 gallery_visibility_text = (
@@ -2053,6 +2116,10 @@ class Renderer:
                 ("H", "Purpose & storage"),
                 "",
                 (
+                    "The photos serve as a keepsake of the event. They are "
+                    f"stored locally on the photo booth and handed over to {company} "
+                    "as the organiser after the event."
+                ) if social else (
                     "The photos serve as a keepsake for family, friends and "
                     "relatives as well as the host. They are first stored "
                     "locally on the photo booth and are subsequently processed "
@@ -2060,10 +2127,40 @@ class Renderer:
                 ),
                 gallery_visibility_text,
                 (
+                    "Photos are only published if you expressly allow it "
+                    "(see \"Publication\" below). Otherwise they are not passed "
+                    "on to uninvolved third parties, published online, or used "
+                    "commercially."
+                ) if social else (
                     "The photos are not passed on to uninvolved third parties, "
                     "published online, or used commercially."
                 ),
                 "",
+                *([
+                    ("H", f"Publication on {platforms}"),
+                    "",
+                    (
+                        f"After saving, the photo booth asks whether {company} may "
+                        f"publish your photo on {platforms} (also for advertising "
+                        "purposes). Only if you tap \"Yes\" is the photo released "
+                        f"for this purpose and handed over to {company} marked as such. Your consent is "
+                        "voluntary - without it you can use the photo booth "
+                        "without restriction and your photo stays saved."
+                    ),
+                    (
+                        "Please only agree if everyone in the photo agrees. For "
+                        "children and young people under 16, a parent or legal "
+                        "guardian must decide."
+                    ),
+                    (
+                        f"Published photos are publicly visible; {platforms} also "
+                        "processes them under its own privacy policy. You can "
+                        f"withdraw your consent at any time by contacting {company} "
+                        "- the photo is then removed. Copies already made by "
+                        "third parties cannot be retrieved."
+                    ),
+                    "",
+                ] if social else []),
                 *qr_download_paragraphs,
                 ("H", "Your rights"),
                 "",
@@ -2080,6 +2177,12 @@ class Renderer:
                 (
                     "All stored photos are irrevocably deleted from the photo "
                     "booth within two (2) days after the event."
+                    + (
+                        f" Photos released for {platforms} are kept by {company} "
+                        "for as long as they are published or until you withdraw "
+                        "your consent."
+                        if social else ""
+                    )
                 ),
                 "",
                 (
@@ -2088,6 +2191,13 @@ class Renderer:
                     "legal guardian."
                 ),
                 "",
+                *([
+                    ("H", f"Responsible for publication on {platforms}"),
+                    "",
+                    ("RAW", company),
+                    *contact_lines,
+                    "",
+                ] if social else []),
                 ("H", "Responsible for this photo booth"),
                 "",
                 ("RAW", "Lutz Buchholz"),
@@ -2139,6 +2249,10 @@ class Renderer:
                 ("H", "Verwendungszweck & Speicherung"),
                 "",
                 (
+                    "Die Fotos dienen als Erinnerung an die Veranstaltung. Sie "
+                    "werden lokal auf der Fotobox gespeichert und nach der "
+                    f"Veranstaltung an {company} als Veranstalter übergeben."
+                ) if social else (
                     "Die Fotos dienen als Erinnerung für Familie, Freunde und "
                     "Verwandte sowie den Gastgeber. Sie werden zunächst lokal "
                     "auf der Fotobox gespeichert und anschließend vom "
@@ -2146,11 +2260,45 @@ class Renderer:
                 ),
                 gallery_visibility_text,
                 (
+                    "Fotos werden nur veröffentlicht, wenn du es ausdrücklich "
+                    "erlaubst (siehe \"Veröffentlichung\" unten). Ansonsten "
+                    "findet keine Weitergabe an unbeteiligte Dritte, keine "
+                    "Veröffentlichung im Internet und keine kommerzielle "
+                    "Nutzung statt."
+                ) if social else (
                     "Eine Weitergabe an unbeteiligte Dritte, eine "
                     "Veröffentlichung bspw. im Internet oder eine "
                     "kommerzielle Nutzung findet nicht statt."
                 ),
                 "",
+                *([
+                    ("H", f"Veröffentlichung auf {platforms}"),
+                    "",
+                    (
+                        f"Nach dem Speichern fragt dich die Fotobox, ob {company} "
+                        f"dein Foto auf {platforms} veröffentlichen darf (auch zu "
+                        "Werbezwecken). Nur wenn du \"Ja\" antippst, wird das Foto "
+                        f"dafür freigegeben und gekennzeichnet an {company} übergeben. Deine "
+                        "Einwilligung ist freiwillig - ohne sie kannst du die "
+                        "Fotobox uneingeschränkt nutzen, dein Foto bleibt "
+                        "gespeichert."
+                    ),
+                    (
+                        "Bitte stimme nur zu, wenn alle Personen auf dem Foto "
+                        "einverstanden sind. Für Kinder und Jugendliche unter "
+                        "16 Jahren muss eine erziehungsberechtigte Person "
+                        "entscheiden."
+                    ),
+                    (
+                        f"Veröffentlichte Fotos sind öffentlich sichtbar; {platforms} "
+                        "verarbeitet sie zusätzlich nach eigenen "
+                        "Datenschutzbestimmungen. Du kannst deine Einwilligung "
+                        f"jederzeit bei {company} widerrufen - das Foto wird dann "
+                        "entfernt. Bereits von Dritten erstellte Kopien lassen "
+                        "sich nicht zurückholen."
+                    ),
+                    "",
+                ] if social else []),
                 *qr_download_paragraphs,
                 ("H", "Deine Rechte"),
                 "",
@@ -2170,6 +2318,12 @@ class Renderer:
                     "Alle gespeicherten Fotos werden unwiderruflich innerhalb "
                     "von zwei (2) Tagen nach der Veranstaltung von der Fotobox "
                     "gelöscht."
+                    + (
+                        f" Für {platforms} freigegebene Fotos bewahrt {company} "
+                        "auf, solange sie veröffentlicht sind oder bis du deine "
+                        "Einwilligung widerrufst."
+                        if social else ""
+                    )
                 ),
                 "",
                 (
@@ -2178,6 +2332,13 @@ class Renderer:
                     "berechtigten Person."
                 ),
                 "",
+                *([
+                    ("H", f"Verantwortlich für die Veröffentlichung auf {platforms}"),
+                    "",
+                    ("RAW", company),
+                    *contact_lines,
+                    "",
+                ] if social else []),
                 ("H", "Verantwortlich für den Betrieb"),
                 "",
                 ("RAW", "Lutz Buchholz"),
@@ -2322,6 +2483,12 @@ class Renderer:
         elif state == AppState.REVIEW:
             self._draw_button("Speichern", self.layout.left, (0, 150, 0))
             self._draw_button("Löschen", self.layout.right, (150, 0, 0))
+        elif state == AppState.SOCIAL_MEDIA_CONSENT:
+            # NEU (Sprint 15): beide Tasten gleich gross; "Nein" bewusst
+            # neutral grau statt rot - Rot bedeutet in der Fotobox "Loeschen",
+            # das Foto bleibt hier aber in jedem Fall gespeichert.
+            self._draw_button("Ja, freigeben", self.layout.left, (0, 150, 0))
+            self._draw_button("Nein", self.layout.right, (100, 100, 100))
         elif state == AppState.DELETE_CONFIRM:
             self._draw_button("Wirklich löschen", self.layout.left, (150, 0, 0))
             self._draw_button("Abbrechen", self.layout.right, (100, 100, 100))
@@ -4358,6 +4525,7 @@ class Renderer:
             AppState.COUNTDOWN: (60, 30, 20),
             AppState.CAPTURE_PENDING: (20, 40, 20),
             AppState.REVIEW: (40, 50, 40),
+            AppState.SOCIAL_MEDIA_CONSENT: (40, 50, 40),  # NEU (Sprint 15), wie REVIEW
             AppState.DELETE_CONFIRM: (50, 20, 20),
             AppState.QR_DISPLAY: (35, 20, 90),
             AppState.INSTRUCTIONS: (20, 20, 35),

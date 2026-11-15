@@ -75,6 +75,15 @@ _SAVE_CONFIRMATION_TEXT_NO_QR = (
 )
 
 
+def social_media_question(config) -> str:
+    """NEU (Sprint 15): Text der Freigabefrage - nennt Unternehmen und
+    Plattform(en) ausdruecklich (Voraussetzung fuer eine informierte
+    Einwilligung). Fallbacks, falls event_config.json unvollstaendig ist."""
+    company = (getattr(config, "social_media_company", "") or "").strip() or "der Veranstalter"
+    platforms = (getattr(config, "social_media_platforms", "") or "").strip() or "Social Media"
+    return f"Darf {company} dieses Foto auf {platforms} veröffentlichen?"
+
+
 class StateMachine:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -381,15 +390,25 @@ class StateMachine:
             # ist nicht nur Aufraeumen, sondern auch Datenschutz: kein Foto
             # landet dann ueberhaupt erst dort, wo es theoretisch abrufbar
             # waere.
-            if self.config.qr_codes_enabled:
-                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_QR)
-                actions = ("export_photo", "set_led_qr", "stop_preview")
-            else:
-                ui = replace(model.ui, status_text=_SAVE_CONFIRMATION_TEXT_NO_QR)
-                actions = ("set_led_qr", "stop_preview")
-            return TransitionResult(
-                model=model.evolve(state=AppState.QR_DISPLAY, session=session, timers=timers, ui=ui),
-                actions=actions,
+            export_actions = ("export_photo",) if self.config.qr_codes_enabled else ()
+            # NEU (Sprint 15): bei eingeschalteter Social-Media-Freigabe
+            # kommt VOR der Speicher-Bestaetigung die Frage, ob das Foto
+            # veroeffentlicht werden darf. Das Foto ist zu diesem Zeitpunkt
+            # bereits gespeichert und (bei QR-Codes) ins Web-Verzeichnis
+            # exportiert - unabhaengig von der Antwort (Nutzer-Vorgabe).
+            if self.config.social_media_enabled:
+                consent_timers = replace(
+                    timers, idle_deadline=now + self.config.timeouts.social_media_consent_seconds,
+                )
+                ui = replace(model.ui, status_text=social_media_question(self.config))
+                return TransitionResult(
+                    model=model.evolve(
+                        state=AppState.SOCIAL_MEDIA_CONSENT, session=session, timers=consent_timers, ui=ui,
+                    ),
+                    actions=export_actions + ("set_led_review", "stop_preview"),
+                )
+            return self._go_save_confirmation(
+                model.evolve(session=session), now, export_actions + ("stop_preview",),
             )
         if event.type == EventType.TAP_DELETE:
             timers = replace(model.timers, delete_deadline=now + self.config.timeouts.delete_confirm_seconds)
@@ -402,6 +421,33 @@ class StateMachine:
                 model=self._main_menu_model(model.evolve(session=session), now),
                 actions=("delete_photo", "set_led_main_menu", "stop_preview"),
             )
+        return TransitionResult(model=model)
+
+    def _go_save_confirmation(
+        self, model: AppModel, now: float, extra_actions: tuple[str, ...] = (),
+    ) -> TransitionResult:
+        """Speicher-Bestaetigung (AppState.QR_DISPLAY) - bisher direkt in
+        _handle_review/TAP_SAVE, seit Sprint 15 auch nach der Social-Media-
+        Freigabefrage erreichbar. extra_actions laufen VOR set_led_qr."""
+        timers = replace(model.timers, qr_deadline=now + self.config.timeouts.qr_display_seconds)
+        text = _SAVE_CONFIRMATION_TEXT_QR if self.config.qr_codes_enabled else _SAVE_CONFIRMATION_TEXT_NO_QR
+        ui = replace(model.ui, status_text=text)
+        return TransitionResult(
+            model=model.evolve(state=AppState.QR_DISPLAY, timers=timers, ui=ui),
+            actions=extra_actions + ("set_led_qr",),
+        )
+
+    def _handle_social_media_consent(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:
+        """NEU (Sprint 15): Antwort auf die Social-Media-Freigabefrage.
+        "Ja" -> Kopie nach data/social_media/ (Action
+        "release_photo_social_media", siehe app.py/social_media_service).
+        "Nein" und Untaetigkeit -> KEINE Freigabe (eine Einwilligung
+        braucht eine aktive Zustimmung). In jedem Fall bleibt das Foto
+        gespeichert und es geht weiter zur Speicher-Bestaetigung."""
+        if event.type == EventType.TAP_SOCIAL_MEDIA_YES:
+            return self._go_save_confirmation(model, now, ("release_photo_social_media",))
+        if event.type in {EventType.TAP_SOCIAL_MEDIA_NO, EventType.IDLE_TIMEOUT}:
+            return self._go_save_confirmation(model, now)
         return TransitionResult(model=model)
 
     def _handle_delete_confirm(self, model: AppModel, event: AppEvent, now: float) -> TransitionResult:

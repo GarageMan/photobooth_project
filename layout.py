@@ -707,6 +707,8 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
         return {"back": rects.back}
     if state == AppState.REVIEW:
         return {"save": rects.left, "delete": rects.right}
+    if state == AppState.SOCIAL_MEDIA_CONSENT:   # NEU (Sprint 15)
+        return {"social_yes": rects.left, "social_no": rects.right}
     if state == AppState.DELETE_CONFIRM:
         return {"confirm_delete": rects.left, "abort_delete": rects.right}
     if state == AppState.QR_DISPLAY:

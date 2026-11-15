@@ -18,6 +18,9 @@ class EventType(Enum):
     TAP_CANCEL = auto()
     TAP_SAVE = auto()
     TAP_DELETE = auto()
+    # NEU (Sprint 15): Antworten auf die Social-Media-Freigabefrage.
+    TAP_SOCIAL_MEDIA_YES = auto()
+    TAP_SOCIAL_MEDIA_NO = auto()
     TAP_CONFIRM_DELETE = auto()
     TAP_ABORT_DELETE = auto()
     TAP_FULLSCREEN_PHOTO = auto()

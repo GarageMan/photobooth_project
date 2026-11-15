@@ -107,6 +107,10 @@ class ExportResult:
     target_dir: Path | None = None
     conflicts: list[ExportConflict] = field(default_factory=list)
     log_actions: list[str] = field(default_factory=list)
+    # NEU (Sprint 15): freigegebene Social-Media-Kopien (Unterordner
+    # SOCIAL_MEDIA_SUBFOLDER im Zielordner), siehe export_social_media().
+    social_copied: int = 0
+    social_skipped: int = 0
 
     @property
     def ok(self) -> bool:
@@ -130,9 +134,19 @@ class ExportResult:
             lines.append(f"Alle {self.verified} Dateien geprüft (SHA256) - in Ordnung")
         if self.errors:
             lines.append(f"Fehler: {len(self.errors)}")
+        if self.social_copied or self.social_skipped:
+            lines.append(
+                f"Social-Media-Freigaben: {self.social_copied + self.social_skipped} "
+                f"(Unterordner {SOCIAL_MEDIA_SUBFOLDER})"
+            )
         if self.target_dir:
             lines.append(f"Zielordner: {self.target_dir.name}")
         return tuple(lines)
+
+
+# NEU (Sprint 15): Name des Unterordners fuer freigegebene Social-Media-Fotos
+# im Export-Zielordner auf dem Stick.
+SOCIAL_MEDIA_SUBFOLDER = "social_media"
 
 
 # Zeichen, die FAT32/exFAT/NTFS in Datei- und Ordnernamen verbieten.
@@ -493,3 +507,53 @@ def clear_stick(mountpoint: Path) -> tuple[int, list[str]]:
         except OSError as exc:
             errors.append(f"{item.name}: {exc}")
     return deleted, errors
+
+
+def export_social_media(
+    social_media_dir: Path,
+    mountpoint: Path,
+    result: ExportResult,
+    folder_name: str = "Fotobox",
+    verify: bool = True,
+) -> None:
+    """NEU (Sprint 15): kopiert die freigegebenen Social-Media-Fotos
+    (data/social_media/) in den Unterordner SOCIAL_MEDIA_SUBFOLDER des
+    Export-Zielordners - die Veranstalterin bekommt so genau die Fotos,
+    deren Veroeffentlichung die Gaeste erlaubt haben, getrennt vom Rest.
+
+    Bewusst einfach gehalten (kein interaktiver Konflikt-Screen): die
+    Dateinamen sind eindeutig (Praefix + Zeitstempel). Eine bereits
+    vorhandene, inhaltsgleiche Datei wird uebersprungen, eine abweichende
+    ueberschrieben (die Fotobox ist die Quelle der Freigabe). Jede Kopie
+    wird per SHA256 geprueft. Ergebnisse/Fehler landen in `result` (das
+    ExportResult des Fotoexports), damit der Abschluss-Screen beides
+    zusammen zeigt. Nie eine Exception nach aussen."""
+    try:
+        sources = sorted(
+            p for p in social_media_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES
+        )
+    except OSError:
+        return
+    if not sources:
+        return
+    target = mountpoint / sanitize_folder_name(folder_name) / SOCIAL_MEDIA_SUBFOLDER
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        result.errors.append(f"Social-Media-Ordner konnte nicht angelegt werden: {exc}")
+        return
+    for src in sources:
+        dst = target / src.name
+        try:
+            if dst.exists() and _same_content(src, dst):
+                result.social_skipped += 1
+                continue
+            shutil.copy2(src, dst)
+            if verify and _sha256(src) != _sha256(dst):
+                result.failed_verify.append(f"{SOCIAL_MEDIA_SUBFOLDER}/{src.name}")
+                continue
+            result.social_copied += 1
+            result.log_actions.append(f"social_media: kopiert {src.name}")
+        except OSError as exc:
+            result.errors.append(f"{SOCIAL_MEDIA_SUBFOLDER}/{src.name}: {exc}")

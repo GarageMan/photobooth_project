@@ -28,6 +28,10 @@ class AppState(Enum):
     REVIEW = auto()
     DELETE_CONFIRM = auto()
     QR_DISPLAY = auto()
+    # NEU (Sprint 15): Frage nach "Speichern", ob das Foto auf Social Media
+    # veroeffentlicht werden darf (nur bei config.social_media_enabled).
+    # "Ja" -> Kopie nach data/social_media/, danach wie bisher QR_DISPLAY.
+    SOCIAL_MEDIA_CONSENT = auto()
     INSTRUCTIONS = auto()
     TERMS = auto()
     ERROR_SCREEN = auto()

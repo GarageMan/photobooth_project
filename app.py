@@ -65,6 +65,7 @@ from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolution
     apply_conflict_resolutions,
     clear_stick,
     export_photos,
+    export_social_media,  # NEU (Sprint 15)
 )
 from storage_service import StorageService
 from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
@@ -73,6 +74,7 @@ from renderer import Renderer
 from admin_service import PinLockout, SecretGestureDetector  # NEU (3.4), umbenannt (Sprint 11, vormals shutdown_service.py)
 import subprocess  # NEU (3.4b): fuer das echte Herunterfahren
 import event_wallpaper_reset  # NEU (Sprint 14): Wallpaper-Reset bei "Standardwerte"
+import social_media_service  # NEU (Sprint 15): Social-Media-Freigabe
 from hdmi_output_service import HdmiOutputService, TouchMappingGuard, ensure_hdmi_off, ensure_touch_primary, pick_display_index, read_status as hdmi_read_status, set_power as hdmi_set_power  # NEU (Sprint 14, Fix 6: TouchMappingGuard)
 
 # ------------------------------------------------------------------------------
@@ -716,6 +718,9 @@ class PhotoboothApp:
             "cancel":         AppEvent(EventType.TAP_CANCEL, source="touch"),
             "save":           AppEvent(EventType.TAP_SAVE, payload={"filename": None}, source="touch"),
             "delete":         AppEvent(EventType.TAP_DELETE, source="touch"),
+            # NEU (Sprint 15): Social-Media-Freigabefrage.
+            "social_yes":     AppEvent(EventType.TAP_SOCIAL_MEDIA_YES, source="touch"),
+            "social_no":      AppEvent(EventType.TAP_SOCIAL_MEDIA_NO, source="touch"),
             "confirm_delete": AppEvent(EventType.TAP_CONFIRM_DELETE, source="touch"),
             "abort_delete":   AppEvent(EventType.TAP_ABORT_DELETE, source="touch"),
             # NEU (4.4): Gesamtbestand loeschen - bewusst eigene Events,
@@ -1145,6 +1150,9 @@ class PhotoboothApp:
             AppState.GALLERY_EMPTY,   # NEU (Etappe 7)
             AppState.GALLERY_FULLSCREEN,
             AppState.REVIEW,
+            # NEU (Sprint 15): ohne Antwort gilt die Freigabefrage nach
+            # timeouts.social_media_consent_seconds als "Nein".
+            AppState.SOCIAL_MEDIA_CONSENT,
             # TERMS: anders als INSTRUCTIONS soll diese Ansicht nach
             # terms_idle_seconds (3 Minuten) automatisch verlassen werden,
             # falls der Gast "Verstanden" vergisst zu druecken.
@@ -1391,6 +1399,8 @@ class PhotoboothApp:
                 self.preview_service.start()
             elif action == "stop_preview":
                 self.preview_service.stop()
+            elif action == "release_photo_social_media":   # NEU (Sprint 15)
+                self._release_photo_social_media()
             elif action == "export_photo":
                 self._export_photo()
             elif action == "generate_qr":
@@ -1494,6 +1504,19 @@ class PhotoboothApp:
         except Exception as exc:
             print(f"[App] Export fehlgeschlagen: {exc}")
 
+    def _release_photo_social_media(self) -> None:
+        """NEU (Sprint 15): Gast hat der Social-Media-Veroeffentlichung
+        zugestimmt - Kopie nach data/social_media/freigegeben_<name>. Quelle
+        ist das gerade gespeicherte Foto (session.last_saved_photo_path, von
+        TAP_SAVE gesetzt). Fehler werden nur geloggt; das Foto selbst bleibt
+        in jedem Fall gespeichert."""
+        path = self.model.session.last_saved_photo_path or self.model.session.current_photo_path
+        if not path:
+            print("[App] Social-Media-Freigabe: kein Foto-Pfad vorhanden.")
+            return
+        ok, message = social_media_service.release_photo(Path(path), self.config.social_media_dir)
+        print(f"[App] Social-Media-Freigabe: {message}")
+
     def _generate_qr_surface(self, filename: str | None = None) -> None:
         """GEAENDERT (Sprint 11, Feature 4): `filename` ist jetzt optional
         parametrisierbar (vorher immer `session.qr_filename`) - wird von
@@ -1564,6 +1587,10 @@ class PhotoboothApp:
         for path in selected:
             if self.gallery_service.delete_photo(path):
                 deleted_count += 1
+                # NEU (Sprint 15): eine evtl. vorhandene Social-Media-
+                # Freigabe dieses Fotos mitloeschen (Nutzer-Vorgabe).
+                if social_media_service.delete_released_copy(Path(path).name, self.config.social_media_dir):
+                    print(f"[App] Social-Media-Freigabe mitgeloescht: {Path(path).name}")
             else:
                 print(f"[App] Foto konnte nicht geloescht werden (nicht gefunden?): {path}")
         print(f"[App] Galerie aufgeraeumt: {deleted_count}/{len(selected)} Foto(s) geloescht.")
@@ -1706,6 +1733,12 @@ class PhotoboothApp:
         count, net, gross = admin_usb_service.required_export_bytes(
             self.config.photo_dir, self.config.gallery.excluded_filenames,
         )
+        # NEU (Sprint 15): freigegebene Social-Media-Kopien kommen zusaetzlich
+        # auf den Stick (Unterordner social_media) - Platzbedarf mitrechnen.
+        social_count, _social_net, social_gross = admin_usb_service.required_export_bytes(
+            self.config.social_media_dir,
+        )
+        gross += social_gross
         self._usb_required_bytes = gross
         if count == 0:
             lines = (
@@ -1714,7 +1747,8 @@ class PhotoboothApp:
             )
         else:
             lines = (
-                f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})",
+                f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})"
+                + (f" + {social_count} Social-Media-Freigaben" if social_count else ""),
                 f"Benötigter Platz auf dem Stick: {admin_usb_service.format_bytes(gross)}",
                 "",
                 "Bitte einen USB-Stick mit ausreichend freiem Speicher",
@@ -1819,8 +1853,16 @@ class PhotoboothApp:
                     # aus Etappe 6a scharf (war dort dormant, Default=False).
                     collect_conflicts=True,
                 )
+                # NEU (Sprint 15): freigegebene Social-Media-Fotos in den
+                # Unterordner "social_media" des Zielordners - im selben
+                # Thread, damit der Abschluss-Screen erst danach erscheint.
+                export_social_media(
+                    self.config.social_media_dir, stick.mountpoint, result,
+                    folder_name=self.config.screen.title, verify=True,
+                )
                 print(
                     f"[App] Export beendet: {result.copied} kopiert, "
+                    f"Social Media: {result.social_copied} kopiert/{result.social_skipped} vorhanden, "
                     f"{result.skipped} uebersprungen, {result.verified} verifiziert, "
                     f"Konflikte: {len(result.conflicts)}, "
                     f"Fehler: {len(result.errors)}, Pruefsummenfehler: {len(result.failed_verify)}"
@@ -2000,6 +2042,7 @@ class PhotoboothApp:
                     camera_lock=self._camera_lock,
                     delete_from_camera=True,
                     progress=progress,          # NEU (4.9)
+                    social_media_dir=self.config.social_media_dir,  # NEU (Sprint 15)
                 )
                 print(
                     f"[App] Loeschlauf beendet: {result.deleted_photos} Fotos, "
@@ -2178,6 +2221,13 @@ class PhotoboothApp:
             data["theme_background_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_background)
         if ui.admin_event_theme_text is not None:
             data["theme_text_color"] = wallpaper_theme_service.color_to_hex(ui.admin_event_theme_text)
+        # NEU (Sprint 15): nur in event_config.json gepflegte Einstellungen
+        # (Social-Media-Freigabe) beim Speichern erhalten - AUSSER nach
+        # "Standardwerte": dann bewusst weglassen, die Freigabefrage ist
+        # danach wieder aus (Standard fuer private Feiern).
+        if not getattr(self, "_event_wallpaper_reset_requested", False):
+            for key, value in event_config_service.preserved_settings(EVENT_CONFIG_PATH).items():
+                data.setdefault(key, value)
         ok, message = event_config_service.save_event_config(EVENT_CONFIG_PATH, data)
         if ok:
             # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
@@ -2618,6 +2668,10 @@ class PhotoboothApp:
                     effect = LedEffect.PRE_TRIGGER_DARK
         elif state == AppState.REVIEW:
             effect = LedEffect.REVIEW_BREATHE
+        elif state == AppState.SOCIAL_MEDIA_CONSENT:
+            # NEU (Sprint 15): gleiche Bedeutung wie REVIEW ("eine Frage zum
+            # gerade aufgenommenen Foto wartet auf Antwort").
+            effect = LedEffect.REVIEW_BREATHE
         elif state == AppState.DELETE_CONFIRM:
             effect = LedEffect.DELETE_CONFIRM
         elif state == AppState.QR_DISPLAY:
@@ -2783,6 +2837,9 @@ class PhotoboothApp:
         if state in {
             AppState.CAPTURE_PENDING, AppState.REVIEW, AppState.QR_DISPLAY,
             AppState.DELETE_CONFIRM, AppState.ERROR_SCREEN,
+            # NEU (Sprint 15): der Taster darf hier weder "Ja" noch "Nein"
+            # ausloesen - eine Einwilligung nur per bewusstem Antippen.
+            AppState.SOCIAL_MEDIA_CONSENT,
             AppState.BOOT, AppState.MAINTENANCE,
             # NEU (4.1): im Service-Menue loest der Taster nichts aus.
             AppState.ADMIN_MENU,

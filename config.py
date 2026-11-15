@@ -82,6 +82,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PHOTO_DIR = DATA_DIR / "photos"
 WEB_DIR = DATA_DIR / "web"
+# NEU (Sprint 15, Social-Media-Freigabe): Kopien der Fotos, deren
+# Veroeffentlichung der Gast ausdruecklich erlaubt hat (Dateiname mit
+# Praefix "freigegeben_", siehe social_media_service.py). Liegt bewusst
+# AUSSERHALB von PHOTO_DIR - Galerie, Attract-Modus und HDMI-Wiedergabe
+# lesen nur PHOTO_DIR und zeigen diese Kopien dadurch nie (doppelt) an.
+SOCIAL_MEDIA_DIR = DATA_DIR / "social_media"
 CACHE_DIR = DATA_DIR / "cache"
 LOG_DIR = DATA_DIR / "logs"
 ASSETS_DIR = BASE_DIR / "assets"
@@ -194,6 +200,21 @@ QR_CODES_ENABLED = bool(_event_config.get("qr_codes_enabled", True))
 # gemeinsam (UND-verknuepft).
 GALLERY_ENABLED = bool(_event_config.get("gallery_enabled", True))
 
+# NEU (Sprint 15, Social-Media-Freigabe): nach "Speichern" fragt die Fotobox
+# den Gast, ob das Foto auf Social Media veroeffentlicht werden darf. Bei
+# "Ja" landet eine Kopie in SOCIAL_MEDIA_DIR. Standard AUS - private Feiern
+# (Geburtstag, Hochzeit) sollen die Frage nicht sehen; nur fuer
+# Veranstaltungen mit gewerblicher Nutzung einschalten. Firmenname und
+# Plattform(en) erscheinen woertlich in der Frage und in den
+# Nutzungsbedingungen (Voraussetzung fuer eine informierte Einwilligung).
+SOCIAL_MEDIA_ENABLED = bool(_event_config.get("social_media_enabled", False))
+SOCIAL_MEDIA_COMPANY = str(_event_config.get("social_media_company") or "").strip()
+SOCIAL_MEDIA_PLATFORMS = str(_event_config.get("social_media_platforms") or "Instagram").strip()
+# Kontaktdaten der veroeffentlichenden Stelle fuer die Nutzungsbedingungen
+# (Anschrift/E-Mail) - Zeilen durch "\n" getrennt. Optional; fehlt der Wert,
+# nennen die Bedingungen nur den Firmennamen.
+SOCIAL_MEDIA_CONTACT = str(_event_config.get("social_media_contact") or "").strip()
+
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
 # "Veranstaltungsdaten" editierbar (siehe event_config_service.
@@ -265,7 +286,14 @@ def needs_event_setup(event_config: dict) -> bool:
     password = str(event_config.get("guest_wifi_password") or "").strip()
     password_placeholder = qr_enabled and password in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
 
-    return title_placeholder or password_placeholder
+    # NEU (Sprint 15): ist die Social-Media-Freigabe eingeschaltet, muss das
+    # veroeffentlichende Unternehmen benannt sein - sonst wuesste der Gast
+    # nicht, wem er die Einwilligung erteilt.
+    social_enabled = bool(event_config.get("social_media_enabled", False))
+    company = str(event_config.get("social_media_company") or "").strip()
+    company_placeholder = social_enabled and company in ("", "BITTE_ANPASSEN", _PLACEHOLDER)
+
+    return title_placeholder or password_placeholder or company_placeholder
 
 
 NEEDS_EVENT_SETUP = needs_event_setup(_event_config)
@@ -315,6 +343,10 @@ class TimeoutConfig:
     # Ablauf unnoetig zu verlangsamen (anders als vorher, wo Gaeste Zeit zum
     # Scannen eines QR-Codes brauchten).
     qr_display_seconds: float = 20.0
+    # NEU (Sprint 15): Social-Media-Freigabefrage nach "Speichern". Bleibt
+    # der Gast ohne Antwort, gilt das als "Nein" (keine Einwilligung ohne
+    # aktive Zustimmung) - das Foto ist trotzdem gespeichert.
+    social_media_consent_seconds: float = 60.0
     delete_confirm_seconds: float = 30.0
     attract_frame_seconds: float = 5.0
     countdown_seconds: tuple[int, ...] = (5, 4, 3, 2, 1)
@@ -566,6 +598,7 @@ class AppConfig:
     hdmi: HdmiConfig = field(default_factory=HdmiConfig)  # NEU (Sprint 14)
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
+    social_media_dir: Path = SOCIAL_MEDIA_DIR  # NEU (Sprint 15)
     cache_dir: Path = CACHE_DIR
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
@@ -588,6 +621,11 @@ class AppConfig:
     # kommt aus data/event_config.json (Fallback True),
     # siehe GALLERY_ENABLED oben.
     gallery_enabled: bool = GALLERY_ENABLED
+    # NEU (Sprint 15): Social-Media-Freigabe, siehe SOCIAL_MEDIA_ENABLED oben.
+    social_media_enabled: bool = SOCIAL_MEDIA_ENABLED
+    social_media_company: str = SOCIAL_MEDIA_COMPANY
+    social_media_platforms: str = SOCIAL_MEDIA_PLATFORMS
+    social_media_contact: str = SOCIAL_MEDIA_CONTACT
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
@@ -599,7 +637,10 @@ class AppConfig:
     theme_text_color: tuple[int, int, int] | None = THEME_TEXT_COLOR
 
     def ensure_directories(self) -> None:
-        for path in (self.photo_dir, self.web_dir, self.cache_dir, self.log_dir, self.assets_dir):
+        for path in (
+            self.photo_dir, self.web_dir, self.social_media_dir,
+            self.cache_dir, self.log_dir, self.assets_dir,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
 

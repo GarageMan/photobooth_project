@@ -252,6 +252,17 @@ HDMI abgeschaltet und der Touch neu zugeordnet.
   1920×1080 verkleinert und als PNG gespeichert. "Standardwerte" setzt
   beim Speichern auch beide Wallpaper auf den Grundzustand zurück (siehe
   [Wallpaper-Dateien](#wallpaper-dateien-ordner-assets))
+- **Social-Media-Freigabe pro Foto** (Sprint 15, pro Veranstaltung
+  schaltbar, Standard aus): nach "Speichern" fragt die Fotobox
+  „Darf <Unternehmen> dieses Foto auf <Plattform> veröffentlichen?“ —
+  **[Ja, freigeben]** / **[Nein]**, keine Antwort = Nein. Bei "Ja" landet
+  eine Kopie als `data/social_media/freigegeben_<name>.jpg` (nicht in der
+  Galerie). Das Foto selbst bleibt in jedem Fall gespeichert und (bei
+  aktiven QR-Codes) per QR-Code herunterladbar. Der USB-Export legt die
+  Freigaben zusätzlich im Unterordner `social_media` ab; Löschen (Galerie
+  aufräumen, "Alle Bilder löschen") entfernt auch die Freigaben. Die
+  Nutzungsbedingungen auf der Fotobox passen sich automatisch an
+  (`docs/fotobox_nutzungsbedingungen_social_media.docx` als Langfassung)
 - **Titel im Hauptmenü ausblendbar** (Sprint 14): ein bewusst leerer
   Event-Titel (`"event_title": ""`) blendet Titel und dunklen Verlauf oben
   aus — für Wallpaper, die Logo/Schriftzug selbst tragen
@@ -457,6 +468,7 @@ vollständige, autoritative Liste in `states.py`).
 | `wallpaper_theme_service.py` | NEU (Sprint 13): Farbpaletten-Vorschläge aus dem Wallpaper, WCAG-Kontrast, Hex-Umrechnung |
 | `attract_slideshow.py` | NEU (Sprint 14): gemeinsame Zufalls-/Timing-Logik der Standby-Galerie — von `renderer.py` und `hdmi_slideshow.py` genutzt, damit beide identisch laufen |
 | `hdmi_output_service.py` | NEU (Sprint 14): HDMI-Status/ein/aus per `xrandr`, Touch-Zuordnung per `xinput` (`TouchMappingGuard` für Hotplug), Verwaltung des Beamer-Prozesses |
+| `social_media_service.py` | NEU (Sprint 15): freigegebene Kopien in `data/social_media/` anlegen, auflisten, mitlöschen |
 | `hdmi_slideshow.py` | NEU (Sprint 14): eigenständiger pygame-Prozess für den HDMI-Bildschirm (Galerie-Wiedergabe oder Standbild) |
 | `start_fotobox.sh` | Autostart-Skript mit Neustart-Schleife |
 | `test/test_*.py` | Unit-Tests (pytest) |
@@ -598,6 +610,24 @@ und USB-Ordnername nutzen dann intern weiter "Fotobox". Der Hinweisstreifen
 noch auf dem Beispielwert "Fotobox" steht, bzw. wenn bei aktiven
 QR-Codes das Gäste-WLAN-Passwort noch ein Platzhalter ist
 (`config.needs_event_setup`).
+
+**`social_media_enabled` / `social_media_company` / `social_media_platforms` /
+`social_media_contact`** (optional, Sprint 15): schaltet die
+Social-Media-Freigabefrage ein (Standard `false`). Unternehmen und
+Plattform erscheinen wörtlich in der Frage und in den Nutzungsbedingungen;
+`social_media_contact` (Anschrift/E-Mail, Zeilen mit `\n` getrennt) wird
+dort als verantwortliche Stelle genannt. Ist die Freigabe an, aber kein
+Unternehmen eingetragen, erscheint der Hinweis "Standardkonfiguration
+aktiv". Diese Schlüssel werden nur in der Datei gepflegt, bleiben beim
+Speichern von "Veranstaltungsdaten" erhalten und werden durch
+"Standardwerte" + "Speichern" entfernt (Freigabe wieder aus).
+
+```json
+  "social_media_enabled": true,
+  "social_media_company": "Holler Hof",
+  "social_media_platforms": "Instagram",
+  "social_media_contact": "Musterstraße 1\n12345 Musterstadt\ninfo@example.org"
+```
 
 **`theme_button_color` / `theme_background_color` / `theme_text_color`**
 (optional, Sprint 13): Hex-Farben wie `"#2a3479"`, werden über "Farbstil
@@ -904,8 +934,13 @@ Ein-/Ausschalten, Touch-Zuordnung mit der echten, doppelten
 HDMI-Bildaufbereitung inkl. EXIF-Drehung, Layout);
 `test_state_machine_admin.py` um HDMI-Menü und Galerie-Aufräumen erweitert.
 
-Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **597 Tests, alle grün**
-(Stand v1.1.0, nach Sprint 14).
+**Update (Sprint 15, Social-Media-Freigabe):** neu `test/test_social_media.py`
+(Ablauf Speichern → Freigabefrage → Bestätigung, Ja/Nein/Zeitablauf,
+Web-Export unabhängig von der Antwort, Dateioperationen, Mitlöschen,
+USB-Unterordner, Konfiguration, erhaltene Einstellungen beim Speichern).
+
+Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **624 Tests, alle grün**
+(Stand Sprint 15, Social-Media-Freigabe).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:
