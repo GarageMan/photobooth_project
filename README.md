@@ -11,7 +11,10 @@ Bestätigung/Löschung an, exportiert gespeicherte Fotos für den QR-Code-
 Download und zeigt zwischendurch eine "Fliegende Galerie" bereits
 aufgenommener Fotos als Blickfang. Optional zeigt ein zweiter Bildschirm
 (Beamer/Monitor am HDMI-Ausgang des Pi) die Galerie bzw. ein
-veranstaltungsspezifisches Standbild (seit v1.1.0).
+veranstaltungsspezifisches Standbild (seit v1.1.0). Für Veranstaltungen
+mit gewerblichem Veranstalter lassen sich eine Social-Media-Freigabe pro
+Foto, ausgefüllte Nutzungsbedingungen als Word-Datei und ein Bilderrahmen
+mit Firmenlogo zuschalten (seit v1.2.0).
 
 > Aktuell im Einsatz für private Veranstaltungen.
 > Alle UI-Texte und Code-Kommentare sind auf Deutsch.
