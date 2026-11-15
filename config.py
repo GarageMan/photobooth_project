@@ -90,6 +90,10 @@ WEB_DIR = DATA_DIR / "web"
 # AUSSERHALB von PHOTO_DIR - Galerie, Attract-Modus und HDMI-Wiedergabe
 # lesen nur PHOTO_DIR und zeigen diese Kopien dadurch nie (doppelt) an.
 SOCIAL_MEDIA_DIR = DATA_DIR / "social_media"
+# NEU (Sprint 15, Bilderrahmen): unbearbeitete Originale ("rahmenlos_<name>")
+# bei eingeschaltetem Bilderrahmen - bewusst ausserhalb von data/photos,
+# damit sie in keiner Fotoliste (Galerie, HDMI, Attract, QR) auftauchen.
+UNFRAMED_DIR = DATA_DIR / "rahmenlos"
 CACHE_DIR = DATA_DIR / "cache"
 LOG_DIR = DATA_DIR / "logs"
 ASSETS_DIR = BASE_DIR / "assets"
@@ -225,6 +229,12 @@ SOCIAL_MEDIA_ENABLED = _SOCIAL_MEDIA.enabled
 SOCIAL_MEDIA_COMPANY = _SOCIAL_MEDIA.company
 SOCIAL_MEDIA_PLATFORMS = _SOCIAL_MEDIA.platforms
 SOCIAL_MEDIA_CONTACT = _SOCIAL_MEDIA.legacy_contact
+
+# NEU (Sprint 15): Bilderrahmen (Entwurf B1: Goldrahmen + Schneeflocken +
+# Holler-Hof-Logo) - pro Veranstaltung schaltbar, Standard aus. Siehe
+# photo_frame.py; im Service-Menue "Veranstaltungsdaten" -> Kachel
+# "Bilderrahmen".
+FRAME_ENABLED = bool(_event_config.get("frame_enabled", False))
 
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
@@ -610,6 +620,7 @@ class AppConfig:
     photo_dir: Path = PHOTO_DIR
     web_dir: Path = WEB_DIR
     social_media_dir: Path = SOCIAL_MEDIA_DIR  # NEU (Sprint 15)
+    unframed_dir: Path = UNFRAMED_DIR          # NEU (Sprint 15, Bilderrahmen)
     cache_dir: Path = CACHE_DIR
     log_dir: Path = LOG_DIR
     assets_dir: Path = ASSETS_DIR
@@ -647,6 +658,8 @@ class AppConfig:
     social_media_handle: str = _SOCIAL_MEDIA.handle
     social_media_privacy_url: str = _SOCIAL_MEDIA.privacy_url
     social_media_contact: str = SOCIAL_MEDIA_CONTACT  # alt, nur Rueckfall
+    # NEU (Sprint 15): Bilderrahmen an/aus, siehe FRAME_ENABLED oben.
+    frame_enabled: bool = FRAME_ENABLED
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT
@@ -659,7 +672,7 @@ class AppConfig:
 
     def ensure_directories(self) -> None:
         for path in (
-            self.photo_dir, self.web_dir, self.social_media_dir,
+            self.photo_dir, self.web_dir, self.social_media_dir, self.unframed_dir,
             self.cache_dir, self.log_dir, self.assets_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)

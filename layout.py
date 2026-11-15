@@ -129,6 +129,7 @@ class LayoutRects:
     # (gleiches Kachelraster wie Seite 1, siehe _event_tile) sowie die
     # Seitenwechsel-Taste zwischen "Speichern" und "Abbrechen".
     admin_event_page_button: pygame.Rect
+    admin_event_frame_toggle: pygame.Rect   # NEU (Sprint 15, Bilderrahmen)
     admin_event_social_toggle: pygame.Rect
     admin_event_social_platforms_button: pygame.Rect
     admin_event_social_company_row: pygame.Rect
@@ -454,9 +455,12 @@ def build_layout(width: int, height: int) -> LayoutRects:
     # treffbar (ca. 70 statt 45 px hoch). Letzte Reihe endet bei
     # 0.21 + 4 * 0.11 + 0.098 = 0.748 - darunter bleibt bis lower_y (0.80)
     # Platz fuer eine Fehlerzeile (Pflichtfelder Social Media).
+    # GEAENDERT (Sprint 15, Bilderrahmen): 6 statt 5 Reihen (Kachel
+    # "Bilderrahmen") - letzte Reihe endet bei 0.21 + 5 * 0.092 + 0.082 =
+    # 0.752, die Fehlerzeile darunter bleibt frei.
     event_tile_y0 = 0.21
-    event_tile_h = 0.098
-    event_tile_step = 0.110
+    event_tile_h = 0.082
+    event_tile_step = 0.092
     event_tile_gap_x = 0.02
     event_tile_w = (event_row_w - event_tile_gap_x) / 2
 
@@ -476,8 +480,10 @@ def build_layout(width: int, height: int) -> LayoutRects:
     admin_event_wallpaper_button = _event_tile(2, 1)
     admin_event_qr_toggle = _event_tile(3, 0)
     admin_event_gallery_toggle = _event_tile(3, 1)
-    admin_event_color_style_button = _event_tile(4, 0)
-    admin_event_defaults_button = _event_tile(4, 1)
+    # NEU (Sprint 15): Bilderrahmen an/aus.
+    admin_event_frame_toggle = _event_tile(4, 0)
+    admin_event_color_style_button = _event_tile(4, 1)
+    admin_event_defaults_button = _event_tile(5, 0)
     # Seite 2 - Social Media
     admin_event_social_toggle = _event_tile(0, 0)
     admin_event_social_platforms_button = _event_tile(0, 1)
@@ -701,6 +707,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_wallpaper_target_hdmi=admin_event_wallpaper_target_hdmi,
         admin_event_color_style_next=admin_event_color_style_next,
         admin_event_page_button=admin_event_page_button,
+        admin_event_frame_toggle=admin_event_frame_toggle,
         admin_event_social_toggle=admin_event_social_toggle,
         admin_event_social_platforms_button=admin_event_social_platforms_button,
         admin_event_social_company_row=admin_event_social_company_row,
@@ -835,6 +842,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             "admin_event_defaults": rects.admin_event_defaults_button,
             # NEU (Sprint 13): "Farbstil vorschlagen"-Taste.
             "admin_event_color_style": rects.admin_event_color_style_button,
+            "admin_event_toggle_frame": rects.admin_event_frame_toggle,   # NEU (Sprint 15)
             # NEU (Sprint 15, Fix 2): Seite 2 "Social Media" - enthaelt
             # bewusst die Kacheln BEIDER Seiten; welche davon gerade
             # sichtbar sind, filtert app._map_click_to_event anhand von

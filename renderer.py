@@ -742,6 +742,35 @@ class Renderer:
         if preview_frame.get_size() != target_size:
             preview_frame = pygame.transform.smoothscale(preview_frame, target_size)
         self.screen.blit(preview_frame, (0, 0))
+        # NEU (Sprint 15): Bilderrahmen auch im Live View - das Overlay wird
+        # genauso auf Bildschirmgroesse gestreckt wie das Kamerabild, Rahmen
+        # und Logo liegen daher an derselben relativen Stelle wie im Foto.
+        overlay = self._frame_overlay_surface()
+        if overlay is not None:
+            self.screen.blit(overlay, (0, 0))
+
+    def _frame_overlay_surface(self) -> pygame.Surface | None:
+        """Rahmen-Overlay in Bildschirmgroesse (einmalig geladen, gecacht).
+        None, wenn der Rahmen aus ist oder die Datei fehlt."""
+        if not getattr(self.config, "frame_enabled", False):
+            return None
+        if self._frame_overlay_cache is not None:
+            return self._frame_overlay_cache or None
+        target_size = (self.config.screen.width, self.config.screen.height)
+        try:
+            import photo_frame
+            with PILImage.open(self.config.assets_dir / photo_frame.FRAME_FILENAME) as raw:
+                small = raw.convert("RGBA").resize(target_size, PILImage.LANCZOS)
+            surface = pygame.image.frombuffer(small.tobytes(), small.size, "RGBA")
+            try:
+                surface = surface.convert_alpha()
+            except pygame.error:
+                pass  # ohne Display-Modus (Tests) unkonvertiert verwenden
+            self._frame_overlay_cache = surface
+        except (OSError, ValueError) as exc:
+            print(f"[Renderer] Rahmen-Overlay konnte nicht geladen werden: {exc}")
+            self._frame_overlay_cache = False
+        return self._frame_overlay_cache or None
 
     def _draw_gallery_grid(self, model: AppModel) -> None:
         photos = model.session.photos
@@ -2855,6 +2884,10 @@ class Renderer:
             )
             self._draw_event_toggle_tile(L.admin_event_qr_toggle, "QR-Code", ui.admin_event_qr_enabled)
             self._draw_event_toggle_tile(L.admin_event_gallery_toggle, "Galerie", ui.admin_event_gallery_enabled)
+            # NEU (Sprint 15): Bilderrahmen (Weihnachten, Entwurf B1).
+            self._draw_event_toggle_tile(
+                L.admin_event_frame_toggle, "Bilderrahmen (Goldrahmen + Logo)", ui.admin_event_frame_enabled,
+            )
             self._draw_event_action_tile(L.admin_event_color_style_button, "Farbstil vorschlagen", (30, 90, 90))
             self._draw_event_action_tile(L.admin_event_defaults_button, "Standardwerte", (90, 70, 0))
         else:
@@ -2902,25 +2935,36 @@ class Renderer:
         pad = 14
         label_color = (165, 175, 190) if enabled else (95, 100, 110)
         value_color = (240, 240, 240) if enabled else (110, 114, 122)
-        label_text = self._truncate_text(label, self.font_small, rect.width - 2 * pad)
-        self._draw_text(label_text, self.font_small, label_color, (rect.x + pad, rect.y + 6))
+        label_font = self._tile_label_font()
+        label_text = self._truncate_text(label, label_font, rect.width - 2 * pad)
+        self._draw_text(label_text, label_font, label_color, (rect.x + pad, rect.y + 4))
         shown = value if value else "-"
         value_text = self._truncate_text(shown, self.font_body_admin, rect.width - 2 * pad)
         self._draw_text(
             value_text, self.font_body_admin, value_color,
-            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 6),
+            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 3),
         )
+
+    def _tile_label_font(self) -> pygame.font.Font:
+        """Kleine Schrift fuer Kachel-Beschriftungen (Sprint 15: 6 Reihen,
+        niedrigere Kacheln)."""
+        font = getattr(self, "_tile_label_font_cache", None)
+        if font is None:
+            font = pygame.font.Font(None, 26)
+            self._tile_label_font_cache = font
+        return font
 
     def _draw_event_toggle_tile(
         self, rect: pygame.Rect, label: str, enabled_value: bool, on_text: str = "an", off_text: str = "aus",
     ) -> None:
         self._draw_event_tile_frame(rect, (20, 90, 30) if enabled_value else (75, 30, 30))
         pad = 14
-        label_text = self._truncate_text(label, self.font_small, rect.width - 2 * pad)
-        self._draw_text(label_text, self.font_small, (210, 225, 210), (rect.x + pad, rect.y + 6))
+        label_font = self._tile_label_font()
+        label_text = self._truncate_text(label, label_font, rect.width - 2 * pad)
+        self._draw_text(label_text, label_font, (210, 225, 210), (rect.x + pad, rect.y + 4))
         self._draw_text(
             on_text if enabled_value else off_text, self.font_body_admin, (255, 255, 255),
-            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 6),
+            (rect.x + pad, rect.bottom - self.font_body_admin.get_linesize() - 3),
         )
 
     def _draw_event_action_tile(
@@ -2928,10 +2972,11 @@ class Renderer:
     ) -> None:
         self._draw_event_tile_frame(rect, color)
         if subline:
-            label_y = rect.centery - self.font_body_admin.get_linesize() // 2 - 10
-            sub_y = rect.bottom - self.font_small.get_linesize() - 6
-            text = self._truncate_text(subline, self.font_small, rect.width - 24)
-            surface = self.font_small.render(text, True, (180, 240, 190))
+            sub_font = self._tile_label_font()
+            label_y = rect.y + 3
+            sub_y = rect.bottom - sub_font.get_linesize() - 4
+            text = self._truncate_text(subline, sub_font, rect.width - 24)
+            surface = sub_font.render(text, True, (180, 240, 190))
             self.screen.blit(surface, surface.get_rect(midtop=(rect.centerx, sub_y)))
         else:
             label_y = rect.centery - self.font_body_admin.get_linesize() // 2
@@ -3315,6 +3360,9 @@ class Renderer:
     # um nur die Buttons der aktuellen Seite zu zeichnen.
     _admin_camera_page: int = 0
     _admin_event_page: int = 0                      # NEU (Sprint 15, Fix 2)
+    # NEU (Sprint 15): Rahmen-Overlay fuer den Live View (None = noch nicht
+    # geladen, False = nicht verfuegbar).
+    _frame_overlay_cache: object = None
     _admin_event_terms_export_available: bool = False
 
     def _draw_admin_usb_copy(self, model: AppModel) -> None:

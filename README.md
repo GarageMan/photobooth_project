@@ -279,6 +279,17 @@ HDMI abgeschaltet und der Touch neu zugeordnet.
   Nutzungsbedingungen DE+EN als Word-Datei in den Veranstaltungsordner
   auf dem Stick; der normale USB-Export legt sie bei aktiver Freigabe
   automatisch mit ab. Die Bildschirmtastatur hat dafür `+`, `#` und `@`
+- **Bilderrahmen** (Sprint 15, pro Veranstaltung schaltbar, Standard aus;
+  Service-Menü → Veranstaltungsdaten → Kachel "Bilderrahmen"): Goldrahmen
+  mit Schneeflocken und Holler-Hof-Logo unten rechts (Entwurf B1,
+  `assets/rahmen_weihnachten_b1.png`, 6000×4000 RGBA). Auch im Live View
+  sichtbar. Nach jeder Aufnahme entstehen zwei Versionen: `data/photos/
+  <name>.jpg` mit Rahmen (Galerie, HDMI, Attract-Modus, QR-Download,
+  Social-Media-Freigabe) und `data/rahmenlos/rahmenlos_<name>.jpg` als
+  unbearbeitetes Original (in keiner Fotoliste). USB-Export legt die
+  Originale im Unterordner `rahmenlos` ab; Löschen entfernt beide
+  Versionen; die Speicherschätzung rechnet mit zwei Dateien pro Aufnahme
+  (`photo_frame.py`)
 - **Titel im Hauptmenü ausblendbar** (Sprint 14): ein bewusst leerer
   Event-Titel (`"event_title": ""`) blendet Titel und dunklen Verlauf oben
   aus — für Wallpaper, die Logo/Schriftzug selbst tragen
@@ -486,6 +497,7 @@ vollständige, autoritative Liste in `states.py`).
 | `hdmi_output_service.py` | NEU (Sprint 14): HDMI-Status/ein/aus per `xrandr`, Touch-Zuordnung per `xinput` (`TouchMappingGuard` für Hotplug), Verwaltung des Beamer-Prozesses |
 | `social_media_service.py` | NEU (Sprint 15): freigegebene Kopien in `data/social_media/` anlegen, auflisten, mitlöschen |
 | `social_media_settings.py` | NEU (Sprint 15, Fix 2): Plattform-/Betreibertabelle, Einlesen, Freigabefrage, Pflichtfelder |
+| `photo_frame.py` | NEU (Sprint 15): Bilderrahmen einrechnen (kachelweise), rahmenlose Originale verwalten |
 | `terms_text.py` | NEU (Sprint 15, Fix 2): Nutzungsbedingungen DE/EN als Absatzliste (Bildschirm + Word-Export) |
 | `terms_docx.py` | NEU (Sprint 15, Fix 2): ausgefüllte Nutzungsbedingungen als .docx, Ablage auf USB-Stick |
 | `hdmi_slideshow.py` | NEU (Sprint 14): eigenständiger pygame-Prozess für den HDMI-Bildschirm (Galerie-Wiedergabe oder Standbild) |
@@ -653,6 +665,10 @@ leert die Felder.
   "social_media_handle": "@hollerhof",
   "social_media_privacy_url": "https://example.org/datenschutz"
 ```
+
+**`frame_enabled`** (optional, Sprint 15): Bilderrahmen an/aus (Standard
+`false`), wird über die Kachel "Bilderrahmen" gepflegt; wirkt nach einem
+Neustart der App.
 
 **`theme_button_color` / `theme_background_color` / `theme_text_color`**
 (optional, Sprint 13): Hex-Farben wie `"#2a3479"`, werden über "Farbstil
@@ -971,8 +987,13 @@ Kachel- und Tastaturlayout, Bedingungstext und Word-Datei);
 `test/conftest.py` lässt die Tests nie die Live-`event_config.json` lesen
 (`PHOTOBOOTH_EVENT_CONFIG`).
 
-Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **666 Tests, alle grün**
-(Stand Sprint 15, Fix 2).
+**Update (Sprint 15, Bilderrahmen):** neu `test/test_photo_frame.py`
+(zwei Versionen, EXIF, Fehlerfälle, andere Bildgrößen, Asset B1 ohne
+weiße Logo-Reste, Mitlöschen, USB-Unterordner, Speicherschätzung,
+Schalter im Service-Menü, Live-View-Overlay).
+
+Gesamter Lauf (`python3 -m pytest test/`) zuletzt: **681 Tests, alle grün**
+(Stand Sprint 15, Bilderrahmen).
 
 Vor jeder Auslieferung/jedem Deployment zusätzlich ein reiner
 Syntax-Check aller geänderten Dateien:

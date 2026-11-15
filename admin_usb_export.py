@@ -114,6 +114,10 @@ class ExportResult:
     # NEU (Sprint 15, Fix 2): Dateiname der mitexportierten
     # Nutzungsbedingungen (Word), "" = nicht exportiert.
     terms_file: str = ""
+    # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale (Unterordner
+    # "rahmenlos" im Zielordner), siehe export_unframed().
+    unframed_copied: int = 0
+    unframed_skipped: int = 0
 
     @property
     def ok(self) -> bool:
@@ -142,6 +146,11 @@ class ExportResult:
                 f"Social-Media-Freigaben: {self.social_copied + self.social_skipped} "
                 f"(Unterordner {SOCIAL_MEDIA_SUBFOLDER})"
             )
+        if self.unframed_copied or self.unframed_skipped:
+            lines.append(
+                f"Originale ohne Rahmen: {self.unframed_copied + self.unframed_skipped} "
+                "(Unterordner rahmenlos)"
+            )
         if self.terms_file:
             lines.append(f"Nutzungsbedingungen: {self.terms_file}")
         if self.target_dir:
@@ -152,6 +161,8 @@ class ExportResult:
 # NEU (Sprint 15): Name des Unterordners fuer freigegebene Social-Media-Fotos
 # im Export-Zielordner auf dem Stick.
 SOCIAL_MEDIA_SUBFOLDER = "social_media"
+# NEU (Sprint 15, Bilderrahmen): Unterordner fuer die rahmenlosen Originale.
+UNFRAMED_SUBFOLDER = "rahmenlos"
 
 
 # Zeichen, die FAT32/exFAT/NTFS in Datei- und Ordnernamen verbieten.
@@ -514,6 +525,45 @@ def clear_stick(mountpoint: Path) -> tuple[int, list[str]]:
     return deleted, errors
 
 
+def _export_flat_folder(
+    source_dir: Path, subfolder: str, mountpoint: Path, result: ExportResult,
+    folder_name: str, verify: bool, counter: str,
+) -> None:
+    """Gemeinsame Kopierroutine fuer Unterordner im Export-Zielordner
+    (social_media, rahmenlos): inhaltsgleiche Dateien ueberspringen,
+    abweichende ueberschreiben, jede Kopie per SHA256 pruefen. Zaehler in
+    result.<counter>_copied/_skipped. Nie eine Exception nach aussen."""
+    try:
+        sources = sorted(
+            p for p in source_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES
+        )
+    except OSError:
+        return
+    if not sources:
+        return
+    target = mountpoint / sanitize_folder_name(folder_name) / subfolder
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        result.errors.append(f"Ordner {subfolder} konnte nicht angelegt werden: {exc}")
+        return
+    for src in sources:
+        dst = target / src.name
+        try:
+            if dst.exists() and _same_content(src, dst):
+                setattr(result, f"{counter}_skipped", getattr(result, f"{counter}_skipped") + 1)
+                continue
+            shutil.copy2(src, dst)
+            if verify and _sha256(src) != _sha256(dst):
+                result.failed_verify.append(f"{subfolder}/{src.name}")
+                continue
+            setattr(result, f"{counter}_copied", getattr(result, f"{counter}_copied") + 1)
+            result.log_actions.append(f"{subfolder}: kopiert {src.name}")
+        except OSError as exc:
+            result.errors.append(f"{subfolder}/{src.name}: {exc}")
+
+
 def export_social_media(
     social_media_dir: Path,
     mountpoint: Path,
@@ -525,40 +575,22 @@ def export_social_media(
     (data/social_media/) in den Unterordner SOCIAL_MEDIA_SUBFOLDER des
     Export-Zielordners - die Veranstalterin bekommt so genau die Fotos,
     deren Veroeffentlichung die Gaeste erlaubt haben, getrennt vom Rest.
+    Dateinamen sind eindeutig (Praefix + Zeitstempel), daher kein
+    interaktiver Konflikt-Screen (siehe _export_flat_folder)."""
+    _export_flat_folder(
+        social_media_dir, SOCIAL_MEDIA_SUBFOLDER, mountpoint, result, folder_name, verify, "social",
+    )
 
-    Bewusst einfach gehalten (kein interaktiver Konflikt-Screen): die
-    Dateinamen sind eindeutig (Praefix + Zeitstempel). Eine bereits
-    vorhandene, inhaltsgleiche Datei wird uebersprungen, eine abweichende
-    ueberschrieben (die Fotobox ist die Quelle der Freigabe). Jede Kopie
-    wird per SHA256 geprueft. Ergebnisse/Fehler landen in `result` (das
-    ExportResult des Fotoexports), damit der Abschluss-Screen beides
-    zusammen zeigt. Nie eine Exception nach aussen."""
-    try:
-        sources = sorted(
-            p for p in social_media_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES
-        )
-    except OSError:
-        return
-    if not sources:
-        return
-    target = mountpoint / sanitize_folder_name(folder_name) / SOCIAL_MEDIA_SUBFOLDER
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        result.errors.append(f"Social-Media-Ordner konnte nicht angelegt werden: {exc}")
-        return
-    for src in sources:
-        dst = target / src.name
-        try:
-            if dst.exists() and _same_content(src, dst):
-                result.social_skipped += 1
-                continue
-            shutil.copy2(src, dst)
-            if verify and _sha256(src) != _sha256(dst):
-                result.failed_verify.append(f"{SOCIAL_MEDIA_SUBFOLDER}/{src.name}")
-                continue
-            result.social_copied += 1
-            result.log_actions.append(f"social_media: kopiert {src.name}")
-        except OSError as exc:
-            result.errors.append(f"{SOCIAL_MEDIA_SUBFOLDER}/{src.name}: {exc}")
+
+def export_unframed(
+    unframed_dir: Path,
+    mountpoint: Path,
+    result: ExportResult,
+    folder_name: str = "Fotobox",
+    verify: bool = True,
+) -> None:
+    """NEU (Sprint 15, Bilderrahmen): rahmenlose Originale (data/rahmenlos/,
+    "rahmenlos_<name>") in den Unterordner "rahmenlos" des Zielordners."""
+    _export_flat_folder(
+        unframed_dir, UNFRAMED_SUBFOLDER, mountpoint, result, folder_name, verify, "unframed",
+    )

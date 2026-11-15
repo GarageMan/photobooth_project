@@ -66,6 +66,7 @@ from admin_usb_export import (  # NEU (4.7); NEU (6b): apply_conflict_resolution
     clear_stick,
     export_photos,
     export_social_media,  # NEU (Sprint 15)
+    export_unframed,  # NEU (Sprint 15, Bilderrahmen)
 )
 from storage_service import StorageService
 from storage_alarm import assess_storage  # NEU (Speicherplatz-Alarm)
@@ -78,6 +79,7 @@ import social_media_service  # NEU (Sprint 15): Social-Media-Freigabe
 import social_media_settings  # NEU (Sprint 15, Fix 2)
 import terms_docx  # NEU (Sprint 15, Fix 2): Nutzungsbedingungen als Word-Datei
 import terms_text  # NEU (Sprint 15, Fix 2)
+import photo_frame  # NEU (Sprint 15): Bilderrahmen
 from state_machine import social_settings_from_ui  # NEU (Sprint 15, Fix 2)
 from hdmi_output_service import HdmiOutputService, TouchMappingGuard, ensure_hdmi_off, ensure_touch_primary, pick_display_index, read_status as hdmi_read_status, set_power as hdmi_set_power  # NEU (Sprint 14, Fix 6: TouchMappingGuard)
 
@@ -314,6 +316,19 @@ class PhotoboothApp:
         # Einzelwert-Poll-Muster wie die Wallpaper-Suche.
         self._terms_export_thread: threading.Thread | None = None
         self._terms_export_job_result = None
+
+        # NEU (Sprint 15): Bilderrahmen - Overlay-Kacheln schon beim Start im
+        # Hintergrund vorbereiten, damit die erste Aufnahme nicht laenger
+        # dauert als die folgenden.
+        self._frame: photo_frame.FrameCompositor | None = None
+        if config.frame_enabled:
+            self._frame = photo_frame.FrameCompositor(config.assets_dir / photo_frame.FRAME_FILENAME)
+            if self._frame.available():
+                threading.Thread(
+                    target=self._frame._tiles_for, args=((6000, 4000),), name="frame-warmup", daemon=True,
+                ).start()
+            else:
+                print(f"[App] WARNUNG: Rahmen-Datei fehlt: {self._frame.overlay_path}")
 
         # Verstecktes Herunterfahren (Schritt 3.4): PIN-Sperre (persistent)
         # und Geheim-Geste-Detektor. PinLockout lebt hier in der App (nicht
@@ -831,6 +846,10 @@ class PhotoboothApp:
             ),
             "admin_event_toggle_gallery": AppEvent(
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "gallery"}, source="touch",
+            ),
+            # NEU (Sprint 15): Bilderrahmen an/aus.
+            "admin_event_toggle_frame": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "frame"}, source="touch",
             ),
             "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
             # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
@@ -1373,6 +1392,14 @@ class PhotoboothApp:
                 result = self.capture_service.capture_photo()
             except Exception as exc:  # Sicherheitsnetz - darf den Thread nie stumm sterben lassen
                 result = CaptureResult(ok=False, error_message=str(exc))
+            # NEU (Sprint 15): Bilderrahmen noch im Aufnahme-Thread einrechnen -
+            # REVIEW, Galerie, QR-Download und Social-Media-Freigabe sehen so
+            # automatisch die Version mit Rahmen; das Original landet als
+            # rahmenlos_<name> in data/rahmenlos/. Die Zeit fliesst in die
+            # Uebertragungs-Schaetzung ein (Fortschrittsanzeige passt sich an).
+            if self._frame is not None and result.ok and result.photo_path:
+                framed_ok, frame_message = self._frame.apply(Path(result.photo_path), self.config.unframed_dir)
+                print(f"[App] Bilderrahmen: {frame_message}")
             progress.measured_seconds = time.monotonic() - start
             progress.result = result
             progress.done = True  # zuletzt setzen - das ist das Fertigsignal fuer den Hauptloop
@@ -1635,6 +1662,8 @@ class PhotoboothApp:
             print("[App] Loeschen angefordert, aber kein current_photo_path im vorherigen Modellstand vorhanden.")
             return
         deleted = self.gallery_service.delete_photo(path)
+        # NEU (Sprint 15): rahmenloses Original mitloeschen (falls vorhanden).
+        photo_frame.delete_unframed_copy(Path(path).name, self.config.unframed_dir)
         if deleted:
             print(f"[App] Foto gelöscht: {path}")
         else:
@@ -1654,6 +1683,8 @@ class PhotoboothApp:
             return
         deleted_count = 0
         for path in selected:
+            # NEU (Sprint 15): rahmenloses Original mitloeschen.
+            photo_frame.delete_unframed_copy(Path(path).name, self.config.unframed_dir)
             if self.gallery_service.delete_photo(path):
                 deleted_count += 1
                 # NEU (Sprint 15): eine evtl. vorhandene Social-Media-
@@ -1808,6 +1839,11 @@ class PhotoboothApp:
             self.config.social_media_dir,
         )
         gross += social_gross
+        # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale werden mitexportiert.
+        unframed_count, _unframed_net, unframed_gross = admin_usb_service.required_export_bytes(
+            self.config.unframed_dir,
+        )
+        gross += unframed_gross
         self._usb_required_bytes = gross
         if count == 0:
             lines = (
@@ -1817,6 +1853,7 @@ class PhotoboothApp:
         else:
             lines = (
                 f"Zu exportieren: {count} Bilder ({admin_usb_service.format_bytes(net)})"
+                + (f" + {unframed_count} Originale ohne Rahmen" if unframed_count else "")
                 + (f" + {social_count} Social-Media-Freigaben" if social_count else ""),
                 f"Benötigter Platz auf dem Stick: {admin_usb_service.format_bytes(gross)}",
                 "",
@@ -1927,6 +1964,12 @@ class PhotoboothApp:
                 # Thread, damit der Abschluss-Screen erst danach erscheint.
                 export_social_media(
                     self.config.social_media_dir, stick.mountpoint, result,
+                    folder_name=self.config.screen.title, verify=True,
+                )
+                # NEU (Sprint 15, Bilderrahmen): rahmenlose Originale in den
+                # Unterordner "rahmenlos".
+                export_unframed(
+                    self.config.unframed_dir, stick.mountpoint, result,
                     folder_name=self.config.screen.title, verify=True,
                 )
                 # NEU (Sprint 15, Fix 2): bei aktiver Freigabe die ausgefuellten
@@ -2126,6 +2169,7 @@ class PhotoboothApp:
                     delete_from_camera=True,
                     progress=progress,          # NEU (4.9)
                     social_media_dir=self.config.social_media_dir,  # NEU (Sprint 15)
+                    unframed_dir=self.config.unframed_dir,          # NEU (Sprint 15, Bilderrahmen)
                 )
                 print(
                     f"[App] Loeschlauf beendet: {result.deleted_photos} Fotos, "
@@ -2177,6 +2221,7 @@ class PhotoboothApp:
                 warn_threshold_percent=self.config.storage.warn_threshold_percent,
                 critical_threshold_percent=self.config.storage.critical_threshold_percent,
                 fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+                files_per_photo=2 if self.config.frame_enabled else 1,
             )
         except OSError as exc:
             print(f"[App] Speicherplatz-Pruefung fehlgeschlagen: {exc}")
@@ -2222,6 +2267,7 @@ class PhotoboothApp:
                 warn_threshold_percent=self.config.storage.warn_threshold_percent,
                 critical_threshold_percent=self.config.storage.critical_threshold_percent,
                 fallback_avg_photo_size_bytes=self.config.storage.fallback_avg_photo_size_bytes,
+                files_per_photo=2 if self.config.frame_enabled else 1,
             )
             avg_mb = storage_status.average_photo_size_bytes / (1024 * 1024)
             herkunft = "geschätzt, noch keine eigenen Fotos" if storage_status.average_is_fallback else "aus vorhandenen Fotos"
@@ -2292,6 +2338,7 @@ class PhotoboothApp:
                     "social_phone": self.config.social_media_phone,
                     "social_handle": self.config.social_media_handle,
                     "social_privacy_url": self.config.social_media_privacy_url,
+                    "frame_enabled": self.config.frame_enabled,   # NEU (Sprint 15)
                 }, **saved},
                 source="event_settings",
             )
@@ -2311,6 +2358,7 @@ class PhotoboothApp:
             "welcome_text": ui.admin_event_welcome_text,
             "qr_codes_enabled": ui.admin_event_qr_enabled,
             "gallery_enabled": ui.admin_event_gallery_enabled,
+            "frame_enabled": ui.admin_event_frame_enabled,   # NEU (Sprint 15)
         }
         # NEU (Sprint 13): Farbstil - nur geschrieben, wenn tatsaechlich einer
         # gewaehlt wurde (None -> Schluessel bleibt weg, load_event_config/
@@ -2364,6 +2412,7 @@ class PhotoboothApp:
                 "social_phone": ui.admin_event_social_phone,
                 "social_handle": ui.admin_event_social_handle,
                 "social_privacy_url": ui.admin_event_social_privacy_url,
+                "frame_enabled": ui.admin_event_frame_enabled,
             }
             # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
             # Erfolg "event_config.json gespeichert." zurueck - der

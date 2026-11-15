@@ -936,7 +936,10 @@ class StateMachine:
                 admin_event_social_phone=str(payload.get("social_phone", "")),
                 admin_event_social_handle=str(payload.get("social_handle", "")),
                 admin_event_social_privacy_url=str(payload.get("social_privacy_url", "")),
+                # NEU (Sprint 15): Bilderrahmen.
+                admin_event_frame_enabled=bool(payload.get("frame_enabled", False)),
             )
+            changes["admin_event_entry_frame_enabled"] = changes["admin_event_frame_enabled"]
             changes["admin_event_entry_social"] = tuple(changes[name] for name in _SOCIAL_UI_FIELDS)
             changes.update(
                 admin_event_entry_title=changes["admin_event_title"],
@@ -963,6 +966,9 @@ class StateMachine:
                 ui = replace(model.ui, admin_event_qr_enabled=not model.ui.admin_event_qr_enabled)
             elif field == "gallery":
                 ui = replace(model.ui, admin_event_gallery_enabled=not model.ui.admin_event_gallery_enabled)
+            elif field == "frame":
+                # NEU (Sprint 15): Bilderrahmen an/aus.
+                ui = replace(model.ui, admin_event_frame_enabled=not model.ui.admin_event_frame_enabled)
             elif field == "social":
                 # NEU (Sprint 15, Fix 2): Social-Media-Freigabe an/aus.
                 ui = replace(
@@ -1014,6 +1020,7 @@ class StateMachine:
                 # NEU (Sprint 15, Fix 2): Social-Media-Freigabe aus, alle
                 # Felder der Seite 2 leer (Standard fuer private Feiern).
                 **_SOCIAL_UI_DEFAULTS,
+                admin_event_frame_enabled=False,   # NEU (Sprint 15): Rahmen aus
                 error_text=None,
             )
             timers = replace(model.timers, idle_deadline=now + self.config.timeouts.admin_event_settings_idle_seconds)
@@ -1075,6 +1082,7 @@ class StateMachine:
                 admin_event_theme_text=model.ui.admin_event_entry_theme_text,
                 # NEU (Sprint 15, Fix 2): Seite 2 ebenfalls zuruecksetzen.
                 **_social_restore(model.ui.admin_event_entry_social),
+                admin_event_frame_enabled=model.ui.admin_event_entry_frame_enabled,
             )
             menu_result = self._go_admin_menu(model.evolve(ui=ui), now)
             # NEU (Nutzer-Feedback, Bugfix): ein evtl. in dieser Sitzung

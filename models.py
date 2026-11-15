@@ -265,6 +265,9 @@ class UiState:
     # --- Veranstaltungsdaten: Seiten + Social Media (Sprint 15, Fix 2) ----
     # 0 = Seite 1 "Allgemein", 1 = Seite 2 "Social Media".
     admin_event_page: int = 0
+    # NEU (Sprint 15): Bilderrahmen an/aus (Entwurf + Snapshot fuer "Abbrechen").
+    admin_event_frame_enabled: bool = False
+    admin_event_entry_frame_enabled: bool = False
     # Entwurf der Social-Media-Einstellungen. Die Textfelder heissen bewusst
     # admin_event_social_<feld>, damit die gemeinsame Bildschirmtastatur
     # (state_machine._go_admin_event_text_entry, getattr(ui,

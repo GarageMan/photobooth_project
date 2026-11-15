@@ -18,5 +18,6 @@
   "social_media_email": "",
   "social_media_phone": "",
   "social_media_handle": "",
-  "social_media_privacy_url": ""
+  "social_media_privacy_url": "",
+  "frame_enabled": false
 }
