@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -111,7 +112,12 @@ ASSETS_DIR = BASE_DIR / "assets"
 # Admin-Screen "Veranstaltungsdaten" tatsaechlich zurueckzuschreiben (siehe
 # event_config_service.save_event_config). Vorher wurde diese Datei nur
 # gelesen, nie geschrieben.
-EVENT_CONFIG_PATH = BASE_DIR / "event_config.json"
+# NEU (Sprint 15, Fix 1): Pfad per Umgebungsvariable PHOTOBOOTH_EVENT_CONFIG
+# ueberschreibbar. Die Testsuite (test/conftest.py) zeigt damit auf eine
+# leere Temp-Datei - sonst wuerden die Tests auf dem Pi die LIVE-
+# Veranstaltungsdaten (z. B. social_media_enabled=true) mitlesen und
+# schlimmstenfalls sogar zurueckschreiben.
+EVENT_CONFIG_PATH = Path(os.environ.get("PHOTOBOOTH_EVENT_CONFIG") or (BASE_DIR / "event_config.json"))
 
 
 def load_event_config(path: Path) -> dict:
