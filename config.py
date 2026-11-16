@@ -237,11 +237,11 @@ SOCIAL_MEDIA_CONTACT = _SOCIAL_MEDIA.legacy_contact
 FRAME_ENABLED = bool(_event_config.get("frame_enabled", False))
 
 # NEU (Sprint 16): Veranstaltungs-Schrift fuer die Gaeste-Buttons (z. B.
-# "EIN MOMENT ADVENT": Comic Neue Bold, SIL OFL 1.1, siehe
+# "EIN MOMENT ADVENT": Short Stack, SIL OFL 1.1 - Schrift der Einladung, siehe
 # assets/fonts/). Nur Beschriftung der Tasten ausserhalb des Service-Menues,
 # Textfarbe bleibt wie gehabt. Standard aus.
 EVENT_FONT_ENABLED = bool(_event_config.get("event_font_enabled", False))
-EVENT_FONT_FILE = "fonts/ComicNeue-Bold.ttf"
+EVENT_FONT_FILE = "fonts/ShortStack-Regular.ttf"
 
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen

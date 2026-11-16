@@ -32,10 +32,10 @@ GUEST_FONT_STATES = frozenset({
     AppState.QR_DISPLAY, AppState.SOCIAL_MEDIA_CONSENT, AppState.INSTRUCTIONS, AppState.TERMS,
     AppState.ERROR_SCREEN,
 })
-# Comic Neue Bold ist bei gleicher Punktgroesse ~30 % breiter als die
-# pygame-Standardschrift - Faktor gleicht das aus (gemessen an
-# "Fotografieren": 224 px vs. 289 px bei Groesse 50).
-EVENT_FONT_SCALE = 0.78
+# Short Stack ist bei gleicher Punktgroesse ~65 % breiter als die
+# pygame-Standardschrift - Faktor gleicht das aus (gemessen bei Groesse 50:
+# "Fotografieren" 224 px vs. 397 px, "Bedingungen" 224 px vs. 354 px).
+EVENT_FONT_SCALE = 0.6
 
 
 def _shutter_row_text(raw: str) -> str:
@@ -4082,7 +4082,7 @@ class Renderer:
         Schriftdatei fehlt/defekt oder ein Zeichen des Labels (z. B. ein
         Symbol) ist im Zeichensatz nicht enthalten. Die Groesse wird so
         umgerechnet, dass der Text etwa so breit wird wie mit der
-        Standardschrift (Comic Neue laeuft bei gleicher Punktgroesse ~30 %
+        Standardschrift (siehe EVENT_FONT_SCALE: Short Stack laeuft deutlich
         breiter), damit die Tasten-Layouts unveraendert passen.
         """
         if not getattr(self, "_event_font_active", False):
@@ -4093,6 +4093,11 @@ class Renderer:
             path = Path(self.config.assets_dir) / getattr(self.config, "event_font_file", "")
             try:
                 cache[key] = pygame.font.Font(str(path), key) if path.is_file() else None
+                if cache[key] is not None:
+                    # Short Stack gibt es nur in einem Schnitt - fett gerechnet
+                    # wirkt sie wie die Einladung und bleibt auf den farbigen
+                    # Tasten gut lesbar.
+                    cache[key].set_bold(True)
             except (pygame.error, OSError):
                 cache[key] = None
         font = cache[key]
