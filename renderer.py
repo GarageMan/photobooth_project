@@ -5,6 +5,7 @@ import random
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 import pygame
 
@@ -19,6 +20,22 @@ from layout import KEYBOARD_SHIFT_MAP, LayoutRects, build_layout
 from models import AppModel
 from states import AppState
 from admin_menu import ADMIN_MENU_ITEMS, build_admin_rects  # NEU (4.1)
+
+
+# NEU (Sprint 16): Screens, deren Tasten die Veranstaltungs-Schrift bekommen
+# (alles, was Gaeste sehen). Service-Menue, PIN, Wartung, Boot/Shutdown
+# bleiben bewusst bei der Standardschrift.
+GUEST_FONT_STATES = frozenset({
+    AppState.MAIN_MENU, AppState.ATTRACT_GALLERY, AppState.GALLERY_GRID, AppState.GALLERY_EMPTY,
+    AppState.GALLERY_FULLSCREEN, AppState.GALLERY_PHOTO_QR, AppState.PHOTO_INTRO, AppState.PHOTO_PREVIEW,
+    AppState.COUNTDOWN, AppState.CAPTURE_PENDING, AppState.REVIEW, AppState.DELETE_CONFIRM,
+    AppState.QR_DISPLAY, AppState.SOCIAL_MEDIA_CONSENT, AppState.INSTRUCTIONS, AppState.TERMS,
+    AppState.ERROR_SCREEN,
+})
+# Comic Neue Bold ist bei gleicher Punktgroesse ~30 % breiter als die
+# pygame-Standardschrift - Faktor gleicht das aus (gemessen an
+# "Fotografieren": 224 px vs. 289 px bei Groesse 50).
+EVENT_FONT_SCALE = 0.78
 
 
 def _shutter_row_text(raw: str) -> str:
@@ -282,6 +299,12 @@ class Renderer:
         if model.state == AppState.ADMIN_USB_EXPORT_DONE and self._last_rendered_state != AppState.ADMIN_USB_EXPORT_DONE:
             self._admin_usb_done_entered_at = time.time()
         self._last_rendered_state = model.state
+        # NEU (Sprint 16): Veranstaltungs-Schrift nur auf Gaeste-Screens -
+        # Service-Menue, PIN-Eingabe, Wartung, Boot/Shutdown bleiben bei der
+        # Standardschrift.
+        self._event_font_active = (
+            model.state in GUEST_FONT_STATES and getattr(self.config, "event_font_enabled", False)
+        )
         # NEU (Sprint 15, Fix 2): _draw_buttons() kennt nur den State -
         # Seitenzahl und Sichtbarkeit von "Bedingungen auf USB" hier merken
         # (gleiches Prinzip wie self._admin_camera_page).
@@ -2905,6 +2928,10 @@ class Renderer:
             )
             self._draw_event_action_tile(L.admin_event_color_style_button, "Farbstil vorschlagen", (30, 90, 90))
             self._draw_event_action_tile(L.admin_event_defaults_button, "Standardwerte", (90, 70, 0))
+            # NEU (Sprint 16): Veranstaltungs-Schrift fuer die Gaeste-Buttons.
+            self._draw_event_toggle_tile(
+                L.admin_event_font_toggle, "Veranstaltungs-Schrift (Buttons)", ui.admin_event_font_enabled,
+            )
         else:
             on = ui.admin_event_social_enabled
             self._draw_event_toggle_tile(
@@ -4048,6 +4075,52 @@ class Renderer:
     # Buttons (siehe _themed_button_color/_themed_text_color unten), deren
     # WCAG-kontrastsichere Textfarbe je nach Wallpaper auch Schwarz sein
     # kann (siehe wallpaper_theme_service.best_text_color).
+    def _event_button_font(self, size: int, label: str) -> pygame.font.Font | None:
+        """NEU (Sprint 16): Veranstaltungs-Schrift fuer Gaeste-Buttons.
+
+        None = Standardschrift verwenden: Schalter aus, kein Gaeste-Screen,
+        Schriftdatei fehlt/defekt oder ein Zeichen des Labels (z. B. ein
+        Symbol) ist im Zeichensatz nicht enthalten. Die Groesse wird so
+        umgerechnet, dass der Text etwa so breit wird wie mit der
+        Standardschrift (Comic Neue laeuft bei gleicher Punktgroesse ~30 %
+        breiter), damit die Tasten-Layouts unveraendert passen.
+        """
+        if not getattr(self, "_event_font_active", False):
+            return None
+        cache = self.__dict__.setdefault("_event_font_cache", {})
+        key = max(8, round(size * EVENT_FONT_SCALE))
+        if key not in cache:
+            path = Path(self.config.assets_dir) / getattr(self.config, "event_font_file", "")
+            try:
+                cache[key] = pygame.font.Font(str(path), key) if path.is_file() else None
+            except (pygame.error, OSError):
+                cache[key] = None
+        font = cache[key]
+        if font is None:
+            return None
+        if not all(self._event_font_has_glyph(ch) for ch in set(label) - {"\n", " "}):
+            return None
+        return font
+
+    def _event_font_has_glyph(self, ch: str) -> bool:
+        """pygame meldet fehlende Zeichen nicht (metrics() liefert die Werte
+        des Ersatzzeichens) - daher Vergleich mit dem Ersatzzeichen, das ein
+        sicher fehlender Codepunkt (Private Use Area) erzeugt."""
+        cache = self.__dict__.setdefault("_event_font_glyphs", {})
+        if ch not in cache:
+            fonts = [f for f in self.__dict__.get("_event_font_cache", {}).values() if f is not None]
+            if not fonts:
+                return False
+            font = fonts[0]
+
+            def raw(text: str) -> bytes:
+                # tobytes erst ab pygame 2.1.3, aeltere Versionen: tostring
+                to_bytes = getattr(pygame.image, "tobytes", None) or pygame.image.tostring
+                return to_bytes(font.render(text, False, (255, 255, 255), (0, 0, 0)), "RGB")
+
+            cache[ch] = raw(ch) != raw("\ue000")
+        return cache[ch]
+
     def _draw_button(
         self, label: str, rect: pygame.Rect, color: tuple[int, int, int], font_size: int | None = None,
         text_color: tuple[int, int, int] = (255, 255, 255),
@@ -4088,15 +4161,26 @@ class Renderer:
             # Tasten (z. B. "Bedingungen\nauf USB") - alle Zeilen in derselben,
             # notfalls verkleinerten Schriftgroesse, gemeinsam zentriert.
             parts = label.split("\n")
-            font = pygame.font.Font(None, size)
+            font = self._event_button_font(size, label) or pygame.font.Font(None, size)
             while max(font.size(part)[0] for part in parts) > max_w and size > 24:
                 size -= 4
-                font = pygame.font.Font(None, size)
+                font = self._event_button_font(size, label) or pygame.font.Font(None, size)
             line_h = font.get_linesize()
             y0 = rect.centery - (line_h * len(parts)) // 2
             for index, part in enumerate(parts):
                 surface = font.render(part, True, text_color)
                 self.screen.blit(surface, surface.get_rect(midtop=(rect.centerx, y0 + index * line_h)))
+            return
+        event_font = self._event_button_font(size, label)
+        if event_font is not None:
+            # NEU (Sprint 16): Veranstaltungs-Schrift (Gaeste-Buttons).
+            font = event_font
+            text_surface = font.render(label, True, text_color)
+            while text_surface.get_width() > max_w and size > 24:
+                size -= 4
+                font = self._event_button_font(size, label)
+                text_surface = font.render(label, True, text_color)
+            self.screen.blit(text_surface, text_surface.get_rect(center=rect.center))
             return
         font = self.font_button if font_size is None else pygame.font.Font(None, size)
         text_surface = font.render(label, True, text_color)

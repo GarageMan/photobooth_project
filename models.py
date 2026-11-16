@@ -268,6 +268,9 @@ class UiState:
     # NEU (Sprint 15): Bilderrahmen an/aus (Entwurf + Snapshot fuer "Abbrechen").
     admin_event_frame_enabled: bool = False
     admin_event_entry_frame_enabled: bool = False
+    # NEU (Sprint 16): Veranstaltungs-Schrift fuer Gaeste-Buttons.
+    admin_event_font_enabled: bool = False
+    admin_event_entry_font_enabled: bool = False
     # Entwurf der Social-Media-Einstellungen. Die Textfelder heissen bewusst
     # admin_event_social_<feld>, damit die gemeinsame Bildschirmtastatur
     # (state_machine._go_admin_event_text_entry, getattr(ui,

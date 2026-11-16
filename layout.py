@@ -130,6 +130,7 @@ class LayoutRects:
     # Seitenwechsel-Taste zwischen "Speichern" und "Abbrechen".
     admin_event_page_button: pygame.Rect
     admin_event_frame_toggle: pygame.Rect   # NEU (Sprint 15, Bilderrahmen)
+    admin_event_font_toggle: pygame.Rect    # NEU (Sprint 16, Veranstaltungs-Schrift)
     admin_event_social_toggle: pygame.Rect
     admin_event_social_platforms_button: pygame.Rect
     admin_event_social_company_row: pygame.Rect
@@ -484,6 +485,8 @@ def build_layout(width: int, height: int) -> LayoutRects:
     admin_event_frame_toggle = _event_tile(4, 0)
     admin_event_color_style_button = _event_tile(4, 1)
     admin_event_defaults_button = _event_tile(5, 0)
+    # NEU (Sprint 16): Veranstaltungs-Schrift an/aus (bisher freier Platz).
+    admin_event_font_toggle = _event_tile(5, 1)
     # Seite 2 - Social Media
     admin_event_social_toggle = _event_tile(0, 0)
     admin_event_social_platforms_button = _event_tile(0, 1)
@@ -708,6 +711,7 @@ def build_layout(width: int, height: int) -> LayoutRects:
         admin_event_color_style_next=admin_event_color_style_next,
         admin_event_page_button=admin_event_page_button,
         admin_event_frame_toggle=admin_event_frame_toggle,
+        admin_event_font_toggle=admin_event_font_toggle,
         admin_event_social_toggle=admin_event_social_toggle,
         admin_event_social_platforms_button=admin_event_social_platforms_button,
         admin_event_social_company_row=admin_event_social_company_row,
@@ -843,6 +847,7 @@ def button_rects_for_state(state: AppState, rects: LayoutRects) -> dict[str, pyg
             # NEU (Sprint 13): "Farbstil vorschlagen"-Taste.
             "admin_event_color_style": rects.admin_event_color_style_button,
             "admin_event_toggle_frame": rects.admin_event_frame_toggle,   # NEU (Sprint 15)
+            "admin_event_toggle_font": rects.admin_event_font_toggle,     # NEU (Sprint 16)
             # NEU (Sprint 15, Fix 2): Seite 2 "Social Media" - enthaelt
             # bewusst die Kacheln BEIDER Seiten; welche davon gerade
             # sichtbar sind, filtert app._map_click_to_event anhand von

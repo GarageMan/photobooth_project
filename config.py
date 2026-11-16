@@ -236,6 +236,13 @@ SOCIAL_MEDIA_CONTACT = _SOCIAL_MEDIA.legacy_contact
 # "Bilderrahmen".
 FRAME_ENABLED = bool(_event_config.get("frame_enabled", False))
 
+# NEU (Sprint 16): Veranstaltungs-Schrift fuer die Gaeste-Buttons (z. B.
+# "EIN MOMENT ADVENT": Comic Neue Bold, SIL OFL 1.1, siehe
+# assets/fonts/). Nur Beschriftung der Tasten ausserhalb des Service-Menues,
+# Textfarbe bleibt wie gehabt. Standard aus.
+EVENT_FONT_ENABLED = bool(_event_config.get("event_font_enabled", False))
+EVENT_FONT_FILE = "fonts/ComicNeue-Bold.ttf"
+
 # Hauptmenue-Willkommenstext - bisher fest im Code
 # (state_machine._main_menu_model), jetzt ueber den Admin-Screen
 # "Veranstaltungsdaten" editierbar (siehe event_config_service.
@@ -660,6 +667,9 @@ class AppConfig:
     social_media_contact: str = SOCIAL_MEDIA_CONTACT  # alt, nur Rueckfall
     # NEU (Sprint 15): Bilderrahmen an/aus, siehe FRAME_ENABLED oben.
     frame_enabled: bool = FRAME_ENABLED
+    # NEU (Sprint 16): Veranstaltungs-Schrift, siehe EVENT_FONT_ENABLED oben.
+    event_font_enabled: bool = EVENT_FONT_ENABLED
+    event_font_file: str = EVENT_FONT_FILE
     # kommt aus data/event_config.json, siehe
     # MAIN_MENU_WELCOME_TEXT oben.
     main_menu_welcome_text: str = MAIN_MENU_WELCOME_TEXT

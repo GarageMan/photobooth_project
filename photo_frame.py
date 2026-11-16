@@ -1,4 +1,4 @@
-"""Bilderrahmen fuer Fotos (Sprint 15, Weihnachtsbasar Holler Hof).
+"""Bilderrahmen fuer Fotos (Sprint 15, Holler Hof "EIN MOMENT ADVENT").
 
 Pro Veranstaltung schaltbar (event_config.json "frame_enabled", Service-Menue
 "Veranstaltungsdaten" -> Kachel "Bilderrahmen"). Ist der Rahmen an, werden

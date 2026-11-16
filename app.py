@@ -851,6 +851,10 @@ class PhotoboothApp:
             "admin_event_toggle_frame": AppEvent(
                 EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "frame"}, source="touch",
             ),
+            # NEU (Sprint 16): Veranstaltungs-Schrift an/aus.
+            "admin_event_toggle_font": AppEvent(
+                EventType.TAP_ADMIN_EVENT_TOGGLE, payload={"field": "font"}, source="touch",
+            ),
             "admin_event_wallpaper": AppEvent(EventType.TAP_ADMIN_EVENT_WALLPAPER_IMPORT, source="touch"),
             # NEU (Nutzer-Feedback): "Standardwerte"-Taste.
             "admin_event_defaults": AppEvent(EventType.TAP_ADMIN_EVENT_DEFAULTS, source="touch"),
@@ -2339,6 +2343,7 @@ class PhotoboothApp:
                     "social_handle": self.config.social_media_handle,
                     "social_privacy_url": self.config.social_media_privacy_url,
                     "frame_enabled": self.config.frame_enabled,   # NEU (Sprint 15)
+                    "event_font_enabled": self.config.event_font_enabled,   # NEU (Sprint 16)
                 }, **saved},
                 source="event_settings",
             )
@@ -2359,6 +2364,7 @@ class PhotoboothApp:
             "qr_codes_enabled": ui.admin_event_qr_enabled,
             "gallery_enabled": ui.admin_event_gallery_enabled,
             "frame_enabled": ui.admin_event_frame_enabled,   # NEU (Sprint 15)
+            "event_font_enabled": ui.admin_event_font_enabled,   # NEU (Sprint 16)
         }
         # NEU (Sprint 13): Farbstil - nur geschrieben, wenn tatsaechlich einer
         # gewaehlt wurde (None -> Schluessel bleibt weg, load_event_config/
@@ -2413,6 +2419,7 @@ class PhotoboothApp:
                 "social_handle": ui.admin_event_social_handle,
                 "social_privacy_url": ui.admin_event_social_privacy_url,
                 "frame_enabled": ui.admin_event_frame_enabled,
+                "event_font_enabled": ui.admin_event_font_enabled,
             }
             # GEAENDERT (Nutzer-Feedback): save_event_config() liefert bei
             # Erfolg "event_config.json gespeichert." zurueck - der
